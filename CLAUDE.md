@@ -1,5 +1,7 @@
 # web-stream-automation (app: **AxiFlow**; agency: **Axilume**)
 
+**Repo:** https://github.com/deepunr-codace/axiflow (branch `main`, first push 2026-11-02). `.gitignore` keeps out `node_modules/`, `data/` (the real lead database and uploads) and `.env*` (except `.env.example`); never commit those.
+
 ## Purpose & stack
 A working model of a fully automated sales and delivery pipeline for a web-development service: a mini CRM plus an automation engine. It covers lead intake → website audit → score → personalised brochure → human approval → WhatsApp/email outreach and follow-ups → reply handling → booking → proposal → advance invoice → onboarding brief → project milestones → final invoice → review request.
 
