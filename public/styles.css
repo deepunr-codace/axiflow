@@ -1001,19 +1001,3 @@ kbd .mi { font-size: 13px; vertical-align: -2px; }
 .p-head { padding: 2px 4px 12px 12px; min-height: 36px; }
 .p-name { font-size: 18px; line-height: 1.2; }
 .panel { padding-top: 12px; }
-
-/* Flat cards (owner, 2026-11-02): no drop shadows, no inner highlight; a hairline border carries the shape.
-   Overlays (dialogs, menus, toasts) keep their shadow so they still float above the page. */
-:is(.card, .item, .group, .table-wrap, .msg, .pm, .kpi, .col, .lead-card, .who, .login-card, .pt, .next-action, .tpl-thumb),
-html[data-theme="light"] :is(.card, .item, .group, .table-wrap, .msg, .pm, .kpi, .col, .lead-card, .who, .login-card, .pt, .next-action, .tpl-thumb) { box-shadow: none; }
-.card, .table-wrap, .login-card, .item, .msg, .pm { background: #141416; border: 1px solid rgba(255, 255, 255, .07); }
-.group { background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .07); }
-.group > .item { background: #141416; }
-.group > a.item.link:hover, a.item.link:hover, a.kpi:hover { background: #18181b; box-shadow: none; }
-.col { background: #111113; border: 1px solid rgba(255, 255, 255, .06); }
-.lead-card { background: #18181b; border: 1px solid rgba(255, 255, 255, .07); }
-.pt, .next-action { background: #111113; border: 1px solid rgba(255, 255, 255, .07); }
-html[data-theme="light"] :is(.card, .table-wrap, .login-card, .item, .msg, .pm, .group > .item) { background: #FFFFFF; border-color: rgba(0, 0, 0, .09); }
-html[data-theme="light"] .group { background: rgba(0, 0, 0, .08); border-color: rgba(0, 0, 0, .09); }
-html[data-theme="light"] :is(.col, .pt, .next-action) { background: #F4F4F5; border-color: rgba(0, 0, 0, .07); }
-html[data-theme="light"] .lead-card { background: #FFFFFF; border-color: rgba(0, 0, 0, .09); }
