@@ -13,7 +13,7 @@ import { saveUpload, readUpload, UPLOADS } from '../storage.js';
  *   shape   { shape: rect|ellipse, fill, stroke, sw, radius, gradient: { angle, stops: [[offset, color, opacity]] } }
  *   icon    { name, color }
  *   pricing { }   → line-item table bound to the document's items
- * Image sources: "asset:<path under assets/>" or "upload:<key in storage.js (Vercel Blob or data/uploads)>" or a data: URL.
+ * Image sources: "asset:<path under assets/>" or "upload:<key in storage.js (Supabase Storage, Vercel Blob or data/uploads)>" or a data: URL.
  */
 export { UPLOADS };
 export const FONTS = ['PR', 'PM', 'PS', 'PB'];

@@ -10,7 +10,7 @@ import { ready, all, run, close, usingRemote } from '../src/db.js';
 import '../src/tools.js';
 import '../src/plans.js';
 import '../src/design/templates.js';
-import { saveUpload, usingBlob } from '../src/storage.js';
+import { saveUpload, usingBlob, usingSupabase, storageName } from '../src/storage.js';
 
 const args = process.argv.slice(2);
 const force = args.includes('--force');
@@ -62,8 +62,8 @@ if (fs.existsSync(uploads)) {
       }
     }
   };
-  if (usingBlob() || path.resolve(process.env.DATA_DIR || 'data', 'uploads') !== uploads) await walk(uploads);
-  console.log(`  uploads: ${n} files ${usingBlob() ? '→ Vercel Blob' : '(local)'}`);
+  if (usingSupabase() || usingBlob() || path.resolve(process.env.DATA_DIR || 'data', 'uploads') !== uploads) await walk(uploads);
+  console.log(`  uploads: ${n} files → ${storageName()}`);
 }
 src.close();
 await close();
