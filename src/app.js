@@ -33,8 +33,13 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 app.use('/fonts', express.static(path.join(ROOT, 'assets', 'fonts'), { maxAge: '7d' }));
 app.use(express.static(path.join(ROOT, 'public')));
 
-app.use(async (_req, _res, next) => {
-  try { await boot(); await loadSettings(); next(); } catch (e) { next(e); }
+app.use(async (req, res, next) => {
+  try { await boot(); await loadSettings(); next(); } catch (e) {
+    console.error('[boot]', e.message);
+    const msg = /DATABASE_URL/.test(e.message) ? e.message : `Cannot reach the database: ${e.message}`;
+    if (req.path.startsWith('/api/')) return res.status(503).json({ error: msg });
+    res.status(503).type('html').send(`<!doctype html><meta name=viewport content="width=device-width"><title>AxiFlow setup</title><body style="font:16px/1.6 system-ui;background:#0a0a0b;color:#eee;display:grid;place-items:center;min-height:90vh;margin:0"><div style="max-width:560px;padding:24px"><h1 style="font-size:22px">AxiFlow is almost ready</h1><p>${msg.replace(/[<>&]/g, '')}</p></div>`);
+  }
 });
 
 /**

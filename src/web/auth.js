@@ -1,7 +1,9 @@
 import crypto from 'node:crypto';
 
-const SECRET = process.env.SESSION_SECRET || 'dev-secret-change-me';
-const PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
+// On a public deployment the defaults are not allowed: login stays closed until both are set.
+const HOSTED = !!process.env.VERCEL;
+const SECRET = process.env.SESSION_SECRET || (HOSTED ? '' : 'dev-secret-change-me');
+const PASSWORD = process.env.ADMIN_PASSWORD || (HOSTED ? '' : 'admin');
 const TTL_MS = 7 * 24 * 3600e3;
 
 const sign = (v) => crypto.createHmac('sha256', SECRET).update(v).digest('base64url');
@@ -19,6 +21,7 @@ export function parseCookies(req) {
 }
 
 export function login(req, res) {
+  if (!SECRET || !PASSWORD) return res.status(503).json({ error: 'Login is not set up: add ADMIN_PASSWORD and SESSION_SECRET in Vercel > Settings > Environment Variables, then redeploy.' });
   if (!safeEqual(req.body?.password || '', PASSWORD)) return res.status(401).json({ error: 'Wrong password' });
   const exp = String(Date.now() + TTL_MS);
   const secure = (process.env.BASE_URL || '').startsWith('https://') ? '; Secure' : '';
@@ -32,6 +35,7 @@ export function logout(_req, res) {
 }
 
 export function isAuthed(req) {
+  if (!SECRET) return false;
   const sid = parseCookies(req).sid;
   if (!sid) return false;
   const [exp, sig] = sid.split('.');

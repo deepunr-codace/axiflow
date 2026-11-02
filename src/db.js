@@ -73,6 +73,7 @@ async function makeDriver() {
       close: () => pool.end(),
     };
   }
+  if (process.env.VERCEL) throw new Error('DATABASE_URL is not set. Add your Supabase Transaction pooler connection string in Vercel > Project > Settings > Environment Variables, then redeploy.');
   const { PGlite } = await import('@electric-sql/pglite');
   const dir = path.join(DATA_DIR, 'pg');
   fs.mkdirSync(dir, { recursive: true });
