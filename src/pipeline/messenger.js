@@ -52,11 +52,11 @@ export function inSendWindow(settings, date = new Date()) {
   return s.send_days.includes(weekday) && hhmm >= s.window_start && hhmm < s.window_end;
 }
 
-function sentToday(channel, settings) {
+async function sentToday(channel, settings) {
   const { date } = tzParts(new Date(), settings.schedule.timezone);
   const since = zonedToUtc(date, '00:00', settings.schedule.timezone);
-  return get(`SELECT COUNT(*) n FROM messages WHERE direction='out' AND lead_id IS NOT NULL AND channel=:channel AND status IN ('sent','mock') AND created_at >= :since`,
-    { channel, since }).n;
+  return (await get(`SELECT COUNT(*) n FROM messages WHERE direction='out' AND lead_id IS NOT NULL AND channel=:channel AND status IN ('sent','mock') AND created_at >= :since`,
+    { channel, since })).n;
 }
 
 function usable(lead, channel, cold) {
@@ -79,11 +79,11 @@ function textToHtml(text, unsubscribe) {
  */
 export async function sendToLead(leadId, key, extra = {}, { cold = false, channel = null, content = null, attachment = null } = {}) {
   const settings = getSettings();
-  const lead = get(`SELECT * FROM leads WHERE id = :leadId`, { leadId });
-  const tpl = getTemplate(key);
+  const lead = await get(`SELECT * FROM leads WHERE id = :leadId`, { leadId });
+  const tpl = await getTemplate(key);
   if (!lead || !tpl) return { ok: false, reason: 'missing lead/template' };
   if (lead.do_not_contact) {
-    logEvent(lead.id, 'messenger', key, 'skipped', 'do-not-contact');
+    await logEvent(lead.id, 'messenger', key, 'skipped', 'do-not-contact');
     return { ok: false, reason: 'dnc' };
   }
 
@@ -91,7 +91,7 @@ export async function sendToLead(leadId, key, extra = {}, { cold = false, channe
   if (!cold && lead.last_inbound_channel && !channel) order = [lead.last_inbound_channel, ...order.filter((c) => c !== lead.last_inbound_channel)];
   const candidates = order.filter((c) => usable(lead, c, cold));
   if (!candidates.length) {
-    logEvent(lead.id, 'messenger', key, 'skipped', cold ? 'no permitted channel (opt-in + valid contact required)' : 'no valid email/phone');
+    await logEvent(lead.id, 'messenger', key, 'skipped', cold ? 'no permitted channel (opt-in + valid contact required)' : 'no valid email/phone');
     return { ok: false, reason: 'no_channel' };
   }
 
@@ -101,7 +101,7 @@ export async function sendToLead(leadId, key, extra = {}, { cold = false, channe
   for (const ch of candidates) {
     if (cold) {
       const cap = ch === 'email' ? settings.sending.daily_cap_email : settings.sending.daily_cap_whatsapp;
-      if (sentToday(ch, settings) >= cap) { capped = true; logEvent(lead.id, 'messenger', key, 'skipped', `${ch} daily cap (${cap}) reached`); continue; }
+      if (await sentToday(ch, settings) >= cap) { capped = true; await logEvent(lead.id, 'messenger', key, 'skipped', `${ch} daily cap (${cap}) reached`); continue; }
     }
     const sessionOpen = ch === 'whatsapp' && lead.last_inbound_channel === 'whatsapp' && lead.last_inbound_at && Date.now() - new Date(lead.last_inbound_at).getTime() < 24 * 3600e3;
     let subject = render(tpl.subject, vars);
@@ -136,18 +136,18 @@ export async function sendToLead(leadId, key, extra = {}, { cold = false, channe
           document: attachment ? { link: attachment.url, filename: attachment.filename } : null,
         }, { dryRun: settings.automation.dry_run });
       }
-      insert('messages', { ...base, to_addr: ch === 'email' ? lead.email : lead.phone, status: r.status, provider_id: r.provider_id });
-      update('leads', lead.id, { last_contacted_at: nowISO(), last_channel: ch, attempts: (lead.attempts || 0) + 1, updated_at: nowISO() });
-      addActivity(lead.id, 'message_out', `${ch === 'email' ? 'Email' : 'WhatsApp'} sent: ${tpl.label}${attachment ? ` 📎 ${attachment.filename}` : ''}${aiWritten ? ' ✨ AI-written' : ''}${r.status === 'mock' ? ' (mock)' : ''}`, text);
-      logEvent(lead.id, 'messenger', key, 'ok', `${ch} ${r.status}${aiWritten ? ' ai' : ''} ${r.provider_id || ''}`);
-      crmEvent(lead.id, 'message.sent', { channel: ch, template: key, ai_written: aiWritten, status: r.status });
+      await insert('messages', { ...base, to_addr: ch === 'email' ? lead.email : lead.phone, status: r.status, provider_id: r.provider_id });
+      await update('leads', lead.id, { last_contacted_at: nowISO(), last_channel: ch, attempts: (lead.attempts || 0) + 1, updated_at: nowISO() });
+      await addActivity(lead.id, 'message_out', `${ch === 'email' ? 'Email' : 'WhatsApp'} sent: ${tpl.label}${attachment ? ` 📎 ${attachment.filename}` : ''}${aiWritten ? ' ✨ AI-written' : ''}${r.status === 'mock' ? ' (mock)' : ''}`, text);
+      await logEvent(lead.id, 'messenger', key, 'ok', `${ch} ${r.status}${aiWritten ? ' ai' : ''} ${r.provider_id || ''}`);
+      await crmEvent(lead.id, 'message.sent', { channel: ch, template: key, ai_written: aiWritten, status: r.status });
       if (r.status === 'sent' && settings.sending.throttle_ms) await sleep(settings.sending.throttle_ms);
       return { ok: true, channel: ch, status: r.status };
     } catch (e) {
       lastErr = e;
-      insert('messages', { ...base, to_addr: ch === 'email' ? lead.email : lead.phone, status: 'failed', error: e.message });
-      logEvent(lead.id, 'messenger', key, 'error', `${ch}: ${e.message}`);
-      addActivity(lead.id, 'error', `${ch} send failed: ${tpl.label}`, e.message);
+      await insert('messages', { ...base, to_addr: ch === 'email' ? lead.email : lead.phone, status: 'failed', error: e.message });
+      await logEvent(lead.id, 'messenger', key, 'error', `${ch}: ${e.message}`);
+      await addActivity(lead.id, 'error', `${ch} send failed: ${tpl.label}`, e.message);
     }
   }
   if (lastErr) return { ok: false, reason: 'error', error: lastErr.message };

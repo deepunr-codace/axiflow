@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { ASSETS } from '../pdf/brand.js';
 import { ICONS } from './icons.js';
+import { saveUpload, readUpload, UPLOADS } from '../storage.js';
 
 /*
  * Design documents: { pages: [{ id, w, h, bg: { color, image }, elements: [...] }] }
@@ -12,35 +13,40 @@ import { ICONS } from './icons.js';
  *   shape   { shape: rect|ellipse, fill, stroke, sw, radius, gradient: { angle, stops: [[offset, color, opacity]] } }
  *   icon    { name, color }
  *   pricing { }   → line-item table bound to the document's items
- * Image sources: "asset:<path under assets/>" or "upload:<path under data/uploads/>" or a data: URL.
+ * Image sources: "asset:<path under assets/>" or "upload:<key in storage.js (Vercel Blob or data/uploads)>" or a data: URL.
  */
-export const DATA_DIR = process.env.DATA_DIR || path.resolve('data');
-export const UPLOADS = path.join(DATA_DIR, 'uploads');
+export { UPLOADS };
 export const FONTS = ['PR', 'PM', 'PS', 'PB'];
 
 export const newId = () => 'e' + crypto.randomBytes(5).toString('hex');
 
-/** Disk path for an image source, or null. Never escapes the asset / upload folders. */
+/** Disk path for an "asset:" source (files shipped with the app), or null. */
 export function srcPath(src) {
-  const m = /^(asset|upload):(.+)$/.exec(String(src || ''));
+  const m = /^(asset):(.+)$/.exec(String(src || ''));
   if (!m) return null;
-  const base = m[1] === 'asset' ? ASSETS : UPLOADS;
+  const base = ASSETS;
   const p = path.resolve(base, m[2]);
   if (!p.startsWith(path.resolve(base) + path.sep)) return null;
   return fs.existsSync(p) ? p : null;
 }
 
-/** Saves a data-URL image under data/uploads/<dir>/ and returns its "upload:" source. */
-export function saveDataUrl(dataUrl, dir, name = null) {
+/** Image bytes (or an asset path) for any source: asset:, upload: or data: URL. */
+export async function loadImage(src) {
+  const s = String(src || '');
+  if (/^data:image\/(png|jpe?g);base64,/.test(s)) return Buffer.from(s.split(',')[1], 'base64');
+  if (s.startsWith('upload:')) return readUpload(s.slice(7));
+  return srcPath(s);
+}
+
+/** Saves a data-URL image under uploads/<dir>/ and returns its "upload:" source. */
+export async function saveDataUrl(dataUrl, dir, name = null) {
   const m = /^data:image\/(png|jpeg|jpg);base64,(.+)$/.exec(String(dataUrl || ''));
   if (!m) throw new Error('Upload a PNG or JPEG image');
   const buf = Buffer.from(m[2], 'base64');
   if (buf.length > 8e6) throw new Error('Image too large (max 8 MB)');
   const ext = m[1] === 'png' ? 'png' : 'jpg';
-  const folder = path.join(UPLOADS, dir);
-  fs.mkdirSync(folder, { recursive: true });
   const file = `${name || crypto.randomBytes(8).toString('hex')}.${ext}`;
-  fs.writeFileSync(path.join(folder, file), buf);
+  await saveUpload(`${dir}/${file}`, buf, ext === 'png' ? 'image/png' : 'image/jpeg');
   return `upload:${dir}/${file}`;
 }
 

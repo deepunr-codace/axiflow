@@ -25,7 +25,7 @@ export async function writeProposal(lead, items) {
   const pkg = s.packages.find((p) => p.id === lead.recommended_package) || s.packages[0];
   if (aiEnabled()) {
     try {
-      const notes = all(`SELECT title, body FROM activities WHERE lead_id = :id AND type IN ('note','message_in') ORDER BY id DESC LIMIT 10`, { id: lead.id });
+      const notes = await all(`SELECT title, body FROM activities WHERE lead_id = :id AND type IN ('note','message_in') ORDER BY id DESC LIMIT 10`, { id: lead.id });
       const research = lead.research_json ? JSON.parse(lead.research_json) : null;
       const content = await runJson({
         purpose: 'proposal', leadId: lead.id, effort: s.ai.effort_writing, schema: SCHEMA, maxTokens: 12000,

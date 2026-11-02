@@ -1,11 +1,12 @@
 import { all, get } from '../db.js';
+import { addDays, nowISO } from '../util.js';
 import { getSettings } from '../settings.js';
 import { runJson, aiEnabled, obj, str, arr } from './claude.js';
 import { managerSystem, leadContext } from './playbook.js';
 
-const history = (leadId) => ({
-  messages: all(`SELECT direction, channel, body, created_at FROM messages WHERE lead_id = :leadId ORDER BY id DESC LIMIT 12`, { leadId }),
-  tasks: all(`SELECT title, outcome, done FROM tasks WHERE lead_id = :leadId AND kind = 'call' ORDER BY id DESC LIMIT 6`, { leadId }),
+const history = async (leadId) => ({
+  messages: await all(`SELECT direction, channel, body, created_at FROM messages WHERE lead_id = :leadId ORDER BY id DESC LIMIT 12`, { leadId }),
+  tasks: await all(`SELECT title, outcome, done FROM tasks WHERE lead_id = :leadId AND kind = 'call' ORDER BY id DESC LIMIT 6`, { leadId }),
 });
 
 /** Runs the AI path, falling back to rules on any failure. Returns [result, source]. */
@@ -38,7 +39,7 @@ export async function composeMessage(lead, goal, { links = {} } = {}) {
       system: managerSystem('write the next outreach message to a lead'),
       prompt: `Write the next message for this lead. Goal: ${goal}
 
-${leadContext(lead, history(lead.id))}
+${leadContext(lead, await history(lead.id))}
 
 Links you can use (insert the placeholder text exactly, at most one link per message): ${Object.keys(links).map((k) => `{{${k}}}`).join(', ') || 'none'}.
 Do not repeat earlier messages. Be specific to this business. Give one clear, low-friction next step.`,
@@ -75,13 +76,13 @@ export function classifyReplyRules(text, stage = null) {
 export async function analyzeReply(lead, text) {
   const s = getSettings();
   const [r, source] = await withFallback(
-    () => runJson({
+    async () => runJson({
       purpose: 'reply_analysis', leadId: lead.id, effort: s.ai.effort_light, schema: REPLY_SCHEMA,
       system: managerSystem('understand a reply from a lead and draft our response'),
       prompt: `The lead just replied:
 <untrusted>${text}</untrusted>
 
-${leadContext(lead, history(lead.id))}
+${leadContext(lead, await history(lead.id))}
 
 Classify the intent. Use "accept_proposal" only if the stage is proposal_sent and they clearly agree to go ahead with the proposal (a question or a conditional yes is not acceptance). If a reply is useful, draft it: answer questions honestly using only agency facts, handle objections calmly, and steer toward a short call using the placeholder {{booking_link}}.`,
     }),
@@ -121,12 +122,12 @@ function rulePlan(lead, after) {
 export async function planNextAction(lead, after) {
   const s = getSettings();
   let [plan, source] = await withFallback(
-    () => runJson({
+    async () => runJson({
       purpose: 'plan_next', leadId: lead.id, effort: s.ai.effort_light, schema: PLAN_SCHEMA,
       system: managerSystem('decide the best next follow-up for a lead in the outreach sequence'),
       prompt: `We just completed: ${after}. Decide the single best next action and its timing to convert this lead.
 
-${leadContext(lead, history(lead.id))}
+${leadContext(lead, await history(lead.id))}
 
 Options: "call" (a person on our team phones them; only if they have a valid phone), "message" (WhatsApp/email follow-up; only if they gave permission), "close" (stop active outreach and move them to long-term nurture marketing).
 Rules: at most 3 follow-ups after the intro in total; space touches 1-7 days apart; prefer a call when there has been silence after two messages and a phone is available; business hours only.`,
@@ -142,13 +143,13 @@ Rules: at most 3 follow-ups after the intro in total; space touches 1-7 days apa
 
 // -------------------------------------------------------------- daily briefing
 
-export function pipelineSnapshot() {
-  const by = Object.fromEntries(all(`SELECT stage, COUNT(*) n FROM leads GROUP BY stage`).map((r) => [r.stage, r.n]));
-  const pipes = Object.fromEntries(all(`SELECT COALESCE(pipe,'conversion') pipe, COUNT(*) n FROM leads WHERE stage NOT IN ('completed','closed_no_reply','not_interested','lost','do_not_contact') GROUP BY pipe`).map((r) => [r.pipe, r.n]));
-  const callsDue = all(`SELECT t.title, t.due_at, l.company FROM tasks t JOIN leads l ON l.id = t.lead_id WHERE t.kind = 'call' AND t.done = 0 ORDER BY COALESCE(t.due_at, t.created_at) LIMIT 15`);
-  const replies = all(`SELECT l.id, l.company, m.body FROM messages m JOIN leads l ON l.id = m.lead_id WHERE m.direction = 'in' AND m.created_at >= datetime('now','-2 days') ORDER BY m.id DESC LIMIT 10`);
-  const hot = all(`SELECT company, stage, score FROM leads WHERE stage IN ('replied','meeting_booked','proposal_sent') ORDER BY score DESC LIMIT 10`);
-  const money = get(`SELECT (SELECT COALESCE(SUM(total),0) FROM proposals WHERE status='sent') open_value, (SELECT COALESCE(SUM(amount),0) FROM invoices WHERE status='pending') outstanding`);
+export async function pipelineSnapshot() {
+  const by = Object.fromEntries((await all(`SELECT stage, COUNT(*) n FROM leads GROUP BY stage`)).map((r) => [r.stage, r.n]));
+  const pipes = Object.fromEntries((await all(`SELECT COALESCE(pipe,'conversion') pipe, COUNT(*) n FROM leads WHERE stage NOT IN ('completed','closed_no_reply','not_interested','lost','do_not_contact') GROUP BY pipe`)).map((r) => [r.pipe, r.n]));
+  const callsDue = await all(`SELECT t.title, t.due_at, l.company FROM tasks t JOIN leads l ON l.id = t.lead_id WHERE t.kind = 'call' AND t.done = 0 ORDER BY COALESCE(t.due_at, t.created_at) LIMIT 15`);
+  const replies = await all(`SELECT l.id, l.company, m.body FROM messages m JOIN leads l ON l.id = m.lead_id WHERE m.direction = 'in' AND m.created_at >= :since ORDER BY m.id DESC LIMIT 10`, { since: addDays(nowISO(), -2) });
+  const hot = await all(`SELECT company, stage, score FROM leads WHERE stage IN ('replied','meeting_booked','proposal_sent') ORDER BY score DESC LIMIT 10`);
+  const money = await get(`SELECT (SELECT COALESCE(SUM(total),0) FROM proposals WHERE status='sent') open_value, (SELECT COALESCE(SUM(amount),0) FROM invoices WHERE status='pending') outstanding`);
   return { by_stage: by, pipes, calls_due: callsDue, recent_replies: replies, hot_deals: hot, money };
 }
 
@@ -165,7 +166,7 @@ function ruleBriefing(snap) {
 
 export async function dailyBriefing() {
   const s = getSettings();
-  const snap = pipelineSnapshot();
+  const snap = await pipelineSnapshot();
   const [b, source] = await withFallback(
     async () => (await runJson({
       purpose: 'briefing', effort: s.ai.effort_writing,

@@ -1,4 +1,10 @@
-import { db, get, all, insert, update, run } from './db.js';
+import { addColumns, get, all, insert, update, run } from './db.js';
+import { background } from './background.js';
+import { writeScript, VERTICALS, LANGUAGES } from './ai/script.js';
+import { scriptPdf } from './pdf/script.js';
+import { auditWebsite } from './pipeline/enrich.js';
+import { addActivity } from './pipeline/log.js';
+import { crmEvent } from './crm-sync.js';
 import { getSettings } from './settings.js';
 import { nowISO, token, normalizeUrl, BASE_URL } from './util.js';
 import { aiEnabled } from './ai/claude.js';
@@ -16,9 +22,7 @@ import { getTemplate, defaultTemplate } from './design/templates.js';
  * A document = form input + a design (pages of editable elements) made from a template,
  * plus (proposals) the price line items. The editor, the AI assistant and the PDF all use the design.
  */
-for (const [col, type] of Object.entries({ design_json: 'TEXT', template_id: 'INTEGER', chat_json: 'TEXT' })) {
-  if (!db.prepare(`PRAGMA table_info(docs)`).all().some((c) => c.name === col)) db.exec(`ALTER TABLE docs ADD COLUMN ${col} ${type}`);
-}
+addColumns('docs', { design_json: 'TEXT', template_id: 'INTEGER', chat_json: 'TEXT' });
 
 const parse = (j, fb = null) => { try { return j ? JSON.parse(j) : fb; } catch { return fb; } };
 const str = (v, max = 2000) => String(v ?? '').trim().slice(0, max);
@@ -33,7 +37,8 @@ function pseudoLead(input) {
   };
 }
 
-const FIELDS = ['company', 'contact_name', 'industry', 'city', 'website', 'package', 'notes', 'research'];
+const FIELDS = ['company', 'contact_name', 'industry', 'city', 'website', 'package', 'notes', 'research', 'vertical', 'language', 'phone'];
+export const KINDS = ['brochure', 'proposal', 'script'];
 function cleanInput(raw) {
   const out = {};
   for (const f of FIELDS) out[f] = f === 'research' ? raw.research !== false && raw.research !== 0 && raw.research !== '0' : str(raw[f], f === 'notes' ? 6000 : 300);
@@ -41,49 +46,51 @@ function cleanInput(raw) {
   return out;
 }
 
-export const listDocs = (kind) => all(`SELECT id, kind, token, title, status, source, error, template_id, created_at, updated_at FROM docs WHERE kind = :kind ORDER BY id DESC LIMIT 100`, { kind });
+export const listDocs = async (kind) => await all(`SELECT id, kind, token, title, status, source, error, template_id, created_at, updated_at FROM docs WHERE kind = :kind ORDER BY id DESC LIMIT 100`, { kind });
 
-export function getDoc(id) {
-  const d = get(`SELECT * FROM docs WHERE id = :id`, { id });
+export async function getDoc(id) {
+  const d = await get(`SELECT * FROM docs WHERE id = :id`, { id });
   if (!d) return null;
   return { ...d, input: parse(d.input_json, {}), content: parse(d.content_json), items: parse(d.items_json, null), design: parse(d.design_json), chat: parse(d.chat_json, []) };
 }
 
-export function leadPrefill(leadId) {
-  const l = get(`SELECT * FROM leads WHERE id = :leadId`, { leadId });
+export async function leadPrefill(leadId) {
+  const l = await get(`SELECT * FROM leads WHERE id = :leadId`, { leadId });
   if (!l) return null;
   return {
     lead_id: l.id, company: l.company, contact_name: l.contact_name || '', industry: l.industry || '', city: l.city || '',
-    website: l.website || '', package: l.recommended_package || l.service || '', notes: l.notes || '',
+    website: l.website || '', package: l.recommended_package || l.service || '', notes: l.notes || '', phone: l.phone || '',
   };
 }
 
 // ------------------------------------------------------------------ jobs
 const running = new Set();
-function startJob(id, fn) {
+async function startJob(id, fn) {
   if (running.has(id)) return;
   running.add(id);
-  update('docs', id, { status: 'working', error: null, updated_at: nowISO() });
-  setImmediate(async () => {
+  await update('docs', id, { status: 'working', error: null, updated_at: nowISO() });
+  background(async () => {
     try {
       await fn();
-      update('docs', id, { status: 'ready', updated_at: nowISO() });
+      await update('docs', id, { status: 'ready', updated_at: nowISO() });
     } catch (e) {
-      update('docs', id, { status: 'error', error: String(e.message).slice(0, 500), updated_at: nowISO() });
+      await update('docs', id, { status: 'error', error: String(e.message).slice(0, 500), updated_at: nowISO() });
     } finally {
       running.delete(id);
     }
-  });
+  }, 'doc-job');
 }
-export function resumeDocs() {
-  for (const d of all(`SELECT id FROM docs WHERE status = 'working'`)) generate(d.id);
+/** Restarts generation jobs that never finished. staleMinutes: only jobs idle that long (serverless: the instance may have been stopped). */
+export async function resumeDocs({ staleMinutes = 0 } = {}) {
+  const before = new Date(Date.now() - staleMinutes * 60000).toISOString();
+  for (const d of await all(`SELECT id FROM docs WHERE status = 'working' AND updated_at <= :before`, { before })) await generate(d.id);
   // Documents made before the editor existed: lay out their saved copy with the built-in template (no AI).
   const s = getSettings();
-  for (const { id } of all(`SELECT id FROM docs WHERE status = 'ready' AND design_json IS NULL AND content_json IS NOT NULL`)) {
+  for (const { id } of await all(`SELECT id FROM docs WHERE status = 'ready' AND design_json IS NULL AND content_json IS NOT NULL`)) {
     try {
-      const d = getDoc(id);
+      const d = await getDoc(id);
       const design = d.kind === 'brochure' ? brochureDesign(d.content, s) : proposalDesign(d.content, d.items, s, { preparedFor: d.input.company });
-      update('docs', id, { design_json: cleanDesign(design), template_id: defaultTemplate(d.kind)?.id ?? null });
+      await update('docs', id, { design_json: cleanDesign(design), template_id: (await defaultTemplate(d.kind))?.id ?? null });
     } catch (e) {
       console.error('[tools] could not migrate doc', id, e.message);
     }
@@ -109,11 +116,19 @@ export function defaultItems(input) {
   });
 }
 
-export function createDoc(kind, raw) {
-  if (!['brochure', 'proposal'].includes(kind)) throw new Error('Unknown document type');
+export async function createDoc(kind, raw) {
+  if (!KINDS.includes(kind)) throw new Error('Unknown document type');
   const s = getSettings();
   const input = cleanInput(raw);
-  const tpl = (raw.template_id && getTemplate(Number(raw.template_id))) || defaultTemplate(kind);
+  if (kind === 'script') {
+    if (!VERTICALS.includes(input.vertical)) input.vertical = input.vertical ? 'Other' : '';
+    if (!LANGUAGES.includes(input.language)) input.language = LANGUAGES[0];
+    const now = nowISO();
+    const id = await insert('docs', { kind, token: token(), title: input.company, lead_id: Number(raw.lead_id) || null, template_id: null, input_json: input, status: 'working', created_at: now, updated_at: now });
+    await generate(id);
+    return id;
+  }
+  const tpl = (raw.template_id && await getTemplate(Number(raw.template_id))) || await defaultTemplate(kind);
   if (!tpl || tpl.kind !== kind) throw new Error('Template not found');
   if (kind === 'brochure') {
     const ids = s.brochure.services.map((x) => x.id);
@@ -121,20 +136,26 @@ export function createDoc(kind, raw) {
     if (!input.services.length) input.services = ids;
   } else if (!s.packages.some((p) => p.id === input.package)) input.package = s.packages[0].id;
   const now = nowISO();
-  const id = insert('docs', {
+  const id = await insert('docs', {
     kind, token: token(), title: input.company, lead_id: Number(raw.lead_id) || null, template_id: tpl.id,
     input_json: input, items_json: kind === 'proposal' ? defaultItems(input) : null, status: 'working', created_at: now, updated_at: now,
   });
-  generate(id);
+  await generate(id);
   return id;
 }
 
 /** (Re)builds the document's design from its template. Replaces manual edits. */
-export function generate(id) {
-  startJob(id, async () => {
-    const doc = getDoc(id);
+export async function generate(id) {
+  await startJob(id, async () => {
+    const doc = await getDoc(id);
     const s = getSettings();
-    const tpl = getTemplate(doc.template_id) || defaultTemplate(doc.kind);
+    if (doc.kind === 'script') {
+      const [research, audit] = await Promise.all([maybeResearch(doc.input), auditWebsite(normalizeUrl(doc.input.website)).catch(() => null)]);
+      const r = await writeScript(doc.input, research, audit);
+      await update('docs', id, { content_json: r.content, source: r.source, error: r.error ? `AI failed, used the standard script: ${r.error}`.slice(0, 500) : null, updated_at: nowISO() });
+      return;
+    }
+    const tpl = await getTemplate(doc.template_id) || await defaultTemplate(doc.kind);
     const research = await maybeResearch(doc.input);
     let design, content = null, source;
     if (tpl.mode === 'smart') {
@@ -151,15 +172,34 @@ export function generate(id) {
       design = r.design;
       source = r.source;
     }
-    update('docs', id, { design_json: cleanDesign(design), content_json: content, source, updated_at: nowISO() });
+    await update('docs', id, { design_json: cleanDesign(design), content_json: content, source, updated_at: nowISO() });
   });
 }
 
 // ----------------------------------------------------------- edit & pdf
-export function saveDoc(id, { design, items, title }) {
-  const doc = getDoc(id);
+/** Keeps a script's shape (strings and short lists only) whatever the browser sends. */
+function cleanScript(c) {
+  const s = (v, n = 2000) => String(v ?? '').slice(0, n);
+  const list = (v, n, f) => (Array.isArray(v) ? v.slice(0, n).map(f) : []);
+  return {
+    pitch_point: s(c.pitch_point, 300), introduction: s(c.introduction),
+    opportunities: list(c.opportunities, 8, (o) => ({ title: s(o?.title, 200), detail: s(o?.detail, 800) })).filter((o) => o.title || o.detail),
+    pitch_points: list(c.pitch_points, 6, (o) => ({ point: s(o?.point, 200), detail: s(o?.detail, 800) })).filter((o) => o.point || o.detail),
+    questions: list(c.questions, 12, (q) => s(q, 400)).filter(Boolean),
+    objections: list(c.objections, 8, (o) => ({ objection: s(o?.objection, 300), response: s(o?.response, 800) })).filter((o) => o.objection || o.response),
+    booking: { ask: s(c.booking?.ask, 800), if_yes: s(c.booking?.if_yes, 800), if_not_now: s(c.booking?.if_not_now, 800) },
+    script: s(c.script, 12000),
+  };
+}
+
+export async function saveDoc(id, { design, items, title, content }) {
+  const doc = await getDoc(id);
   if (!doc) throw new Error('Not found');
   const patch = { updated_at: nowISO() };
+  if (content !== undefined) {
+    if (doc.kind !== 'script') throw new Error('Only scripts are saved as text');
+    patch.content_json = cleanScript(content || {});
+  }
   if (design !== undefined) patch.design_json = cleanDesign(design);
   if (title !== undefined) patch.title = str(title, 200) || doc.title;
   if (items !== undefined) {
@@ -167,13 +207,13 @@ export function saveDoc(id, { design, items, title }) {
     patch.items_json = (items || []).map((i) => ({ name: str(i.name, 200), price: Math.max(0, Math.round(Number(String(i.price).replace(/[^\d.]/g, '')) || 0)) })).filter((i) => i.name);
     if (!patch.items_json.length) throw new Error('Add at least one line item');
   }
-  update('docs', id, patch);
-  return getDoc(id);
+  await update('docs', id, patch);
+  return await getDoc(id);
 }
 
 /** AI assistant: applies a chat request to the design; returns the reply and the updated document. */
 export async function chat(id, message, context = {}) {
-  const doc = getDoc(id);
+  const doc = await getDoc(id);
   if (!doc?.design) throw new Error('Document is not ready yet');
   const msg = str(message, 2000);
   if (!msg) throw new Error('Type a request');
@@ -181,12 +221,12 @@ export async function chat(id, message, context = {}) {
   const chatLog = [...(doc.chat || []), { role: 'user', text: msg, at: nowISO() }, { role: 'assistant', text: r.reply, applied: r.applied, skipped: r.skipped, at: nowISO() }].slice(-60);
   const patch = { chat_json: chatLog, updated_at: nowISO() };
   if (r.applied) { patch.design_json = r.design; if (doc.kind === 'proposal') patch.items_json = r.items; }
-  update('docs', id, patch);
-  return { reply: r.reply, applied: r.applied, skipped: r.skipped, doc: getDoc(id) };
+  await update('docs', id, patch);
+  return { reply: r.reply, applied: r.applied, skipped: r.skipped, doc: await getDoc(id) };
 }
 
-export function deleteDoc(id) {
-  run(`DELETE FROM docs WHERE id = :id`, { id });
+export async function deleteDoc(id) {
+  await run(`DELETE FROM docs WHERE id = :id`, { id });
 }
 
 const slug = (s) => String(s || 'client').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'client';
@@ -194,21 +234,25 @@ export const docFilename = (d) => `${slug(d.title)}-${d.kind}.pdf`;
 export const docShareUrl = (d) => `${BASE_URL}/pdf/doc/${d.token}.pdf`;
 
 export function docPdf(d) {
-  if (d.status !== 'ready' || !d.design) throw new Error('Document is not ready yet');
   const s = getSettings();
+  if (d.kind === 'script') {
+    if (d.status !== 'ready' || !d.content) throw new Error('Script is not ready yet');
+    return scriptPdf(d.content, d.input, s);
+  }
+  if (d.status !== 'ready' || !d.design) throw new Error('Document is not ready yet');
   return renderDesignPdf(d.design, { title: `${d.title} ${d.kind}`, author: s.agency.name, items: d.items, settings: s });
 }
 
-export function docSummary(d) {
+export async function docSummary(d) {
   const s = getSettings();
   const total = (d.items || []).reduce((a, i) => a + i.price, 0);
-  const tpl = d.template_id ? get(`SELECT id, name, mode FROM design_templates WHERE id = :id`, { id: d.template_id }) : null;
+  const tpl = d.template_id ? await get(`SELECT id, name, mode FROM design_templates WHERE id = :id`, { id: d.template_id }) : null;
   return { ...d, template: tpl, share_url: docShareUrl(d), total, tax_label: s.billing.tax_label, currency: s.billing.currency };
 }
 
 /** Preview design for a template card: smart templates render the default copy for a sample client. */
-export function templatePreview(id) {
-  const t = getTemplate(id);
+export async function templatePreview(id) {
+  const t = await getTemplate(id);
   if (!t) return null;
   if (t.mode !== 'smart') return t.design;
   const s = getSettings();
@@ -218,3 +262,19 @@ export function templatePreview(id) {
 }
 const templateBrochureCopy = (input) => templateBrochure(input, getSettings().brochure.services.map((x) => x.id));
 const templateProposalCopy = (input) => templateProposal(input, defaultItems(input));
+
+/** Script → the lead's call script: the CRM gets it with the next sync, so the telecaller sees it there. */
+export async function useScriptForLead(id) {
+  const d = await getDoc(id);
+  if (!d || d.kind !== 'script' || !d.content) throw new Error('Script is not ready yet');
+  if (!d.lead_id) throw new Error('This script was not made from a lead');
+  const lead = await get(`SELECT id, pitch_json FROM leads WHERE id = :id`, { id: d.lead_id });
+  if (!lead) throw new Error('Lead not found');
+  const pitch = parse(lead.pitch_json, {}) || {};
+  pitch.telecaller_script = d.content.script;
+  if (d.content.pitch_point) pitch.headline = pitch.headline || d.content.pitch_point;
+  await update('leads', lead.id, { pitch_json: pitch, updated_at: nowISO() });
+  await addActivity(lead.id, 'note', 'Call script updated from the Pitch Script Maker', d.content.pitch_point || null);
+  await crmEvent(lead.id, 'lead.script_updated', { telecaller_script: d.content.script, pitch_point: d.content.pitch_point });
+  return { ok: true };
+}

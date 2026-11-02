@@ -1,4 +1,4 @@
-import { db, get, all, insert, update, run } from './db.js';
+import { registerSchema, get, all, insert, update, run } from './db.js';
 import { getSettings } from './settings.js';
 import { nowISO, tzParts, zonedToUtc } from './util.js';
 
@@ -10,7 +10,7 @@ import { nowISO, tzParts, zonedToUtc } from './util.js';
  * logged from the CRM, meetings, proposals, accepted proposals) plus numbers the team logs by hand
  * for work done outside this app.
  */
-db.exec(`
+registerSchema(`
 CREATE TABLE IF NOT EXISTS plans (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
@@ -180,8 +180,8 @@ const toRow = (p) => ({
   work_days_json: p.work_days, funnel_json: p.funnel, targets_json: p.targets, weeks_json: p.weeks, daily_json: p.daily, notes: p.notes,
 });
 
-export function getPlan(id) {
-  const r = get(`SELECT * FROM plans WHERE id = :id`, { id });
+export async function getPlan(id) {
+  const r = await get(`SELECT * FROM plans WHERE id = :id`, { id });
   if (!r) return null;
   return {
     id: r.id, name: r.name, status: r.status, start_date: r.start_date, end_date: r.end_date, revenue_target: r.revenue_target, avg_value: r.avg_value,
@@ -190,51 +190,51 @@ export function getPlan(id) {
   };
 }
 
-export function createPlan(raw) {
+export async function createPlan(raw) {
   const p = cleanPlan(raw);
   const now = nowISO();
-  const id = insert('plans', { ...toRow(p), status: 'draft', created_at: now, updated_at: now });
-  if (raw.activate) setStatus(id, 'active');
-  return getPlan(id);
+  const id = await insert('plans', { ...toRow(p), status: 'draft', created_at: now, updated_at: now });
+  if (raw.activate) await setStatus(id, 'active');
+  return await getPlan(id);
 }
 
-export function updatePlan(id, raw) {
-  const prev = getPlan(id);
+export async function updatePlan(id, raw) {
+  const prev = await getPlan(id);
   if (!prev) throw new Error('Plan not found');
   const p = cleanPlan(raw, prev);
-  update('plans', id, { ...toRow(p), updated_at: nowISO() });
-  return getPlan(id);
+  await update('plans', id, { ...toRow(p), updated_at: nowISO() });
+  return await getPlan(id);
 }
 
 /** Only one plan runs at a time: activating one pauses the one that was running. */
-export function setStatus(id, status) {
+export async function setStatus(id, status) {
   if (!STATUSES.includes(status)) throw new Error('Unknown status');
-  const p = getPlan(id);
+  const p = await getPlan(id);
   if (!p) throw new Error('Plan not found');
   const now = nowISO();
-  if (status === 'active') run(`UPDATE plans SET status = 'paused', updated_at = :now WHERE status = 'active' AND id != :id`, { id, now });
-  update('plans', id, { status, updated_at: now, ...(status === 'active' ? { activated_at: now } : {}) });
-  return getPlan(id);
+  if (status === 'active') await run(`UPDATE plans SET status = 'paused', updated_at = :now WHERE status = 'active' AND id != :id`, { id, now });
+  await update('plans', id, { status, updated_at: now, ...(status === 'active' ? { activated_at: now } : {}) });
+  return await getPlan(id);
 }
 
-export function duplicatePlan(id) {
-  const p = getPlan(id);
+export async function duplicatePlan(id) {
+  const p = await getPlan(id);
   if (!p) throw new Error('Plan not found');
   const len = diffDays(p.start_date, p.end_date);
   const start = nextMonday();
-  return createPlan({ ...p, name: `${p.name} (copy)`, start_date: start, end_date: addDate(start, len) });
+  return await createPlan({ ...p, name: `${p.name} (copy)`, start_date: start, end_date: addDate(start, len) });
 }
 
-export const deletePlan = (id) => run(`DELETE FROM plans WHERE id = :id`, { id });
+export const deletePlan = async (id) => await run(`DELETE FROM plans WHERE id = :id`, { id });
 
-export function addEntry(planId, raw) {
-  if (!getPlan(planId)) throw new Error('Plan not found');
+export async function addEntry(planId, raw) {
+  if (!await getPlan(planId)) throw new Error('Plan not found');
   const date = isDate(raw.date) ? raw.date : today();
   const e = { calls: int(raw.calls), meetings: int(raw.meetings), proposals: int(raw.proposals), conversions: int(raw.conversions), revenue: num(raw.revenue) };
   if (!Object.values(e).some(Boolean)) throw new Error('Enter at least one number');
-  return insert('plan_entries', { plan_id: planId, date, ...e, note: String(raw.note || '').slice(0, 500), created_at: nowISO() });
+  return await insert('plan_entries', { plan_id: planId, date, ...e, note: String(raw.note || '').slice(0, 500), created_at: nowISO() });
 }
-export const deleteEntry = (planId, id) => run(`DELETE FROM plan_entries WHERE id = :id AND plan_id = :planId`, { id, planId });
+export const deleteEntry = async (planId, id) => await run(`DELETE FROM plan_entries WHERE id = :id AND plan_id = :planId`, { id, planId });
 
 // ---------------------------------------------------------------- actuals
 /** UTC bounds of a range of local dates (inclusive), in the agency's timezone. */
@@ -243,20 +243,22 @@ function bounds(from, to) {
 }
 
 /** What actually happened between two local dates: pipeline data + numbers logged by hand. */
-export function actuals(planId, from, to) {
+export async function actuals(planId, from, to) {
   const { a, b } = bounds(from, to);
-  const n = (sql) => get(sql, { a, b })?.n || 0;
-  const auto = {
-    calls: n(`SELECT COUNT(*) n FROM events WHERE workflow = 'calls' AND step = 'outcome' AND created_at >= :a AND created_at < :b`),
-    meetings: n(`SELECT COUNT(*) n FROM meetings WHERE COALESCE(status,'') NOT IN ('cancelled','canceled') AND start_at >= :a AND start_at < :b`),
-    proposals: n(`SELECT COUNT(*) n FROM proposals WHERE created_at >= :a AND created_at < :b`)
-      + n(`SELECT COUNT(*) n FROM docs WHERE kind = 'proposal' AND status = 'ready' AND created_at >= :a AND created_at < :b
+  const n = async (sql) => (await get(sql, { a, b }))?.n || 0;
+  // independent queries: run them together (each one is a network round trip on Neon)
+  const [calls, meetings, props, docProps, conversions, revenue, m] = await Promise.all([
+    n(`SELECT COUNT(*) n FROM events WHERE workflow = 'calls' AND step = 'outcome' AND created_at >= :a AND created_at < :b`),
+    n(`SELECT COUNT(*) n FROM meetings WHERE COALESCE(status,'') NOT IN ('cancelled','canceled') AND start_at >= :a AND start_at < :b`),
+    n(`SELECT COUNT(*) n FROM proposals WHERE created_at >= :a AND created_at < :b`),
+    n(`SELECT COUNT(*) n FROM docs WHERE kind = 'proposal' AND status = 'ready' AND created_at >= :a AND created_at < :b
            AND (lead_id IS NULL OR lead_id NOT IN (SELECT lead_id FROM proposals))`),
-    conversions: n(`SELECT COUNT(*) n FROM proposals WHERE status = 'accepted' AND responded_at >= :a AND responded_at < :b`),
-    revenue: get(`SELECT COALESCE(SUM(COALESCE(subtotal, total)), 0) n FROM proposals WHERE status = 'accepted' AND responded_at >= :a AND responded_at < :b`, { a, b })?.n || 0,
-  };
-  const m = get(`SELECT COALESCE(SUM(calls),0) calls, COALESCE(SUM(meetings),0) meetings, COALESCE(SUM(proposals),0) proposals,
-    COALESCE(SUM(conversions),0) conversions, COALESCE(SUM(revenue),0) revenue FROM plan_entries WHERE plan_id = :planId AND date >= :from AND date <= :to`, { planId, from, to });
+    n(`SELECT COUNT(*) n FROM proposals WHERE status = 'accepted' AND responded_at >= :a AND responded_at < :b`),
+    n(`SELECT COALESCE(SUM(COALESCE(subtotal, total)), 0) n FROM proposals WHERE status = 'accepted' AND responded_at >= :a AND responded_at < :b`),
+    get(`SELECT COALESCE(SUM(calls),0) calls, COALESCE(SUM(meetings),0) meetings, COALESCE(SUM(proposals),0) proposals,
+    COALESCE(SUM(conversions),0) conversions, COALESCE(SUM(revenue),0) revenue FROM plan_entries WHERE plan_id = :planId AND date >= :from AND date <= :to`, { planId, from, to }),
+  ]);
+  const auto = { calls, meetings, proposals: props + docProps, conversions, revenue };
   const out = {};
   for (const k of [...METRICS, 'revenue']) out[k] = (auto[k] || 0) + (m?.[k] || 0);
   return out;
@@ -264,7 +266,7 @@ export function actuals(planId, from, to) {
 
 // ------------------------------------------------------------------ status
 /** Everything the home card and the plan page show: progress, pace, weekly review, today's job. */
-export function planStatus(p) {
+export async function planStatus(p) {
   const t = today();
   const weeks = weeksOf(p.start_date, p.end_date, p.work_days);
   const phase = toMs(t) < toMs(p.start_date) ? 'upcoming' : toMs(t) > toMs(p.end_date) ? 'ended' : 'running';
@@ -273,21 +275,24 @@ export function planStatus(p) {
   const workDone = phase === 'upcoming' ? 0 : countWorkDays(p.start_date, clampEnd, p.work_days);
   const workLeft = phase === 'ended' ? 0 : countWorkDays(phase === 'upcoming' ? p.start_date : t, p.end_date, p.work_days);
 
-  const total = actuals(p.id, p.start_date, phase === 'upcoming' ? p.start_date : clampEnd);
+  const total = await actuals(p.id, p.start_date, phase === 'upcoming' ? p.start_date : clampEnd);
   const targets = { ...p.targets, revenue: p.revenue_target };
 
   // Weekly review: target vs actual, met or not, and the change on the week before.
   let prev = null;
-  const weekRows = weeks.map((w, i) => {
+  const states = weeks.map((w) => (toMs(t) < toMs(w.start) ? 'upcoming' : toMs(t) > toMs(w.end) ? 'done' : 'current'));
+  const weekActuals = await Promise.all(weeks.map((w, i) => (states[i] === 'upcoming' ? null : actuals(p.id, w.start, states[i] === 'current' ? t : w.end))));
+  const weekRows = [];
+  for (const [i, w] of weeks.entries()) {
     const target = { ...(p.weeks[i] || {}), revenue: (p.weeks[i]?.conversions || 0) * p.avg_value };
     const state = toMs(t) < toMs(w.start) ? 'upcoming' : toMs(t) > toMs(w.end) ? 'done' : 'current';
-    const actual = state === 'upcoming' ? null : actuals(p.id, w.start, state === 'current' ? t : w.end);
+    const actual = weekActuals[i];
     const met = actual ? Object.fromEntries(METRICS.map((m) => [m, actual[m] >= (target[m] || 0)])) : null;
     const row = { index: i + 1, ...w, state, target, actual, met, all_met: met ? METRICS.every((m) => met[m]) : null,
       change: actual && prev && state === 'done' ? Object.fromEntries(METRICS.map((m) => [m, actual[m] - prev[m]])) : null };
     if (actual) prev = actual;
-    return row;
-  });
+    weekRows.push(row);
+  }
 
   // Pace: where we should be by today (finished weeks in full, the current week pro rata).
   const expected = Object.fromEntries([...METRICS, 'revenue'].map((m) => [m, 0]));
@@ -305,7 +310,7 @@ export function planStatus(p) {
 
   const isWorkDay = p.work_days.includes(weekday(t));
   const plannedCalls = p.daily.new_calls || (totalWork ? Math.ceil(p.targets.calls / totalWork) : 0);
-  const todayActual = phase === 'running' ? actuals(p.id, t, t) : null;
+  const todayActual = phase === 'running' ? await actuals(p.id, t, t) : null;
   const callMin = plannedCalls * (p.daily.call_minutes || 0) + (p.daily.break_minutes || 0) + (p.daily.buffer_minutes || 0) + (p.daily.followup_minutes || 0);
   const current = weekRows.find((w) => w.state === 'current') || null;
   const lastDone = [...weekRows].reverse().find((w) => w.state === 'done') || null;
@@ -323,15 +328,15 @@ export function planStatus(p) {
   };
 }
 
-export function listPlans() {
-  return all(`SELECT id FROM plans WHERE status != 'archived' ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END, start_date DESC`)
-    .concat(all(`SELECT id FROM plans WHERE status = 'archived' ORDER BY start_date DESC LIMIT 20`))
-    .map(({ id }) => { const p = getPlan(id); const s = planStatus(p); return { ...p, phase: s.phase, pace: { revenue: s.pace.revenue, conversions: s.pace.conversions }, work_days_total: s.work_days_total }; });
+export async function listPlans() {
+  return Promise.all((await all(`SELECT id FROM plans WHERE status != 'archived' ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END, start_date DESC`))
+    .concat(await all(`SELECT id FROM plans WHERE status = 'archived' ORDER BY start_date DESC LIMIT 20`))
+    .map(async ({ id }) => { const p = await getPlan(id); const s = await planStatus(p); return { ...p, phase: s.phase, pace: { revenue: s.pace.revenue, conversions: s.pace.conversions }, work_days_total: s.work_days_total }; }));
 }
 
-export function activePlan() {
-  const r = get(`SELECT id FROM plans WHERE status = 'active' ORDER BY activated_at DESC LIMIT 1`);
+export async function activePlan() {
+  const r = await get(`SELECT id FROM plans WHERE status = 'active' ORDER BY activated_at DESC LIMIT 1`);
   if (!r) return null;
-  const p = getPlan(r.id);
-  return { plan: p, status: planStatus(p) };
+  const p = await getPlan(r.id);
+  return { plan: p, status: await planStatus(p) };
 }

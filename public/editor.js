@@ -321,7 +321,7 @@ export async function openEditor(root, { doc, api, toast, busy, modal, onChange 
     const c = document.createElement('canvas');
     c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
     c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-    const png = file.type === 'image/png' && file.size < 4e6;
+    const png = file.type === 'image/png' && file.size < 2.5e6; // keep requests under the hosting limit
     const data = c.toDataURL(png ? 'image/png' : 'image/jpeg', 0.88);
     status('Uploading image…');
     const r = await api('/design/images', { body: { image: data } });

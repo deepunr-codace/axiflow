@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 
-export const BASE_URL = (process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`).replace(/\/$/, '');
+export const BASE_URL = (process.env.BASE_URL
+  || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : '')
+  || `http://localhost:${process.env.PORT || 3000}`).replace(/\/$/, '');
 
 export const nowISO = () => new Date().toISOString();
 export const addDays = (d, n) => new Date(new Date(d).getTime() + n * 86400000).toISOString();

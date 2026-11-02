@@ -35,7 +35,7 @@ export function mapOutcome(v) {
 }
 
 /** Applies CRM field changes to a lead. Only real changes are written; interest and DNC re-route the lead. */
-export function applyCrmUpdate(lead, b, source = 'CRM') {
+export async function applyCrmUpdate(lead, b, source = 'CRM') {
   const n = engine.normalizeLeadInput({ ...lead, ...b });
   const same = (x, y) => String(x ?? '') === String(y ?? '') || (typeof y === 'boolean' && Number(x) === Number(y));
   const patch = {};
@@ -46,13 +46,13 @@ export function applyCrmUpdate(lead, b, source = 'CRM') {
   if ('phone' in patch) patch.phone_valid = n.phone_valid;
   if ((patch.wa_opt_in || patch.email_opt_in) && !lead.consent_at) Object.assign(patch, { consent_at: nowISO(), consent_source: source });
   if (Object.keys(patch).length) {
-    update('leads', lead.id, { ...patch, updated_at: nowISO() });
-    addActivity(lead.id, 'system', `Updated from ${source}: ${Object.keys(patch).filter((k) => !k.endsWith('_valid')).join(', ')}`);
+    await update('leads', lead.id, { ...patch, updated_at: nowISO() });
+    await addActivity(lead.id, 'system', `Updated from ${source}: ${Object.keys(patch).filter((k) => !k.endsWith('_valid')).join(', ')}`);
   }
   if (b.do_not_contact && !lead.do_not_contact) {
-    engine.setStage(engine.getLead(lead.id), 'do_not_contact', `flagged in ${source}`, { do_not_contact: 1, next_action_at: null, next_action_type: null });
+    await engine.setStage(await engine.getLead(lead.id), 'do_not_contact', `flagged in ${source}`, { do_not_contact: 1, next_action_at: null, next_action_type: null });
   } else if (b.interested && b.interested !== 'unknown' && b.interested !== lead.interested) {
-    engine.applyInterestChange(lead.id, n.interested, `${source}: interested=${n.interested}`);
+    await engine.applyInterestChange(lead.id, n.interested, `${source}: interested=${n.interested}`);
   }
   return Object.keys(patch);
 }
@@ -66,10 +66,10 @@ export async function handleTwentyEvent(body) {
   if (object !== cfg.object) return { ignored: `object "${object}" (configured: ${cfg.object})` };
   const f = (k) => first(data, cfg.fields[k]);
   const ext = String(data.id);
-  let lead = get(`SELECT * FROM leads WHERE external_id = :ext`, { ext });
+  let lead = await get(`SELECT * FROM leads WHERE external_id = :ext`, { ext });
 
   if (action === 'deleted') {
-    if (lead && !['completed', 'lost', 'do_not_contact'].includes(lead.stage)) engine.setStage(lead, 'lost', 'deleted in CRM', { lost_reason: 'deleted in CRM', next_action_at: null });
+    if (lead && !['completed', 'lost', 'do_not_contact'].includes(lead.stage)) await engine.setStage(lead, 'lost', 'deleted in CRM', { lost_reason: 'deleted in CRM', next_action_at: null });
     return { action: 'deleted', id: lead?.id ?? null };
   }
 
@@ -88,27 +88,27 @@ export async function handleTwentyEvent(body) {
 
   if (!lead) {
     if (!input.company) return { ignored: 'no company name' };
-    const r = engine.createLead({ ...input, interested: input.interested || 'unknown' }, { source: 'crm' });
-    logEvent(r.id, 'twenty', event, 'ok', r.duplicate ? 'merged into existing lead' : 'created');
+    const r = await engine.createLead({ ...input, interested: input.interested || 'unknown' }, { source: 'crm' });
+    await logEvent(r.id, 'twenty', event, 'ok', r.duplicate ? 'merged into existing lead' : 'created');
     return { action: r.duplicate ? 'merged' : 'created', id: r.id };
   }
 
-  const changed = applyCrmUpdate(lead, input, 'Twenty');
+  const changed = await applyCrmUpdate(lead, input, 'Twenty');
   const out = { action: 'updated', id: lead.id, changed };
 
   // Telecaller's call result. The key stops the same value being processed twice.
   const outcome = mapOutcome(f('call_outcome'));
   if (!outcome) {
-    if (lead.crm_call_key) update('leads', lead.id, { crm_call_key: null });
+    if (lead.crm_call_key) await update('leads', lead.id, { crm_call_key: null });
   } else {
     const key = [outcome, f('call_notes') || '', f('callback_at') || ''].join('|');
     if (key !== lead.crm_call_key) {
-      update('leads', lead.id, { crm_call_key: key });
+      await update('leads', lead.id, { crm_call_key: key });
       if (engine.CALL_OUTCOMES.includes(outcome)) {
         await engine.logCrmCall(lead.id, outcome, { notes: String(f('call_notes') || ''), callbackAt: f('callback_at') || null });
         out.call = outcome;
       } else {
-        logEvent(lead.id, 'twenty', 'call_outcome', 'error', `unknown outcome "${f('call_outcome')}"`);
+        await logEvent(lead.id, 'twenty', 'call_outcome', 'error', `unknown outcome "${f('call_outcome')}"`);
       }
     }
   }
@@ -116,14 +116,14 @@ export async function handleTwentyEvent(body) {
   // Proposal decision recorded by the telecaller.
   const decision = norm(f('proposal_decision'));
   if (!decision) {
-    if (lead.crm_proposal_key) update('leads', lead.id, { crm_proposal_key: null });
+    if (lead.crm_proposal_key) await update('leads', lead.id, { crm_proposal_key: null });
   } else if (decision !== lead.crm_proposal_key && ['accepted', 'declined'].includes(decision)) {
-    update('leads', lead.id, { crm_proposal_key: decision });
+    await update('leads', lead.id, { crm_proposal_key: decision });
     try {
       await engine.decideProposal(lead.id, decision, { reason: String(f('decline_reason') || ''), by: 'Twenty' });
       out.proposal = decision;
     } catch (e) {
-      logEvent(lead.id, 'twenty', 'proposal_decision', 'skipped', e.message);
+      await logEvent(lead.id, 'twenty', 'proposal_decision', 'skipped', e.message);
     }
   }
   return out;

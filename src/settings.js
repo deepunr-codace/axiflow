@@ -429,23 +429,23 @@ DEFAULT_TEMPLATES.push(
 
 const OUTDATED = ['short personalised brochure for you', 'accept it online in one click', 'View & accept:', 'adjust the scope if needed. Just reply here.'];
 
-export function seedDefaults() {
+export async function seedDefaults() {
   for (const t of DEFAULT_TEMPLATES) {
-    const cur = get(`SELECT email_body, wa_body FROM templates WHERE key = :key`, { key: t.key });
+    const cur = await get(`SELECT email_body, wa_body FROM templates WHERE key = :key`, { key: t.key });
     if (cur && OUTDATED.some((o) => `${cur.email_body} ${cur.wa_body}`.includes(o))) {
-      run(`UPDATE templates SET subject=:subject, email_body=:email_body, wa_body=:wa_body WHERE key=:key`,
+      await run(`UPDATE templates SET subject=:subject, email_body=:email_body, wa_body=:wa_body WHERE key=:key`,
         { key: t.key, subject: t.subject, email_body: t.email_body, wa_body: t.wa_body });
     }
   }
   for (const t of DEFAULT_TEMPLATES) {
-    run(`INSERT OR IGNORE INTO templates (key,label,subject,email_body,wa_body,wa_template_name)
-         VALUES (:key,:label,:subject,:email_body,:wa_body,:wa_template_name)`, t);
+    await run(`INSERT INTO templates (key,label,subject,email_body,wa_body,wa_template_name)
+         VALUES (:key,:label,:subject,:email_body,:wa_body,:wa_template_name) ON CONFLICT (key) DO NOTHING`, t);
   }
-  if (!get(`SELECT 1 FROM settings WHERE key='app'`)) {
-    run(`INSERT INTO settings (key,value) VALUES ('app', :v)`, { v: JSON.stringify(DEFAULT_SETTINGS) });
+  if (!(await get(`SELECT 1 AS one FROM settings WHERE key='app'`))) {
+    await run(`INSERT INTO settings (key,value) VALUES ('app', :v) ON CONFLICT (key) DO NOTHING`, { v: JSON.stringify(DEFAULT_SETTINGS) });
   }
   // Rename: replace the old placeholder brand only where it was never edited.
-  const s = getSettings();
+  const s = await loadSettings();
   const a = s.agency;
   const D = DEFAULT_SETTINGS.agency;
   const renamed = {
@@ -456,7 +456,7 @@ export function seedDefaults() {
     ...(a.address === 'Bengaluru, India' ? { address: D.address } : {}),
   };
   if (Object.keys(renamed).length || s.billing.invoice_prefix === 'WS') {
-    saveSettings({ agency: renamed, ...(s.billing.invoice_prefix === 'WS' ? { billing: { invoice_prefix: 'AWS' } } : {}) });
+    await saveSettings({ agency: renamed, ...(s.billing.invoice_prefix === 'WS' ? { billing: { invoice_prefix: 'AWS' } } : {}) });
   }
 }
 
@@ -469,24 +469,37 @@ function deepMerge(base, over) {
   return out;
 }
 
+/*
+ * Settings are read on every request, so they are kept in memory: loadSettings() refreshes the copy
+ * from the database (the server does it at the start of each request, cron and background jobs do
+ * it when they start) and getSettings() returns it synchronously.
+ */
+let cached = null;
+export async function loadSettings() {
+  const row = await get(`SELECT value FROM settings WHERE key='app'`);
+  cached = deepMerge(DEFAULT_SETTINGS, row ? JSON.parse(row.value) : {});
+  return structuredClone(cached);
+}
 export function getSettings() {
-  const row = get(`SELECT value FROM settings WHERE key='app'`);
-  return deepMerge(DEFAULT_SETTINGS, row ? JSON.parse(row.value) : {});
+  return structuredClone(cached || DEFAULT_SETTINGS);
 }
 
-export function saveSettings(partial) {
-  const merged = deepMerge(getSettings(), partial);
-  run(`INSERT INTO settings (key,value) VALUES ('app', :v) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, { v: JSON.stringify(merged) });
-  return merged;
+export async function saveSettings(partial) {
+  const merged = deepMerge(await loadSettings(), partial);
+  await run(`INSERT INTO settings (key,value) VALUES ('app', :v) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, { v: JSON.stringify(merged) });
+  cached = merged;
+  return structuredClone(merged);
 }
 
-export function getState(key, fallback = null) {
-  const row = get(`SELECT value FROM settings WHERE key = :key`, { key: 'state:' + key });
+export async function getState(key, fallback = null) {
+  const row = await get(`SELECT value FROM settings WHERE key = :key`, { key: 'state:' + key });
   return row ? JSON.parse(row.value) : fallback;
 }
-export function setState(key, value) {
-  run(`INSERT INTO settings (key,value) VALUES (:key, :v) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, { key: 'state:' + key, v: JSON.stringify(value) });
+export async function setState(key, value) {
+  await run(`INSERT INTO settings (key,value) VALUES (:key, :v) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, { key: 'state:' + key, v: JSON.stringify(value) });
 }
 
-export const getTemplates = () => all(`SELECT * FROM templates ORDER BY rowid`);
-export const getTemplate = (key) => get(`SELECT * FROM templates WHERE key = :key`, { key });
+const TEMPLATE_ORDER = DEFAULT_TEMPLATES.map((t) => t.key);
+const orderOf = (k) => { const i = TEMPLATE_ORDER.indexOf(k); return i < 0 ? 999 : i; };
+export const getTemplates = async () => (await all(`SELECT * FROM templates`)).sort((a, b) => orderOf(a.key) - orderOf(b.key) || a.key.localeCompare(b.key));
+export const getTemplate = async (key) => await get(`SELECT * FROM templates WHERE key = :key`, { key });

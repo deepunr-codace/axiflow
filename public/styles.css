@@ -985,3 +985,15 @@ details.dd > div > * .mi { font-size: 18px; color: var(--muted); }
 .ed-toolbar .btn.ghost .mi { margin: 0; font-size: 19px; }
 kbd .mi { font-size: 13px; vertical-align: -2px; }
 .pal-foot kbd { margin-right: 3px; }
+
+/* ---- Pitch scripts ---- */
+.sc-head { gap: 10px; align-items: center; margin-top: 4px; }
+.sc-form { display: grid; gap: 16px; margin-top: 16px; }
+.sc-form .grid { gap: 16px; }
+.sc-form h2 { display: flex; align-items: center; }
+.sc-point input { font-weight: 500; }
+.sc-list { display: grid; gap: 10px; margin-bottom: 10px; }
+.sc-row { display: grid; grid-template-columns: minmax(140px, 1fr) 2.2fr auto; gap: 10px; align-items: start; }
+.sc-row textarea { min-height: 0; }
+.sc-script { font: 14.5px/1.75 var(--sans); min-height: 420px; }
+@media (max-width: 700px) { .sc-row { grid-template-columns: 1fr auto; } .sc-row [data-b] { grid-column: 1 / -1; grid-row: 2; } }

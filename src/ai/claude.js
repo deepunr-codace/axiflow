@@ -26,21 +26,21 @@ export function aiEnabled() {
   return !!getSettings().ai.enabled && !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
 }
 
-export function aiStatus() {
+export async function aiStatus() {
   const s = getSettings();
   return {
     enabled: aiEnabled(),
     key_set: !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN),
     model: s.ai.model,
-    spent_today_usd: Number(spentToday(s).toFixed(4)),
+    spent_today_usd: Number((await spentToday(s)).toFixed(4)),
     daily_budget_usd: s.ai.daily_budget_usd,
   };
 }
 
-function spentToday(s) {
+async function spentToday(s) {
   const { date } = tzParts(new Date(), s.schedule.timezone);
   const since = zonedToUtc(date, '00:00', s.schedule.timezone);
-  return get(`SELECT COALESCE(SUM(cost_usd),0) v FROM ai_calls WHERE created_at >= :since`, { since }).v;
+  return (await get(`SELECT COALESCE(SUM(cost_usd),0) v FROM ai_calls WHERE created_at >= :since`, { since })).v;
 }
 
 // --- concurrency limiter
@@ -61,8 +61,8 @@ function cost(model, inTok, outTok, searches) {
   return (inTok * pi + outTok * po) / 1e6 + searches * WEB_SEARCH_USD;
 }
 
-function logCall({ leadId, purpose, model, usage, ms, status, error }) {
-  insert('ai_calls', {
+async function logCall({ leadId, purpose, model, usage, ms, status, error }) {
+  await insert('ai_calls', {
     lead_id: leadId ?? null, purpose, model,
     input_tokens: usage.in, output_tokens: usage.out, web_searches: usage.ws,
     cost_usd: cost(model, usage.in, usage.out, usage.ws), ms, status, error: error?.slice(0, 500), created_at: nowISO(),
@@ -76,10 +76,10 @@ function addUsage(acc, u) {
   acc.ws += u.server_tool_use?.web_search_requests || 0;
 }
 
-function preflight() {
+async function preflight() {
   const s = getSettings();
   if (!aiEnabled()) throw new AiError('AI is disabled or ANTHROPIC_API_KEY is not set');
-  if (spentToday(s) >= s.ai.daily_budget_usd) throw new AiError(`Daily AI budget of $${s.ai.daily_budget_usd} reached`);
+  if (await spentToday(s) >= s.ai.daily_budget_usd) throw new AiError(`Daily AI budget of $${s.ai.daily_budget_usd} reached`);
   return s;
 }
 
@@ -96,7 +96,7 @@ function describeError(e) {
  * Returns { text, sources }.
  */
 export async function runText({ purpose, leadId, system, prompt, tools, effort = 'medium', maxTokens = 32000 }) {
-  const s = preflight();
+  const s = await preflight();
   return limited(async () => {
     const t0 = Date.now();
     const usage = { in: 0, out: 0, ws: 0 };
@@ -127,11 +127,11 @@ export async function runText({ purpose, leadId, system, prompt, tools, effort =
         messages.push({ role: 'assistant', content: final.content });
       }
       if (final.stop_reason === 'refusal') throw new AiError(`declined (${final.stop_details?.category || 'policy'})`);
-      logCall({ leadId, purpose, model: final.model || s.ai.model, usage, ms: Date.now() - t0, status: 'ok' });
+      await logCall({ leadId, purpose, model: final.model || s.ai.model, usage, ms: Date.now() - t0, status: 'ok' });
       return { text: texts.join('\n').trim(), sources: [...sources].map(([url, title]) => ({ url, title })) };
     } catch (e) {
       const msg = e instanceof AiError ? e.message : describeError(e);
-      logCall({ leadId, purpose, model: s.ai.model, usage, ms: Date.now() - t0, status: 'error', error: msg });
+      await logCall({ leadId, purpose, model: s.ai.model, usage, ms: Date.now() - t0, status: 'error', error: msg });
       throw new AiError(msg);
     }
   });
@@ -139,7 +139,7 @@ export async function runText({ purpose, leadId, system, prompt, tools, effort =
 
 /** Schema-constrained JSON call (structured outputs). Returns the parsed object. */
 export async function runJson({ purpose, leadId, system, prompt, schema, effort = 'low', maxTokens = 16000 }) {
-  const s = preflight();
+  const s = await preflight();
   return limited(async () => {
     const t0 = Date.now();
     const usage = { in: 0, out: 0, ws: 0 };
@@ -159,11 +159,11 @@ export async function runJson({ purpose, leadId, system, prompt, schema, effort 
       if (res.stop_reason === 'max_tokens') throw new AiError('response truncated (max_tokens)');
       const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
       const data = JSON.parse(text);
-      logCall({ leadId, purpose, model: res.model || s.ai.model, usage, ms: Date.now() - t0, status: 'ok' });
+      await logCall({ leadId, purpose, model: res.model || s.ai.model, usage, ms: Date.now() - t0, status: 'ok' });
       return data;
     } catch (e) {
       const msg = e instanceof AiError ? e.message : e instanceof SyntaxError ? 'invalid JSON from model' : describeError(e);
-      logCall({ leadId, purpose, model: s.ai.model, usage, ms: Date.now() - t0, status: 'error', error: msg });
+      await logCall({ leadId, purpose, model: s.ai.model, usage, ms: Date.now() - t0, status: 'error', error: msg });
       throw new AiError(msg);
     }
   });

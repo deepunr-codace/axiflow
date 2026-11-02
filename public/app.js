@@ -1,5 +1,6 @@
 import { openEditor, thumb, loadMeta, pdfToTemplate } from './editor.js';
 import { setupPlans, homePlanCard, wirePlanButtons, renderPlans, renderPlan, renderPlanEdit } from './plans.js';
+import { setupScripts, renderScripts } from './scripts.js';
 // AxiFlow: single-page admin. No build step; talks to /api.
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -70,6 +71,7 @@ function modal(title, body, actions = '') {
 }
 
 setupPlans({ $, $$, api, esc, money, toast, busy, modal, get view() { return view; } });
+setupScripts({ $, $$, api, esc, toast, busy, modal, get view() { return view; } });
 
 function formData(form) {
   const out = {};
@@ -147,12 +149,12 @@ async function fillBell() {
 // ---------------------------------------------------------------- search palette
 const PAL_PAGES = [
   ['#/today', 'home', 'Today'], ['#/plans', 'track_changes', 'Targets'], ['#/leads', 'view_kanban', 'Pipeline'], ['#/board', 'view_week', 'Pipeline board'],
-  ['#/customers', 'group', 'Customers'], ['#/inbox', 'chat', 'Messages'], ['#/brochure', 'menu_book', 'Brochures'], ['#/proposal', 'request_quote', 'Proposals'],
+  ['#/customers', 'group', 'Customers'], ['#/inbox', 'chat', 'Messages'], ['#/brochure', 'menu_book', 'Brochures'], ['#/proposal', 'request_quote', 'Proposals'], ['#/script', 'record_voice_over', 'Pitch scripts'],
   ['#/designs', 'grid_view', 'Templates'], ['#/approvals', 'edit_note', 'Pitch approvals'], ['#/tasks', 'checklist', 'All tasks'], ['#/dashboard', 'monitoring', 'Reports'],
   ['#/automation', 'receipt_long', 'Automation log'], ['#/templates', 'mail', 'Message templates'], ['#/settings', 'settings', 'Settings'],
 ];
 const PAL_ACTIONS = [
-  ['new-brochure', 'add', 'New brochure', () => (location.hash = '#/brochure')], ['new-proposal', 'add', 'New proposal', () => (location.hash = '#/proposal')],
+  ['new-brochure', 'add', 'New brochure', () => (location.hash = '#/brochure')], ['new-proposal', 'add', 'New proposal', () => (location.hash = '#/proposal')], ['new-script', 'add', 'New pitch script', () => (location.hash = '#/script')],
   ['new-plan', 'add', 'New revenue plan', () => (location.hash = '#/plan-edit/new')], ['run', 'play_arrow', 'Run automation now', () => $('#runBtnTop').click()],
   ['theme', 'contrast', 'Switch light / dark mode', toggleTheme], ['menu', 'left_panel_close', 'Hide or show the menu', () => $('#panelBtn').click()],
   ['logout', 'logout', 'Log out', () => $('#logoutBtn').click()],
@@ -219,6 +221,8 @@ $('#panelBtn').onclick = () => setPanel(!$('#shell').classList.contains('panel-o
 $('#panelClose').onclick = () => (matchMedia('(max-width: 900px)').matches ? $('#side').classList.remove('open') : setPanel(true));
 // "Approve pitches / Replies to send / Close deals" jump to that part of Today.
 document.addEventListener('click', (e) => {
+  const sl = e.target.closest('[data-script-lead]');
+  if (sl) sessionStorage.setItem('script-lead', sl.dataset.scriptLead);
   const a = e.target.closest('[data-scroll]');
   if (!a) return;
   sessionStorage.setItem('scrollTo', a.dataset.scroll);
@@ -286,6 +290,7 @@ const initials = (s) => esc(String(s || '?').replace(/[^\p{L}\p{N} ]/gu, ' ').tr
 // ---------------------------------------------------------------- router
 const ROUTES = {
   brochure: ['Brochure Generator', (id) => renderTool('brochure', id)], proposal: ['Proposal Generator', (id) => renderTool('proposal', id)], designs: ['Templates', renderDesigns],
+  script: ['', renderScripts],
   plans: ['', renderPlans], plan: ['Revenue plan', renderPlan], 'plan-edit': ['', renderPlanEdit],
   today: ['', renderManager], manager: ['', renderManager], customers: ['Customers', renderCustomers], dashboard: ['Reports', renderDashboard], leads: ['Pipeline', renderLeads], board: ['Pipeline board', renderBoard],
   lead: ['Lead', renderLead], approvals: ['Pitch approvals', renderApprovals], tasks: ['Tasks', renderTasks],
@@ -578,6 +583,7 @@ async function renderLead(id) {
     : ['qualified', 'new', 'researching'].includes(l.stage) ? A('run', 'Run now', 'primary') : '';
   const quick = l.stage === 'do_not_contact' ? '' : A('message', 'Message') + A('book', 'Book meeting');
   const more = [
+    `<a href="#/script" data-script-lead="${l.id}"><span class="mi">record_voice_over</span>Write a call script</a>`,
     M('pitch_note', 'Edit personal note in brochure'), M('note', 'Add note'), M('plan_next', '<span class="mi">auto_awesome</span>Ask manager for next step'),
     l.stage !== 'do_not_contact' ? M('repitch', l.pitch_json ? '<span class="mi">auto_awesome</span>Redo research & pitch' : '<span class="mi">auto_awesome</span>Make pitch now') : '',
     l.brochure_version ? `<a target="_blank" href="/pdf/brochure/${l.token}.pdf">Open brochure PDF<span class="mi">open_in_new</span></a>` : '',
@@ -1132,7 +1138,11 @@ function importDialog(kind) {
     if (!f) throw new Error('Choose a PDF file');
     if (f.size > 60e6) throw new Error('PDF is too large (max 60 MB)');
     const pages = await pdfToTemplate(f, (n, total) => { $('#impStatus').textContent = `Reading page ${n} of ${total}…`; });
-    $('#impStatus').textContent = 'Uploading…';
+    for (const [i, p] of pages.entries()) { // one request per page image (hosting caps request size)
+      $('#impStatus').textContent = `Uploading page ${i + 1} of ${pages.length}…`;
+      if (p.bg) p.bg = (await api('/design/images', { body: { image: p.bg } })).src;
+    }
+    $('#impStatus').textContent = 'Saving template…';
     const k = $('#impKind').value;
     await api('/design/templates/import', { body: { kind: k, name: $('#impName').value || f.name, sample_company: $('#impClient').value, pages } });
     d.close();

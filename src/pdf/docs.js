@@ -21,8 +21,8 @@ export function buildBrochureFor(lead) {
   });
 }
 
-export function buildProposalFor(proposal) {
-  const lead = get(`SELECT * FROM leads WHERE id = :id`, { id: proposal.lead_id });
+export async function buildProposalFor(proposal) {
+  const lead = await get(`SELECT * FROM leads WHERE id = :id`, { id: proposal.lead_id });
   const content = parse(proposal.content_json) || fallbackProposalContent(lead, JSON.parse(proposal.items_json));
   return proposalPdf({ lead, proposal, content, settings: getSettings() });
 }

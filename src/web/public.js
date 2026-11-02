@@ -16,16 +16,17 @@ export const pub = express.Router();
 const form = express.urlencoded({ extended: false, limit: '100kb' });
 const limiter = rateLimit({ windowMs: 60000, max: 15 });
 
-const leadByToken = (t) => get(`SELECT * FROM leads WHERE token = :t`, { t: String(t) });
+const leadByToken = async (t) => await get(`SELECT * FROM leads WHERE token = :t`, { t: String(t) });
 const notFound = (res) => res.status(404).send(messagePage(getSettings(), 'Link not found', 'This link is invalid or has expired.', false));
 
 // ------------------------------------------------- lead intake (API + public form)
 
 /** POST /api/intake  (header X-API-Key). For website forms, ad platforms, n8n/Zapier, the CRM, etc. */
-pub.post('/api/intake', limiter, (req, res) => {
+pub.post('/api/intake', limiter, async (req, res) => {
   if (!checkSecret(req.get('x-api-key'), process.env.INTAKE_API_KEY)) return res.status(401).json({ error: 'Invalid API key' });
   const items = Array.isArray(req.body) ? req.body : [req.body];
-  const out = items.slice(0, 500).map((i) => engine.createLead(i || {}, { source: i?.source || 'api' }));
+  const out = [];
+  for (const i of items.slice(0, 500)) out.push(await engine.createLead(i || {}, { source: i?.source || 'api' })); // in order: dedupe sees earlier items
   res.json(Array.isArray(req.body) ? out : out[0]);
 });
 
@@ -53,21 +54,21 @@ pub.get('/f', (_req, res) => {
   }));
 });
 
-pub.post('/f', limiter, form, (req, res) => {
+pub.post('/f', limiter, form, async (req, res) => {
   const s = getSettings();
   if (req.body.website_url_confirm) return res.send(messagePage(s, 'Thank you!', 'We will be in touch.')); // honeypot
   if (!req.body.company || !(req.body.email || req.body.phone)) {
     return res.status(400).send(messagePage(s, 'Missing details', 'Please go back and add your business name and an email or phone number.', false));
   }
-  engine.createLead({ ...req.body, interested: 'yes', consent_source: 'web form' }, { source: 'web_form' });
+  await engine.createLead({ ...req.body, interested: 'yes', consent_source: 'web form' }, { source: 'web_form' });
   res.send(messagePage(s, 'Thank you! 🎉', "We're preparing your personalised website plan. You'll receive it shortly on WhatsApp or email."));
 });
 
 // ------------------------------------------------------------------ brochure
-pub.get('/b/:token', (req, res) => {
-  const lead = leadByToken(req.params.token);
+pub.get('/b/:token', async (req, res) => {
+  const lead = await leadByToken(req.params.token);
   if (!lead?.brochure_html) return notFound(res);
-  logEvent(lead.id, 'engagement', 'brochure_view', 'ok', req.get('user-agent')?.slice(0, 120) || '');
+  await logEvent(lead.id, 'engagement', 'brochure_view', 'ok', req.get('user-agent')?.slice(0, 120) || '');
   res.send(lead.brochure_html);
 });
 
@@ -81,43 +82,43 @@ const sendPdf = (res, buf, filename) => {
 };
 /** Share link for documents made with the AI Brochure / Proposal tools. */
 pub.get('/pdf/doc/:file', async (req, res) => {
-  const d = get(`SELECT id FROM docs WHERE token = :t`, { t: req.params.file.replace(/\.pdf$/, '') });
-  const doc = d && tools.getDoc(d.id);
+  const d = await get(`SELECT id FROM docs WHERE token = :t`, { t: req.params.file.replace(/\.pdf$/, '') });
+  const doc = d && await tools.getDoc(d.id);
   if (!doc || doc.status !== 'ready') return notFound(res);
   sendPdf(res, await tools.docPdf(doc), tools.docFilename(doc));
 });
 
 pub.get('/pdf/brochure/:file', async (req, res) => {
-  const lead = leadByToken(req.params.file.replace(/\.pdf$/, ''));
+  const lead = await leadByToken(req.params.file.replace(/\.pdf$/, ''));
   if (!lead?.brochure_version) return notFound(res);
-  logEvent(lead.id, 'engagement', 'brochure_pdf_view', 'ok', req.get('user-agent')?.slice(0, 120) || '');
+  await logEvent(lead.id, 'engagement', 'brochure_pdf_view', 'ok', req.get('user-agent')?.slice(0, 120) || '');
   sendPdf(res, await buildBrochureFor(lead), `${lead.company.replace(/[^\w]+/g, '-')}-website-plan.pdf`);
 });
 pub.get('/pdf/proposal/:file', async (req, res) => {
-  const p = get(`SELECT * FROM proposals WHERE token = :t`, { t: req.params.file.replace(/\.pdf$/, '') });
+  const p = await get(`SELECT * FROM proposals WHERE token = :t`, { t: req.params.file.replace(/\.pdf$/, '') });
   if (!p) return notFound(res);
-  logEvent(p.lead_id, 'engagement', 'proposal_pdf_view', 'ok', `#${p.id}`);
+  await logEvent(p.lead_id, 'engagement', 'proposal_pdf_view', 'ok', `#${p.id}`);
   sendPdf(res, await buildProposalFor(p), `proposal-${p.id}.pdf`);
 });
 
 // -------------------------------------------------------- design concept
 /** AI-generated HTML: served sandboxed (unique origin, no scripts) so it can never touch the CRM session. */
-pub.get('/d/:token', (req, res) => {
-  const lead = leadByToken(req.params.token);
+pub.get('/d/:token', async (req, res) => {
+  const lead = await leadByToken(req.params.token);
   if (!lead?.design_html) return notFound(res);
   res.setHeader('Content-Security-Policy', "sandbox allow-popups; default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data: https:; frame-ancestors 'self'");
-  logEvent(lead.id, 'engagement', 'design_view', 'ok', req.get('user-agent')?.slice(0, 120) || '');
+  await logEvent(lead.id, 'engagement', 'design_view', 'ok', req.get('user-agent')?.slice(0, 120) || '');
   res.type('html').send(lead.design_html);
 });
 
 // ----------------------------------------------------------- CRM endpoints
 /** The external CRM pushes updates here (X-API-Key). Changing `interested` re-routes the lead. */
-pub.patch('/api/crm/leads/:externalId', limiter, (req, res) => {
+pub.patch('/api/crm/leads/:externalId', limiter, async (req, res) => {
   if (!checkSecret(req.get('x-api-key'), process.env.INTAKE_API_KEY)) return res.status(401).json({ error: 'Invalid API key' });
-  const lead = get(`SELECT * FROM leads WHERE external_id = :e`, { e: req.params.externalId });
+  const lead = await get(`SELECT * FROM leads WHERE external_id = :e`, { e: req.params.externalId });
   if (!lead) return res.status(404).json({ error: 'Unknown external_id. Create it with POST /api/intake first.' });
-  applyCrmUpdate(lead, req.body || {}, 'CRM');
-  res.json({ ok: true, lead: leadSnapshot(engine.getLead(lead.id)) });
+  await applyCrmUpdate(lead, req.body || {}, 'CRM');
+  res.json({ ok: true, lead: await leadSnapshot(await engine.getLead(lead.id)) });
 });
 
 /**
@@ -135,7 +136,7 @@ pub.post('/webhooks/twenty', async (req, res) => {
     const out = await handleTwentyEvent(req.body);
     res.json({ ok: true, ...out });
   } catch (e) {
-    logEvent(null, 'twenty', req.body?.event || 'event', 'error', e.message);
+    await logEvent(null, 'twenty', req.body?.event || 'event', 'error', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -143,18 +144,18 @@ pub.post('/webhooks/twenty', async (req, res) => {
 /** The telecaller reports a call result: {outcome, notes?, callback_at?}. The manager plans what's next. */
 pub.post('/api/crm/leads/:externalId/call', limiter, async (req, res) => {
   if (!checkSecret(req.get('x-api-key'), process.env.INTAKE_API_KEY)) return res.status(401).json({ error: 'Invalid API key' });
-  const lead = get(`SELECT * FROM leads WHERE external_id = :e`, { e: req.params.externalId });
+  const lead = await get(`SELECT * FROM leads WHERE external_id = :e`, { e: req.params.externalId });
   if (!lead) return res.status(404).json({ error: 'Not found' });
   const b = req.body || {};
   if (!engine.CALL_OUTCOMES.includes(b.outcome)) return res.status(400).json({ error: `outcome must be one of: ${engine.CALL_OUTCOMES.join(', ')}` });
   await engine.logCrmCall(lead.id, b.outcome, { notes: String(b.notes || '').slice(0, 2000), callbackAt: b.callback_at || null });
-  res.json({ ok: true, lead: leadSnapshot(engine.getLead(lead.id)) });
+  res.json({ ok: true, lead: await leadSnapshot(await engine.getLead(lead.id)) });
 });
 
 /** The telecaller records the client's decision on the proposal: {decision: accepted|declined, reason?}. */
 pub.post('/api/crm/leads/:externalId/proposal', limiter, async (req, res) => {
   if (!checkSecret(req.get('x-api-key'), process.env.INTAKE_API_KEY)) return res.status(401).json({ error: 'Invalid API key' });
-  const lead = get(`SELECT * FROM leads WHERE external_id = :e`, { e: req.params.externalId });
+  const lead = await get(`SELECT * FROM leads WHERE external_id = :e`, { e: req.params.externalId });
   if (!lead) return res.status(404).json({ error: 'Not found' });
   const decision = req.body?.decision;
   if (!['accepted', 'declined'].includes(decision)) return res.status(400).json({ error: 'decision must be accepted or declined' });
@@ -163,24 +164,24 @@ pub.post('/api/crm/leads/:externalId/proposal', limiter, async (req, res) => {
   } catch (e) {
     return res.status(409).json({ error: e.message });
   }
-  res.json({ ok: true, lead: leadSnapshot(engine.getLead(lead.id)) });
+  res.json({ ok: true, lead: await leadSnapshot(await engine.getLead(lead.id)) });
 });
 
-pub.get('/api/crm/leads/:externalId', limiter, (req, res) => {
+pub.get('/api/crm/leads/:externalId', limiter, async (req, res) => {
   if (!checkSecret(req.get('x-api-key'), process.env.INTAKE_API_KEY)) return res.status(401).json({ error: 'Invalid API key' });
-  const lead = get(`SELECT * FROM leads WHERE external_id = :e`, { e: req.params.externalId });
+  const lead = await get(`SELECT * FROM leads WHERE external_id = :e`, { e: req.params.externalId });
   if (!lead) return res.status(404).json({ error: 'Not found' });
-  res.json(leadSnapshot(lead));
+  res.json(await leadSnapshot(lead));
 });
 
 // ------------------------------------------------------------------- booking
-pub.get('/book/:token', (req, res) => {
+pub.get('/book/:token', async (req, res) => {
   const s = getSettings();
-  const lead = leadByToken(req.params.token);
+  const lead = await leadByToken(req.params.token);
   if (!lead || lead.do_not_contact) return notFound(res);
-  const existing = get(`SELECT * FROM meetings WHERE lead_id = :id AND status = 'scheduled' AND start_at > :now`, { id: lead.id, now: new Date().toISOString() });
+  const existing = await get(`SELECT * FROM meetings WHERE lead_id = :id AND status = 'scheduled' AND start_at > :now`, { id: lead.id, now: new Date().toISOString() });
   if (existing) return res.send(messagePage(s, "You're booked in", `Your call is on ${formatInTz(existing.start_at, s.schedule.timezone)}. Join: ${s.meeting.meet_link}`));
-  const days = engine.availableSlots(s);
+  const days = await engine.availableSlots(s);
   res.send(page({
     title: 'Book a call', settings: s,
     body: `<div class="card"><h1>Book a free ${s.meeting.duration_min}-minute call</h1><p class="muted">For ${esc(lead.company)}. Times shown in ${esc(s.schedule.timezone)}.</p></div>
@@ -192,9 +193,9 @@ pub.get('/book/:token', (req, res) => {
 
 pub.post('/book/:token', limiter, form, async (req, res) => {
   const s = getSettings();
-  const lead = leadByToken(req.params.token);
+  const lead = await leadByToken(req.params.token);
   if (!lead) return notFound(res);
-  const valid = engine.availableSlots(s).flatMap((d) => d.slots.map((x) => x.iso));
+  const valid = (await engine.availableSlots(s)).flatMap((d) => d.slots.map((x) => x.iso));
   if (!valid.includes(req.body.start_at)) return res.status(400).send(messagePage(s, 'Slot unavailable', 'Please go back and choose another time.', false));
   try {
     await engine.bookMeeting(lead.id, req.body.start_at);
@@ -205,14 +206,14 @@ pub.post('/book/:token', limiter, form, async (req, res) => {
 });
 
 // ------------------------------------------------------------------ proposal
-pub.get('/p/:token', (req, res) => {
+pub.get('/p/:token', async (req, res) => {
   const s = getSettings();
-  const p = get(`SELECT * FROM proposals WHERE token = :t`, { t: req.params.token });
+  const p = await get(`SELECT * FROM proposals WHERE token = :t`, { t: req.params.token });
   if (!p) return notFound(res);
-  const lead = engine.getLead(p.lead_id);
+  const lead = await engine.getLead(p.lead_id);
   const cur = s.billing.currency;
   const items = JSON.parse(p.items_json);
-  logEvent(lead.id, 'engagement', 'proposal_view', 'ok', `#${p.id}`);
+  await logEvent(lead.id, 'engagement', 'proposal_view', 'ok', `#${p.id}`);
   const statusNote = {
     accepted: '<p class="ok"><b><svg class="ic" style="vertical-align:-4px" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="currentColor" opacity=".15"/><path d="M7.5 12.5l3 3 6-6.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> Accepted. Thank you!</b></p>', declined: '<p class="bad"><b>Declined</b></p>', superseded: '<p class="muted">This proposal has been replaced by a newer version.</p>',
   }[p.status] || '';
@@ -240,10 +241,10 @@ pub.post('/p/:token/accept', limiter, async (req, res) => {
     res.status(409).send(messagePage(s, 'Could not accept', e.message, false));
   }
 });
-pub.post('/p/:token/decline', limiter, form, (req, res) => {
+pub.post('/p/:token/decline', limiter, form, async (req, res) => {
   const s = getSettings();
   try {
-    engine.declineProposal(req.params.token, String(req.body.reason || '').slice(0, 1000));
+    await engine.declineProposal(req.params.token, String(req.body.reason || '').slice(0, 1000));
     res.send(messagePage(s, 'Thanks for letting us know', 'We appreciate your time. Feel free to reach out any time in the future.'));
   } catch (e) {
     res.status(409).send(messagePage(s, 'Could not decline', e.message, false));
@@ -251,11 +252,11 @@ pub.post('/p/:token/decline', limiter, form, (req, res) => {
 });
 
 // ------------------------------------------------------------------- payment
-pub.get('/pay/:token', (req, res) => {
+pub.get('/pay/:token', async (req, res) => {
   const s = getSettings();
-  const inv = get(`SELECT * FROM invoices WHERE token = :t`, { t: req.params.token });
+  const inv = await get(`SELECT * FROM invoices WHERE token = :t`, { t: req.params.token });
   if (!inv) return notFound(res);
-  const lead = engine.getLead(inv.lead_id);
+  const lead = await engine.getLead(inv.lead_id);
   res.send(page({
     title: `Invoice ${inv.number}`, settings: s,
     body: `<div class="card"><div class="small muted">Invoice ${esc(inv.number)} · ${inv.kind === 'advance' ? 'Advance payment' : 'Final balance'}</div>
@@ -267,18 +268,18 @@ ${inv.status === 'paid' ? `<p class="ok"><b><svg class="ic" style="vertical-alig
 });
 
 pub.post('/pay/:token', limiter, async (req, res) => {
-  const inv = get(`SELECT * FROM invoices WHERE token = :t`, { t: req.params.token });
+  const inv = await get(`SELECT * FROM invoices WHERE token = :t`, { t: req.params.token });
   if (!inv) return notFound(res);
   await engine.markInvoicePaid(inv.id, 'demo checkout');
   res.redirect(`/pay/${inv.token}`);
 });
 
 // ---------------------------------------------------------------- onboarding
-pub.get('/onboard/:token', (req, res) => {
+pub.get('/onboard/:token', async (req, res) => {
   const s = getSettings();
-  const lead = leadByToken(req.params.token);
+  const lead = await leadByToken(req.params.token);
   if (!lead || !['onboarding', 'in_development', 'delivered', 'completed'].includes(lead.stage)) return notFound(res);
-  if (get(`SELECT 1 FROM projects WHERE lead_id = :id`, { id: lead.id })) return res.redirect(`/status/${lead.token}`);
+  if (await get(`SELECT 1 FROM projects WHERE lead_id = :id`, { id: lead.id })) return res.redirect(`/status/${lead.token}`);
   res.send(page({
     title: 'Project brief', settings: s,
     body: `<div class="card"><h1>Project brief: ${esc(lead.company)}</h1><p class="muted">About 5 minutes. This helps us design exactly what you need.</p></div>
@@ -298,7 +299,7 @@ pub.get('/onboard/:token', (req, res) => {
 
 pub.post('/onboard/:token', limiter, form, async (req, res) => {
   const s = getSettings();
-  const lead = leadByToken(req.params.token);
+  const lead = await leadByToken(req.params.token);
   if (!lead || lead.stage !== 'onboarding') return notFound(res);
   const brief = Object.fromEntries(['goal', 'pages', 'domain', 'colors', 'logo_url', 'references', 'content', 'audience', 'extra'].map((k) => [k, String(req.body[k] || '').slice(0, 3000)]));
   try {
@@ -310,14 +311,14 @@ pub.post('/onboard/:token', limiter, form, async (req, res) => {
 });
 
 // -------------------------------------------------------------- client portal
-pub.get('/status/:token', (req, res) => {
+pub.get('/status/:token', async (req, res) => {
   const s = getSettings();
-  const lead = leadByToken(req.params.token);
-  const project = lead && get(`SELECT * FROM projects WHERE lead_id = :id ORDER BY id DESC LIMIT 1`, { id: lead.id });
+  const lead = await leadByToken(req.params.token);
+  const project = lead && await get(`SELECT * FROM projects WHERE lead_id = :id ORDER BY id DESC LIMIT 1`, { id: lead.id });
   if (!project) return notFound(res);
-  const ms = all(`SELECT * FROM milestones WHERE project_id = :id ORDER BY position`, { id: project.id });
+  const ms = await all(`SELECT * FROM milestones WHERE project_id = :id ORDER BY position`, { id: project.id });
   const pct = ms.length ? Math.round((ms.filter((m) => m.done).length / ms.length) * 100) : 0;
-  const invoices = all(`SELECT * FROM invoices WHERE lead_id = :id ORDER BY id`, { id: lead.id });
+  const invoices = await all(`SELECT * FROM invoices WHERE lead_id = :id ORDER BY id`, { id: lead.id });
   res.send(page({
     title: `${lead.company}: project status`, settings: s,
     body: `<div class="card"><div class="small muted">Project status</div><h1>${esc(lead.company)}</h1>
@@ -328,16 +329,16 @@ pub.get('/status/:token', (req, res) => {
 });
 
 // --------------------------------------------------------------- unsubscribe
-pub.get('/u/:token', (req, res) => {
+pub.get('/u/:token', async (req, res) => {
   const s = getSettings();
-  const lead = leadByToken(req.params.token);
+  const lead = await leadByToken(req.params.token);
   if (!lead) return notFound(res);
   res.send(page({ title: 'Unsubscribe', settings: s, body: `<form class="card" method="post"><h1>Unsubscribe</h1><p class="muted">Stop all messages from ${esc(s.agency.name)} to ${esc(lead.company)}?</p><button class="btn">Yes, unsubscribe me</button></form>` }));
 });
-pub.post('/u/:token', limiter, (req, res) => {
-  const lead = leadByToken(req.params.token);
+pub.post('/u/:token', limiter, async (req, res) => {
+  const lead = await leadByToken(req.params.token);
   if (!lead) return notFound(res);
-  engine.setStage(lead, 'do_not_contact', 'unsubscribed via link', { do_not_contact: 1, wa_opt_in: 0, email_opt_in: 0, next_action_at: null });
+  await engine.setStage(lead, 'do_not_contact', 'unsubscribed via link', { do_not_contact: 1, wa_opt_in: 0, email_opt_in: 0, next_action_at: null });
   res.send(messagePage(getSettings(), 'Unsubscribed', "You won't hear from us again. Sorry for the bother!"));
 });
 
@@ -356,9 +357,9 @@ pub.post('/webhooks/whatsapp', async (req, res) => {
     for (const change of entry.changes || []) {
       for (const msg of change.value?.messages || []) {
         const text = msg.text?.body || msg.button?.text || msg.interactive?.button_reply?.title || `[${msg.type}]`;
-        const lead = engine.findLeadByContact({ phone: '+' + msg.from });
-        if (!lead) { logEvent(null, 'inbound', 'whatsapp', 'skipped', `unknown sender +${msg.from}`); continue; }
-        await engine.handleInbound(lead.id, 'whatsapp', text, { providerId: msg.id }).catch((e) => logEvent(lead.id, 'inbound', 'whatsapp', 'error', e.message));
+        const lead = await engine.findLeadByContact({ phone: '+' + msg.from });
+        if (!lead) { await logEvent(null, 'inbound', 'whatsapp', 'skipped', `unknown sender +${msg.from}`); continue; }
+        await engine.handleInbound(lead.id, 'whatsapp', text, { providerId: msg.id }).catch(async (e) => await logEvent(lead.id, 'inbound', 'whatsapp', 'error', e.message));
       }
     }
   }
@@ -368,8 +369,8 @@ pub.post('/webhooks/whatsapp', async (req, res) => {
 pub.post('/webhooks/email', async (req, res) => {
   if (!checkSecret(req.get('x-webhook-secret'), process.env.WEBHOOK_SECRET)) return res.sendStatus(401);
   const from = String(req.body?.from || '').match(/[^\s<>"]+@[^\s<>"]+/)?.[0];
-  const lead = from && engine.findLeadByContact({ email: from });
-  if (!lead) { logEvent(null, 'inbound', 'email', 'skipped', `unknown sender ${from}`); return res.json({ matched: false }); }
+  const lead = from && await engine.findLeadByContact({ email: from });
+  if (!lead) { await logEvent(null, 'inbound', 'email', 'skipped', `unknown sender ${from}`); return res.json({ matched: false }); }
   const intent = await engine.handleInbound(lead.id, 'email', String(req.body.text || '').slice(0, 10000), { subject: req.body.subject });
   res.json({ matched: true, lead_id: lead.id, intent });
 });
@@ -378,7 +379,7 @@ pub.post('/webhooks/email', async (req, res) => {
 pub.post('/webhooks/payment', async (req, res) => {
   if (!checkSecret(req.get('x-webhook-secret'), process.env.WEBHOOK_SECRET)) return res.sendStatus(401);
   const b = req.body || {};
-  const inv = get(`SELECT * FROM invoices WHERE token = :t OR number = :n`, { t: b.invoice_token || '-', n: b.invoice_number || '-' });
+  const inv = await get(`SELECT * FROM invoices WHERE token = :t OR number = :n`, { t: b.invoice_token || '-', n: b.invoice_number || '-' });
   if (!inv) return res.status(404).json({ error: 'invoice not found' });
   if (b.status === 'paid') await engine.markInvoicePaid(inv.id, b.reference || 'gateway');
   res.json({ ok: true });

@@ -14,8 +14,9 @@ const DEMO = [
 ];
 
 export async function seedDemo() {
-  seedDefaults();
-  const ids = DEMO.map((d) => createLead(d, { source: d.source, autoRun: false }).id);
+  await seedDefaults();
+  const ids = [];
+  for (const d of DEMO) ids.push((await createLead(d, { source: d.source, autoRun: false })).id);
   for (const id of ids) await advance(id);
   return { created: ids.length };
 }

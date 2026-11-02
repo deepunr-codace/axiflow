@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import PDFDocument from 'pdfkit';
 import { registerFonts, toBuffer, clean } from '../pdf/brand.js';
 import { ICONS } from './icons.js';
-import { srcPath } from './model.js';
+import { srcPath, loadImage } from './model.js';
 
 /*
  * Renders a design to PDF. Text metrics follow CSS so the PDF matches the editor:
@@ -66,9 +66,20 @@ function drawShape(doc, e) {
   doc.restore();
 }
 
+// Images are loaded before drawing (uploads may live in Vercel Blob); drawing itself stays synchronous.
+let IMAGES = new Map();
 function imageSource(src) {
-  if (/^data:image\/(png|jpe?g);base64,/.test(src)) return Buffer.from(src.split(',')[1], 'base64');
-  return srcPath(src);
+  return IMAGES.get(src) ?? srcPath(src);
+}
+async function preloadImages(design) {
+  const srcs = new Set();
+  for (const p of design.pages) {
+    if (p.bg?.image) srcs.add(p.bg.image);
+    for (const e of p.elements) if (e.type === 'image' && e.src) srcs.add(e.src);
+  }
+  const map = new Map();
+  await Promise.all([...srcs].map(async (s) => { const v = await loadImage(s).catch(() => null); if (v) map.set(s, v); }));
+  return map;
 }
 
 function drawImage(doc, e) {
@@ -157,6 +168,7 @@ function drawPricing(doc, e, items, settings) {
 
 /** Renders a whole design to a PDF buffer. */
 export async function renderDesignPdf(design, { title = '', author = '', items = null, settings }) {
+  IMAGES = await preloadImages(design);
   const doc = new PDFDocument({ autoFirstPage: false, margin: 0, info: { Title: clean(title), Author: clean(author) } });
   registerFonts(doc);
   for (const p of design.pages) {
@@ -164,7 +176,7 @@ export async function renderDesignPdf(design, { title = '', author = '', items =
     doc.page.margins.bottom = -100000; // never auto-paginate: overflow stays on its page, like in the editor
     doc.rect(0, 0, p.w, p.h).fill(p.bg.color);
     if (p.bg.image) {
-      const bg = srcPath(p.bg.image);
+      const bg = imageSource(p.bg.image);
       if (bg) { try { doc.image(bg, 0, 0, { width: p.w, height: p.h }); } catch { /* skip */ } }
     }
     for (const e of p.elements) {
