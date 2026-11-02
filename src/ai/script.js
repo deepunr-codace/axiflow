@@ -65,10 +65,36 @@ ${context(input, research, audit)}
 Rules: sound like a real person on the phone, not a brochure. Short lines. Be specific to this business and its vertical; no generic claims. Never invent facts about the business: if research is missing, ask instead of asserting. The goal of the call is a 30-minute meeting, not a sale.
 Language: write the script in ${input.language || 'English'}${/letters/.test(input.language || '') ? ' (spoken words in that language written in English letters; keep business terms like website, WhatsApp, Google in English)' : ''}.`,
     });
-    return { content, source: 'ai' };
+    return { content: repair(content, templateScript(input, audit)), source: 'ai' };
   } catch (e) {
     return { content: templateScript(input, audit), source: 'template', error: e.message };
   }
+}
+
+/**
+ * Weaker models sometimes ignore the structure (e.g. the whole script in "pitch_point", empty lists).
+ * Keep what is usable, move a misplaced script to where it belongs, fill the rest from the standard script.
+ */
+function repair(c, std) {
+  const out = { ...std };
+  const s = (v) => (typeof v === 'string' ? v.trim() : '');
+  const list = (v, ok) => (Array.isArray(v) ? v.filter(ok) : []);
+  let point = s(c?.pitch_point);
+  let script = s(c?.script);
+  if (point.length > 300 || point.split('\n').length > 3) { if (script.length < point.length) script = point; point = ''; }
+  if (point && std.pitch_point && point.toLowerCase().includes(String(std.pitch_point.split(' for ').pop() || '').replace(/\s*\(.*\)$/, '').toLowerCase().slice(0, 12))) out.pitch_point = point;
+  if (s(c?.introduction) && s(c.introduction).length < 1200) out.introduction = s(c.introduction);
+  const opps = list(c?.opportunities, (o) => s(o?.title) && s(o?.detail));
+  if (opps.length >= 2) out.opportunities = opps;
+  const pts = list(c?.pitch_points, (o) => s(o?.point) && s(o?.detail));
+  if (pts.length >= 3) out.pitch_points = pts.slice(0, 3);
+  const qs = list(c?.questions, (q) => s(q));
+  if (qs.length >= 3) out.questions = qs;
+  const obs = list(c?.objections, (o) => s(o?.objection) && s(o?.response));
+  if (obs.length) out.objections = obs;
+  if (s(c?.booking?.ask)) out.booking = { ask: s(c.booking.ask), if_yes: s(c.booking.if_yes) || std.booking.if_yes, if_not_now: s(c.booking.if_not_now) || std.booking.if_not_now };
+  if (script.length > 200) out.script = script.replace(/\*\*/g, '');
+  return out;
 }
 
 // ------------------------------------------------------------------ fallback

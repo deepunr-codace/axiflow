@@ -233,7 +233,8 @@ async function orRun({ s, purpose, leadId, system, prompt, effort, maxTokens, sc
       messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
       reasoning: { effort: ['low', 'medium', 'high'].includes(effort) ? effort : 'medium', exclude: true },
       usage: { include: true },
-      ...(schema ? { response_format: { type: 'json_schema', json_schema: { name: 'output', strict: true, schema } } } : {}),
+      // require_parameters: only route to providers that honour response_format (some free endpoints ignore it)
+      ...(schema ? { response_format: { type: 'json_schema', json_schema: { name: 'output', strict: true, schema } }, provider: { require_parameters: true } } : {}),
       ...(web ? { plugins: [{ id: 'web', max_results: Math.max(1, Math.min(10, s.ai.web_search_max_uses || 5)) }] } : {}),
     };
     const r = await fetch(OR_URL, {
