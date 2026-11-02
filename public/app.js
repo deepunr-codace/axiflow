@@ -251,7 +251,6 @@ async function boot() {
   $('#shell').classList.remove('hidden');
   const who = (typeof META.agency === 'string' && META.agency) || 'Axilume';
   $('#whoName').textContent = who;
-  $('#whoSub').textContent = who;
   $('#avName').textContent = who;
   $('#avBtn').textContent = who.trim().charAt(0).toUpperCase() || 'A';
   $('#whoAv').textContent = who.trim().charAt(0).toUpperCase() || 'A';
