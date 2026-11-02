@@ -119,7 +119,13 @@ function describeError(e) {
  */
 export async function runText({ purpose, leadId, system, prompt, tools, effort = 'medium', maxTokens = 32000 }) {
   const s = await preflight();
-  if (aiProvider(s) === 'openrouter') return limited(() => orRun({ s, purpose, leadId, system, prompt, effort, maxTokens, web: (tools || []).some((t) => /web_search|web_fetch/.test(t.type || t.name || '')) }));
+  if (aiProvider(s) === 'openrouter') {
+    const web = (tools || []).some((t) => /web_search|web_fetch/.test(t.type || t.name || ''));
+    // OpenRouter bills web search separately, so free models (":free") cannot use it on an account without credits:
+    // fail fast and let the caller use its no-AI fallback instead of a model guessing "research" from memory.
+    if (web && /:free$/.test(orModel(s))) throw new AiError('Web research needs OpenRouter credits (free models cannot search the web)');
+    return limited(() => orRun({ s, purpose, leadId, system, prompt, effort, maxTokens, web }));
+  }
   return limited(async () => {
     const t0 = Date.now();
     const usage = { in: 0, out: 0, ws: 0 };
