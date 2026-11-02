@@ -1001,3 +1001,6 @@ kbd .mi { font-size: 13px; vertical-align: -2px; }
 .p-head { padding: 2px 4px 12px 12px; min-height: 36px; }
 .p-name { font-size: 18px; line-height: 1.2; }
 .panel { padding-top: 12px; }
+/* Zoomed slides taller than the view: keep the top reachable by scrolling ("safe" centring) */
+.ed-stage { place-items: safe center; }
+@media (min-width: 801px) { .ed-center, .ed-stage { min-height: 0; } }

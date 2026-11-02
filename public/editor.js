@@ -426,6 +426,33 @@ export async function openEditor(root, { doc, api, toast, busy, modal, onChange 
     if (id) startEdit(id);
   });
 
+  // --------------------------------------------------- wheel: next / previous slide
+  // Scrolling on the canvas moves between slides. When zoomed in, the stage scrolls normally first and only
+  // moves on once it is at the top or bottom edge. Ctrl/Cmd + wheel (pinch) is left to the browser.
+  let wheelAcc = 0, wheelLock = 0;
+  function goPage(i) {
+    if (i < 0 || i >= S.design.pages.length || i === S.page) return;
+    if (S.editing) finishEdit();
+    setPage(i);
+    $('.ed-thumb.on', root)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  stage.addEventListener('wheel', (ev) => {
+    if (ev.ctrlKey || ev.metaKey || S.editing) return;
+    const dy = ev.deltaMode === 1 ? ev.deltaY * 16 : ev.deltaY;
+    const atTop = stage.scrollTop <= 0;
+    const atBottom = stage.scrollTop + stage.clientHeight >= stage.scrollHeight - 1;
+    if ((dy > 0 && !atBottom) || (dy < 0 && !atTop)) { wheelAcc = 0; return; } // let the zoomed page scroll
+    ev.preventDefault();
+    if (Date.now() < wheelLock) return;
+    wheelAcc += dy;
+    if (Math.abs(wheelAcc) < 60) return; // ignore tiny trackpad nudges
+    const next = S.page + (wheelAcc > 0 ? 1 : -1);
+    wheelAcc = 0;
+    wheelLock = Date.now() + 450; // one slide per gesture
+    goPage(next);
+    if (stage.scrollHeight > stage.clientHeight) stage.scrollTop = next > S.page ? 0 : stage.scrollHeight;
+  }, { passive: false });
+
   // ------------------------------------------------------------- keyboard
   let clip = null;
   const onKey = (ev) => {
@@ -436,6 +463,8 @@ export async function openEditor(root, { doc, api, toast, busy, modal, onChange 
     const e = S.sel && findEl(S.sel);
     if (mod && ev.key.toLowerCase() === 'z' && !ev.shiftKey) { ev.preventDefault(); undo(); }
     else if (mod && (ev.key.toLowerCase() === 'y' || (ev.key.toLowerCase() === 'z' && ev.shiftKey))) { ev.preventDefault(); redo(); }
+    else if (ev.key === 'PageDown' || (!e && ev.key === 'ArrowDown')) { ev.preventDefault(); goPage(S.page + 1); }
+    else if (ev.key === 'PageUp' || (!e && ev.key === 'ArrowUp')) { ev.preventDefault(); goPage(S.page - 1); }
     else if (!e) return;
     else if (ev.key === 'Delete' || ev.key === 'Backspace') { ev.preventDefault(); act('del'); }
     else if (mod && ev.key.toLowerCase() === 'd') { ev.preventDefault(); act('dup'); }

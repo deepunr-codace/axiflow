@@ -13,7 +13,10 @@ The team's main CRM is **Twenty**, set up by a co-worker and run by the **teleca
 
 Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATABASE_URL` and `pg`; embedded PGlite in `data/pg` when `DATABASE_URL` is empty), Vercel Blob for uploads (`data/uploads` locally), nodemailer, `@anthropic-ai/sdk` (Claude, `claude-opus-5-5`), and a vanilla-JS admin SPA in `public/`. There is no build step. Code map: see README. The old SQLite file `data/crm.db` is kept only as a backup/migration source.
 
-## Status (2026-11-02, newest): editor fix
+## Status (2026-11-02, newest): editor slide navigation
+- Mouse wheel / trackpad on the canvas moves to the next or previous slide (`goPage`, 60 px threshold, one slide per 450 ms); when zoomed in, the stage scrolls first and changes slide only at the top/bottom edge; Ctrl/Cmd+wheel left to the browser. Page Down / Page Up (and ↓ / ↑ with nothing selected) do the same; the active thumbnail scrolls into view. Layout fix so the stage itself scrolls when zoomed (`.ed-center, .ed-stage { min-height: 0 }`, `place-items: safe center`). Tested in headless Edge (wheel down/up, tiny nudge ignored, keys, zoomed scroll at 184%).
+
+## Status (2026-11-02): editor fix
 - Double-click on a text box did not start editing: the stage's `setPointerCapture` (for dragging) made the browser report the dblclick on the stage. `public/editor.js` now finds the text box under the cursor (`elementsFromPoint`), falls back to the selected text box, and releases pointer capture on pointerup. Tested in headless Edge (dblclick → editing, typing works; nothing saved during the test). Flat-card change was reverted at the owner's request (cards keep their shadows).
 
 ## Status (2026-11-02): uploads → Supabase Storage
