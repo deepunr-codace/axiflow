@@ -1,0 +1,21 @@
+{
+  "name": "web-stream-automation",
+  "version": "1.0.0",
+  "description": "Mini CRM + end-to-end automation pipeline for a web development service",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/server.js",
+    "dev": "node --watch --env-file-if-exists=.env src/server.js",
+    "seed": "node --env-file-if-exists=.env src/seed.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.3.0",
+    "express": "^5.1.0",
+    "nodemailer": "^7.0.0",
+    "pdfkit": "^0.20.2"
+  }
+}

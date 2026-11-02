@@ -1,0 +1,49 @@
+{
+  "name": "Twenty → WebStream (lead events)",
+  "nodes": [
+    {
+      "id": "6d1f0f52-1c1a-4a8e-9b1e-0a5c1a2b3c01",
+      "name": "Twenty webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "1f7c2a9e-4b5d-4e6f-8a7b-9c0d1e2f3a01",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "twenty-crm",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "6d1f0f52-1c1a-4a8e-9b1e-0a5c1a2b3c02",
+      "name": "Forward to WebStream",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [320, 0],
+      "parameters": {
+        "method": "POST",
+        "url": "https://YOUR-WEBSTREAM-DOMAIN/webhooks/twenty",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "PASTE_INTAKE_API_KEY_HERE" },
+            { "name": "X-Twenty-Webhook-Signature", "value": "={{ $json.headers['x-twenty-webhook-signature'] || '' }}" },
+            { "name": "X-Twenty-Webhook-Timestamp", "value": "={{ $json.headers['x-twenty-webhook-timestamp'] || '' }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Twenty webhook": {
+      "main": [[{ "node": "Forward to WebStream", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false
+}

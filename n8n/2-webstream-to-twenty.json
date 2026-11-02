@@ -1,0 +1,56 @@
+{
+  "name": "WebStream → Twenty (status, next action, PDFs)",
+  "nodes": [
+    {
+      "id": "8a2e1b63-2d2b-4b9f-8c2f-1b6d2c3d4e01",
+      "name": "WebStream events",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "2a8d3bae-5c6e-4f70-9b8c-0d1e2f3a4b02",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "webstream-events",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "8a2e1b63-2d2b-4b9f-8c2f-1b6d2c3d4e02",
+      "name": "Build Twenty updates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [320, 0],
+      "parameters": {
+        "jsCode": "// ================= CONFIG: match these to your Twenty workspace =================\n// Check object and field API names in Twenty: Settings → Developers → API (playground).\nconst WEBSTREAM_TOKEN = 'PASTE_CRM_WEBHOOK_SECRET_HERE'; // = CRM_WEBHOOK_SECRET in WebStream's .env\nconst TWENTY_URL = 'https://api.twenty.com';               // self-hosted: https://your-twenty-domain\nconst OBJECT = 'companies';                                 // REST collection of the lead object\nconst F = {                                                 // Twenty custom fields (create as Text)\n  stage: 'webstreamStage',\n  nextActionType: 'nextActionType',\n  nextActionAt: 'nextActionAt',\n  nextActionNote: 'nextActionNote',\n  callScript: 'callScript',\n  brochurePdf: 'brochurePdf',\n  proposalPdf: 'proposalPdf',\n  // fields the telecaller fills; cleared after WebStream has processed them\n  callOutcome: 'callOutcome',\n  callNotes: 'callNotes',\n  callbackAt: 'callbackAt',\n  proposalDecision: 'proposalDecision',\n};\nconst CREATE_TASKS = false; // true = also create a Twenty Task per call request (verify the tasks API first)\n// ===================================================================================\n\nconst out = [];\nfor (const item of $input.all()) {\n  const h = item.json.headers || {};\n  if (h['x-webstream-token'] !== WEBSTREAM_TOKEN) throw new Error('Invalid X-WebStream-Token');\n  const ev = item.json.body || {};\n  const lead = ev.lead || {};\n  if (!lead.external_id) continue; // lead did not come from Twenty\n\n  const fields = {\n    [F.stage]: lead.stage || null,\n    [F.nextActionType]: lead.next_action ? lead.next_action.type : null,\n    [F.nextActionAt]: lead.next_action ? lead.next_action.at : null,\n    [F.nextActionNote]: lead.next_action ? lead.next_action.note : null,\n    [F.brochurePdf]: (lead.links && lead.links.brochure_pdf) || null,\n    [F.proposalPdf]: (lead.links && lead.links.proposal_pdf) || null,\n  };\n  if (ev.event === 'lead.call_requested') {\n    fields[F.callScript] = ev.detail.script || (ev.detail.call_script || []).join('\\n');\n  }\n  if (ev.event === 'lead.call_logged') {\n    fields[F.callOutcome] = null;\n    fields[F.callNotes] = null;\n    fields[F.callbackAt] = null;\n  }\n  if (ev.event === 'lead.stage_changed' && ev.detail && ev.detail.from === 'proposal_sent') {\n    fields[F.proposalDecision] = null;\n  }\n  out.push({ json: { method: 'PATCH', url: `${TWENTY_URL}/rest/${OBJECT}/${lead.external_id}`, body: fields } });\n\n  if (CREATE_TASKS && ev.event === 'lead.call_requested') {\n    out.push({ json: { method: 'POST', url: `${TWENTY_URL}/rest/tasks`, body: {\n      title: `Call ${lead.company}: ${ev.detail.goal}`.slice(0, 200),\n      dueAt: ev.detail.due_at,\n      status: 'TODO',\n    } } });\n  }\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "8a2e1b63-2d2b-4b9f-8c2f-1b6d2c3d4e03",
+      "name": "Update Twenty",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [640, 0],
+      "parameters": {
+        "method": "={{ $json.method }}",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "WebStream events": {
+      "main": [[{ "node": "Build Twenty updates", "type": "main", "index": 0 }]]
+    },
+    "Build Twenty updates": {
+      "main": [[{ "node": "Update Twenty", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false
+}
