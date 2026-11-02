@@ -4,9 +4,25 @@
   "buildCommand": "",
   "installCommand": "npm install",
   "outputDirectory": "public",
+  "regions": [
+    "dub1"
+  ],
   "functions": {
-    "api/index.js": { "maxDuration": 300, "includeFiles": "assets/**" }
+    "api/index.js": {
+      "maxDuration": 300,
+      "includeFiles": "assets/**"
+    }
   },
-  "rewrites": [{ "source": "/(.*)", "destination": "/api" }],
-  "crons": [{ "path": "/api/cron/tick", "schedule": "35 3 * * *" }]
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/tick",
+      "schedule": "35 3 * * *"
+    }
+  ]
 }
