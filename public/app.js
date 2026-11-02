@@ -896,7 +896,7 @@ async function renderSettings() {
   <div class="card"><h2>Your business</h2><div class="form-grid">${inp('agency.name', 'Agency name')}${inp('agency.sender_name', 'Sender name')}${inp('agency.email', 'Email (digest goes here)')}${inp('agency.phone', 'Phone')}${inp('agency.website', 'Website')}${inp('agency.address', 'Address')}${inp('agency.review_link', 'Google review link')}</div></div>
   <div class="card"><h2>Connections</h2><div class="conn">
     ${[['Email', env.channels.email === 'live', 'Add SMTP details in .env'], ['WhatsApp', env.channels.whatsapp === 'live', 'Add WA_TOKEN + WA_PHONE_NUMBER_ID in .env'],
-      ['AI manager', env.ai.enabled, env.ai.key_set ? 'Turn on below' : 'Add ANTHROPIC_API_KEY in .env'], ['Team CRM', env.crm_webhook, 'Add CRM_WEBHOOK_URL in .env']]
+      ['AI (' + (env.ai.provider === 'openrouter' ? 'OpenRouter' : 'Claude API') + ')', env.ai.enabled, env.ai.key_set ? 'Turn on below' : 'Add OPENROUTER_API_KEY or ANTHROPIC_API_KEY'], ['Team CRM', env.crm_webhook, 'Add CRM_WEBHOOK_URL in .env']]
       .map(([n, on, how]) => `<div class="row"><i class="dot-s ${on ? 'on' : ''}"></i><b>${n}</b><span class="spacer"></span><span class="small ${on ? 'ok' : 'muted'}">${on ? 'Connected' : how}</span></div>`).join('')}
     <p class="small muted">Not connected = messages are only saved here (safe test mode), not delivered.</p>
     <div class="form-grid">${inp('ai.enabled', 'Use AI', 'bool')}${inp('ai.daily_budget_usd', 'AI daily budget (USD)', 'number')}${inp('automation.auto_approve_brochure', 'Send pitches without my approval', 'bool')}</div></div></div>
@@ -912,9 +912,11 @@ async function renderSettings() {
   <div class="card"><h2>Billing &amp; meetings</h2><div class="form-grid">${inp('billing.currency', 'Currency')}${inp('billing.tax_label', 'Tax label')}${inp('billing.tax_pct', 'Tax %', 'number')}${inp('billing.advance_pct', 'Advance %', 'number')}${inp('billing.invoice_prefix', 'Invoice prefix')}
     ${inp('meeting.slots', 'Meeting slots (HH:MM list)', 'list')}${inp('meeting.days_ahead', 'Days bookable ahead', 'number')}${inp('meeting.duration_min', 'Meeting minutes', 'number')}${inp('meeting.meet_link', 'Meeting link')}${inp('milestones', 'Project milestones', 'list')}</div></div>
   <div class="card"><h2><span class="mi">auto_awesome</span>AI manager</h2>
-    <p class="small muted">Status: ${env.ai.enabled ? '<b class="ok">on</b>' : env.ai.key_set ? '<b>disabled</b>' : '<b class="bad">no API key</b>: add ANTHROPIC_API_KEY to .env and restart'} · spent today $${env.ai.spent_today_usd}</p>
+    <p class="small muted">Status: ${env.ai.enabled ? '<b class="ok">on</b>' : env.ai.key_set ? '<b>disabled</b>' : '<b class="bad">no API key</b>: add OPENROUTER_API_KEY or ANTHROPIC_API_KEY (.env locally, Vercel environment variables live), then restart / redeploy'} · provider <b>${env.ai.provider === 'openrouter' ? 'OpenRouter' : 'Claude API'}</b>, model ${esc(env.ai.model)} · spent today $${env.ai.spent_today_usd}<br>Keys found: OpenRouter ${env.ai.keys?.openrouter ? 'yes' : 'no'}, Anthropic ${env.ai.keys?.anthropic ? 'yes' : 'no'}</p>
     <div class="form-grid">${inp('ai.design_enabled', 'AI homepage designs', 'bool')}${inp('ai.auto_send_ai_replies', 'Auto-send AI replies (skip approval)', 'bool')}
-    ${inp('ai.model', 'Model')}${inp('ai.effort_research', 'Effort: research (low…max)')}${inp('ai.effort_writing', 'Effort: pitch, design, messages')}${inp('ai.effort_light', 'Effort: replies, planning')}
+    <label>AI provider<select data-path="ai.provider">${[['auto', 'Automatic (whichever key is set)'], ['openrouter', 'OpenRouter'], ['anthropic', 'Claude API (Anthropic)']].map(([v, l]) => `<option value="${v}" ${(s.ai.provider || 'auto') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+    ${inp('ai.openrouter_model', 'OpenRouter model (empty = Claude model on OpenRouter)')}
+    ${inp('ai.model', 'Claude model')}${inp('ai.effort_research', 'Effort: research (low…max)')}${inp('ai.effort_writing', 'Effort: pitch, design, messages')}${inp('ai.effort_light', 'Effort: replies, planning')}
     ${inp('ai.web_search_max_uses', 'Max web searches per lead', 'number')}${inp('ai.max_concurrent', 'Parallel AI jobs', 'number')}</div>
     <p class="small muted">Without a key (or when the budget is reached) every AI step falls back to rules and templates, so the pipeline never stops.</p></div>
   <div class="card"><h2>Marketing pipes (JSON)</h2>
@@ -934,7 +936,7 @@ async function renderSettings() {
     <tr><td>Payment webhook</td><td class="mono">POST ${esc(env.webhooks.payment)}</td></tr>
     <tr><td>From the CRM to us (update)</td><td class="mono">PATCH ${esc(env.webhooks.crm_update)}<br>header X-API-Key</td></tr>
     <tr><td>From us to the CRM (sync)</td><td>${env.crm_webhook ? '<span class="ok">CRM_WEBHOOK_URL set</span>' : '<span class="bad">CRM_WEBHOOK_URL not set</span>'}</td></tr>
-    <tr><td>Claude AI</td><td>${env.ai.key_set ? '<span class="ok">ANTHROPIC_API_KEY set</span>' : '<span class="bad">ANTHROPIC_API_KEY not set</span>'}</td></tr></table>
+    <tr><td>AI</td><td>OpenRouter: ${env.ai.keys?.openrouter ? '<span class="ok">OPENROUTER_API_KEY set</span>' : '<span class="muted">not set</span>'} · Claude API: ${env.ai.keys?.anthropic ? '<span class="ok">ANTHROPIC_API_KEY set</span>' : '<span class="muted">not set</span>'}</td></tr></table>
     <h3>Demo</h3><button class="btn sm" id="seedBtn">Load 8 demo leads</button></div>
   </div>
   </details>

@@ -49,7 +49,9 @@ export const DEFAULT_SETTINGS = {
   milestones: ['Discovery & sitemap', 'UI design', 'Development', 'Content & SEO setup', 'Client review', 'Launch'],
   ai: {
     enabled: true,
+    provider: 'auto', // auto | anthropic | openrouter (auto: Anthropic if ANTHROPIC_API_KEY is set, else OpenRouter)
     model: 'claude-opus-5-5',
+    openrouter_model: '', // empty: the Claude model above on OpenRouter (anthropic/claude-opus-5.5)
     effort_research: 'high',
     effort_writing: 'medium',
     effort_light: 'low',
