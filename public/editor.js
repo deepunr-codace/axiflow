@@ -409,14 +409,22 @@ export async function openEditor(root, { doc, api, toast, busy, modal, onChange 
     Object.assign(node.style, { left: `${e.x}px`, top: `${e.y}px`, width: `${e.w}px` });
     if (e.type !== 'text') node.style.height = `${e.h}px`;
   });
-  const endDrag = () => {
+  const endDrag = (ev) => {
+    if (ev?.pointerId !== undefined && stage.hasPointerCapture?.(ev.pointerId)) stage.releasePointerCapture(ev.pointerId);
     if (!drag) return;
     if (drag.moved) { S.history.push(drag.before); S.future = []; renderCanvas(); changed(); }
     drag = null;
   };
   stage.addEventListener('pointerup', endDrag);
   stage.addEventListener('pointercancel', endDrag);
-  stage.addEventListener('dblclick', (ev) => { const node = ev.target.closest('.del-text'); if (node) startEdit(node.dataset.id); });
+  // Pointer capture (used for dragging) makes the browser report the double-click on the stage, not on the
+  // text box, so find the box under the cursor; fall back to the selected text box.
+  stage.addEventListener('dblclick', (ev) => {
+    const under = document.elementsFromPoint(ev.clientX, ev.clientY).find((el) => el.closest?.('.del-text') && stage.contains(el));
+    const node = ev.target.closest?.('.del-text') || under?.closest('.del-text');
+    const id = node?.dataset.id || (S.sel && findEl(S.sel)?.type === 'text' ? S.sel : null);
+    if (id) startEdit(id);
+  });
 
   // ------------------------------------------------------------- keyboard
   let clip = null;
