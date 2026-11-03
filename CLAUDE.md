@@ -13,7 +13,12 @@ The team's main CRM is **Twenty**, set up by a co-worker and run by the **teleca
 
 Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATABASE_URL` and `pg`; embedded PGlite in `data/pg` when `DATABASE_URL` is empty), Vercel Blob for uploads (`data/uploads` locally), nodemailer, `@anthropic-ai/sdk` (Claude, `claude-opus-5-5`), and a vanilla-JS admin SPA in `public/`. There is no build step. Code map: see README. The old SQLite file `data/crm.db` is kept only as a backup/migration source.
 
-## Status (2026-11-02, newest): editor slide navigation
+## Status (2026-11-03, newest): own dropdowns; bigger template previews
+- **Dropdowns:** every `<select>` is replaced by AxiFlow's own button + menu (`public/select.js`, `autoEnhanceSelects()` at the end of app.js; a MutationObserver upgrades selects added later in views, dialogs and the editor). The real select stays hidden as the source of truth (forms, `.value`, `change` events unchanged); `value`/`selectedIndex` setters are wrapped per element so code that sets them updates the button. Keyboard: arrows, Home/End, Enter/Space, Esc (closes only the menu, not a dialog), Tab, type-ahead. Menu opens upward when there is no room, lives inside an open `<dialog>` (top layer), closes on outside click/scroll/resize. Opt out with `<select data-native>`. Styles: `.xsel*` in styles.css (dark + light). Avoid the class `empty` inside menus (global `.empty` empty-state style).
+- **Template cards:** preview edge to edge (no inner padding), grid columns min 400px; preview height capped at 360px so A4 proposals show as a centred portrait page.
+- Tested in headless Edge: 3/3 selects enhanced on the scripts page, keyboard choice, type-ahead pick of a lead that pre-fills the form (programmatic value set), editor property selects, select inside the import dialog, no console errors.
+
+## Status (2026-11-02): editor slide navigation
 - Mouse wheel / trackpad on the canvas moves to the next or previous slide (`goPage`, 60 px threshold, one slide per 450 ms); when zoomed in, the stage scrolls first and changes slide only at the top/bottom edge; Ctrl/Cmd+wheel left to the browser. Page Down / Page Up (and ↓ / ↑ with nothing selected) do the same; the active thumbnail scrolls into view. Layout fix so the stage itself scrolls when zoomed (`.ed-center, .ed-stage { min-height: 0 }`, `place-items: safe center`). Tested in headless Edge (wheel down/up, tiny nudge ignored, keys, zoomed scroll at 184%).
 
 ## Status (2026-11-02): editor fix
