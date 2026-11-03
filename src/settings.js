@@ -32,6 +32,9 @@ export const DEFAULT_SETTINGS = {
     auto_approve_brochure: false,
     auto_send_booking_link: true,
     auto_proposal_after_meeting: true,
+    // Tools that run by themselves in the pipeline (designed documents from the default templates)
+    auto_tools: { script: true, brochure: true, proposal: true },
+    proposal_needs_ok: true, // an automatic proposal waits on Today until someone presses Send
     min_score: 25,
     daily_digest: true,
   },

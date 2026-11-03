@@ -140,6 +140,8 @@ api.get('/leads/:id', async (req, res) => {
     project,
     milestones: project ? await all(`SELECT * FROM milestones WHERE project_id = :pid ORDER BY position`, { pid: project.id }) : [],
     events: await all(`SELECT * FROM events WHERE lead_id = :id ORDER BY id DESC LIMIT 100`, { id }),
+    // designed documents made for this lead (Brochure / Proposal / Pitch script tools)
+    tool_docs: await all(`SELECT d.id, d.kind, d.status, d.source, d.updated_at, EXISTS (SELECT 1 FROM proposals p WHERE p.doc_id = d.id) AS sent FROM docs d WHERE d.lead_id = :id ORDER BY d.id DESC`, { id }),
   });
 });
 
@@ -186,12 +188,13 @@ api.post('/leads/:id/actions/:action', async (req, res) => {
   const b = req.body || {};
   switch (req.params.action) {
     case 'approve': await engine.approveBrochure(id, 'admin'); await engine.advance(id); break;
-    case 'regenerate': await engine.regenerateBrochure(id); break;
+    case 'regenerate': await engine.regenerateBrochure(id); if (getSettings().automation.auto_tools?.brochure) await engine.runLeadTools(id, { script: false }); break;
     case 'disqualify': await engine.setStage(lead, 'lost', b.reason || 'disqualified', { lost_reason: b.reason || 'disqualified', next_action_at: null }); break;
     case 'send_now': await engine.advance(id, { force: true }); break;
     case 'run': await engine.advance(id); break;
     case 'reply': await engine.handleInbound(id, b.channel || 'whatsapp', b.text || 'Yes, interested'); break;
-    case 'proposal': await engine.createAndSendProposal(id); break;
+    case 'proposal': await engine.startProposal(id, 'requested from the lead page'); break;
+    case 'send_proposal_doc': await engine.sendProposalDoc(id, Number(b.doc_id) || null); break;
     case 'mark_paid': await engine.markInvoicePaid(Number(b.invoice_id), 'manual (CRM)'); break;
     case 'book': await engine.bookMeeting(id, b.start_at); break;
     case 'rescore': await engine.rescore(id); break;
@@ -292,6 +295,7 @@ api.get('/manager', async (_req, res) => {
     upcoming: await all(`SELECT id, company, stage, pipe, next_action_type, next_action_at, next_action_note FROM leads WHERE next_action_at IS NOT NULL AND stage NOT IN ('completed','closed_no_reply','not_interested','lost','do_not_contact') ORDER BY next_action_at LIMIT 25`),
     researching: await all(`SELECT id, company FROM leads WHERE stage = 'researching'`),
     hot: await all(`SELECT id, company, contact_name, stage FROM leads WHERE stage IN ('replied','meeting_booked','proposal_sent','won') ORDER BY CASE stage WHEN 'replied' THEN 0 WHEN 'proposal_sent' THEN 1 WHEN 'meeting_booked' THEN 2 ELSE 3 END, updated_at DESC`),
+    proposals_check: (await tools.proposalsToCheck()).map((p) => ({ ...p, total: JSON.parse(p.items_json || '[]').reduce((a, i) => a + (i.price || 0), 0), items_json: undefined })),
     ai: await aiStatus(),
     now,
   });

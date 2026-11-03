@@ -140,7 +140,7 @@ async function fillBell() {
   try {
     const m = await api('/manager');
     const rows = [['approvals', 'edit_note', 'Pitches to approve', m.approvals.length], ['drafts', 'forum', 'Replies to send', m.drafts.length],
-      ['hot', 'handshake', 'Deals to close', m.hot.length], ['calls', 'call', 'Calls with the telecaller', m.calls.length]].filter((r) => r[3]);
+      ['proposals', 'request_quote', 'Proposals to check', m.proposals_check?.length || 0], ['hot', 'handshake', 'Deals to close', m.hot.length], ['calls', 'call', 'Calls with the telecaller', m.calls.length]].filter((r) => r[3]);
     pop.innerHTML = '<div class="pop-h"><b>Needs you</b><small>' + (rows.length ? 'Open one to go straight there' : 'Everything is running automatically') + '</small></div>'
       + (rows.length ? rows.map(([k, ic, l, n]) => '<a href="#/today" data-scroll="' + k + '"><span class="mi">' + ic + '</span><span class="grow">' + l + '</span><span class="count">' + n + '</span></a>').join('')
         : '<div class="empty-note">Nothing needs you right now.</div>');
@@ -262,8 +262,9 @@ async function refreshBadges() {
   try {
     const [m, d] = await Promise.all([api('/manager'), api('/dashboard')]);
     const set = (id, n) => { const el = $(id); if (el) el.textContent = n || ''; };
-    set('#badgeManager', m.approvals.length + m.drafts.length + m.hot.length);
-    set('#bellCount', m.approvals.length + m.drafts.length + m.hot.length);
+    const todo = m.approvals.length + m.drafts.length + m.hot.length + (m.proposals_check?.length || 0);
+    set('#badgeManager', todo);
+    set('#bellCount', todo);
     set('#cntApprovals', m.approvals.length);
     set('#cntDrafts', m.drafts.length);
     set('#cntHot', m.hot.length);
@@ -369,7 +370,7 @@ const HOT_HINT = {
 
 async function renderManager() {
   const [m, planCard] = await Promise.all([api('/manager'), homePlanCard()]);
-  const todo = m.approvals.length + m.drafts.length + m.hot.length;
+  const todo = m.approvals.length + m.drafts.length + m.hot.length + (m.proposals_check?.length || 0);
   const hour = new Date().getHours();
   view.innerHTML = `
   <div class="hello"><div><div class="hello-date">${new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
@@ -391,6 +392,9 @@ async function renderManager() {
 
   ${m.drafts.length ? `<section class="block" data-sec="drafts"><div class="sec-h"><h3>Replies to send (${m.drafts.length})</h3><span class="hint">Leads asked something. We wrote an answer; edit it if you like, then send.</span></div>${m.drafts.map(draftCard).join('')}</section>` : ''}
 
+  ${m.proposals_check?.length ? `<section class="block" data-sec="proposals"><div class="sec-h"><h3>Proposals to check (${m.proposals_check.length})</h3><span class="hint">Made automatically after the meeting. Open to check prices and text, then send.</span></div>
+    ${m.proposals_check.map((p) => `<div class="item row"><span class="ini">${initials(p.company)}</span><div class="grow"><b>${esc(p.company)}</b><div class="small muted">Designed proposal · ${money(p.total)} + tax</div></div><a class="btn" href="#/proposal/${p.id}"><span class="mi">edit</span>Open</a><button class="btn primary" data-send-proposal="${p.lead_id}" data-doc="${p.id}"><span class="mi">send</span>Send</button></div>`).join('')}</section>` : ''}
+
   ${m.hot.length ? `<section class="block" data-sec="hot"><div class="sec-h"><h3>Close these deals (${m.hot.length})</h3><span class="hint">They're engaged. Book the meeting, send the proposal, get the yes.</span></div>
     ${m.hot.map((l) => `<a class="item row link" href="#/lead/${l.id}"><span class="ini">${initials(l.company)}</span><div class="grow"><b>${esc(l.company)}</b><div class="small muted">${esc(HOT_HINT[l.stage] || '')}</div></div>${simplePill(l.stage)}</a>`).join('')}</section>` : ''}
 
@@ -410,6 +414,11 @@ async function renderManager() {
   $('#refreshBrief').onclick = (e) => busy(e.target, async () => { await api('/manager/briefing', { body: {} }); renderManager(); });
   bindWorkItems(view, () => { renderManager(); refreshBadges(); });
   wirePlanButtons(view, renderManager);
+  $$('[data-send-proposal]', view).forEach((b) => (b.onclick = () => busy(b, async () => {
+    if (!confirm('Send this proposal to the client now?')) return;
+    await api(`/leads/${b.dataset.sendProposal}/actions/send_proposal_doc`, { body: { doc_id: b.dataset.doc } });
+    toast('Proposal sent'); renderManager(); refreshBadges();
+  })));
   groupItems(view);
   setTimeout(scrollToSection, 50);
 }
@@ -575,9 +584,14 @@ async function renderLead(id) {
 
   const A = (action, label, cls = '') => `<button class="btn sm ${cls}" data-act="${action}">${label}</button>`;
   const M = (action, label, cls = '') => `<button class="${cls}" data-act="${action}">${label}</button>`;
+  const docOf = (k) => (d.tool_docs || []).find((x) => x.kind === k && x.status === 'ready');
+  const unsentProposal = (d.tool_docs || []).find((x) => x.kind === 'proposal' && x.status === 'ready' && !x.sent);
+  const docLinks = [['script', 'record_voice_over', 'Call script'], ['brochure', 'menu_book', 'Brochure'], ['proposal', 'request_quote', 'Proposal']]
+    .map(([k, ic, label]) => { const x = docOf(k); return x ? `<a class="btn sm" href="#/${k}/${x.id}"><span class="mi">${ic}</span>${label}</a>` : ''; }).join('');
   // One clear main action for where the lead is now.
   const main = l.stage === 'brochure_ready' ? A('approve', '<span class="mi">check</span>Approve & send pitch', 'primary')
-    : ['replied', 'meeting_booked'].includes(l.stage) ? A('proposal', 'Send proposal PDF', 'primary')
+    : unsentProposal && ['replied', 'meeting_booked', 'needs_manual', 'contacted', 'follow_up_1', 'follow_up_2'].includes(l.stage) ? A('send_proposal_doc', '<span class="mi">send</span>Send the proposal', 'primary')
+    : ['replied', 'meeting_booked'].includes(l.stage) ? A('proposal', '<span class="mi">request_quote</span>Make the proposal', 'primary')
     : l.stage === 'proposal_sent' ? A('accept_proposal', '<span class="mi">check</span>Client said yes', 'primary')
     : ['brochure_approved', 'contacted', 'follow_up_1', 'follow_up_2', 'nurture', 'reengage'].includes(l.stage) ? A('send_now', 'Do next step now', 'primary')
     : ['qualified', 'new', 'researching'].includes(l.stage) ? A('run', 'Run now', 'primary') : '';
@@ -597,7 +611,7 @@ async function renderLead(id) {
   view.innerHTML = `
   <div class="detail-head">
     <div><h2>${esc(l.company)}</h2><div class="muted">${esc(l.contact_name || '')}${l.city ? ' · ' + esc(l.city) : ''}${l.industry ? ' · ' + esc(l.industry) : ''}</div>
-    <div class="row" style="margin-top:8px">${simplePill(l.stage)}</div></div>
+    <div class="row" style="margin-top:8px">${simplePill(l.stage)}</div>${docLinks ? `<div class="row lead-docs" style="margin-top:10px;gap:6px"><span class="small muted">Made for this lead:</span>${docLinks}</div>` : ''}</div>
     <span class="spacer"></span>
     <div class="row">${acts.join('')}</div>
   </div>
@@ -773,7 +787,7 @@ async function renderApprovals() {
       const full = d.lead;
       $('#apprBody').innerHTML = apprTab === 'pitch' ? pitchView(full)
         : apprTab === 'design' ? (full.design_version ? `<iframe class="preview" sandbox src="/d/${l.token}"></iframe>` : '<div class="card empty">No design</div>')
-        : `<iframe class="preview" src="/pdf/brochure/${l.token}.pdf"></iframe>`;
+        : `${(d.tool_docs || []).some((x) => x.kind === 'brochure' && x.status === 'ready') ? `<div class="row" style="margin-bottom:10px"><span class="small muted grow">This is the designed brochure from your default template. Change anything in the editor; the intro sends the latest version.</span><a class="btn sm" href="#/brochure/${d.tool_docs.find((x) => x.kind === 'brochure' && x.status === 'ready').id}"><span class="mi">edit</span>Edit brochure</a></div>` : ''}<iframe class="preview" src="/pdf/brochure/${l.token}.pdf?v=${Date.now()}"></iframe>`;
     });
     $$('[data-sub]').forEach((b) => (b.onclick = () => { apprTab = b.dataset.sub; show(); }));
     $('#prev').onclick = () => { idx--; show(); };
@@ -907,7 +921,8 @@ async function renderSettings() {
     ${inp('sending.window_start', 'Send window start')}${inp('sending.window_end', 'Send window end')}${inp('sending.send_days', 'Send days (0=Sun … 6=Sat)', 'numlist')}${inp('sending.channel_priority', 'Channel priority', 'list')}
     ${inp('sending.daily_cap_whatsapp', 'Daily cap: WhatsApp', 'number')}${inp('sending.daily_cap_email', 'Daily cap: email', 'number')}${inp('sending.throttle_ms', 'Delay between live sends (ms)', 'number')}${inp('sending.default_country_code', 'Default country code')}</div></div>
   <div class="card"><h2>Automation</h2><div class="form-grid">${inp('automation.dry_run', 'Dry run (never send for real)', 'bool')}
-    ${inp('automation.auto_send_booking_link', 'Auto-send booking link on positive reply', 'bool')}${inp('automation.auto_proposal_after_meeting', 'Auto-send proposal after meeting', 'bool')}${inp('automation.daily_digest', 'Daily digest email', 'bool')}
+    ${inp('automation.auto_send_booking_link', 'Auto-send booking link on positive reply', 'bool')}${inp('automation.auto_proposal_after_meeting', 'Make the proposal after the meeting', 'bool')}
+    ${inp('automation.auto_tools.script', 'Pitch script for every interested lead (sent to the CRM)', 'bool')}${inp('automation.auto_tools.brochure', 'Designed brochure for every interested lead', 'bool')}${inp('automation.auto_tools.proposal', 'Designed proposal (Proposal tool)', 'bool')}${inp('automation.proposal_needs_ok', 'Proposals wait for my OK before sending', 'bool')}${inp('automation.daily_digest', 'Daily digest email', 'bool')}
     ${inp('sequence.follow_up_1_days', 'Days until follow-up 1', 'number')}${inp('sequence.follow_up_2_days', 'Days until follow-up 2', 'number')}${inp('sequence.close_after_days', 'Days until closing (no reply)', 'number')}${inp('sequence.proposal_reminder_days', 'Days until proposal reminder', 'number')}${inp('sequence.invoice_reminder_days', 'Days between invoice reminders', 'number')}</div></div>
   <div class="card"><h2>Billing &amp; meetings</h2><div class="form-grid">${inp('billing.currency', 'Currency')}${inp('billing.tax_label', 'Tax label')}${inp('billing.tax_pct', 'Tax %', 'number')}${inp('billing.advance_pct', 'Advance %', 'number')}${inp('billing.invoice_prefix', 'Invoice prefix')}
     ${inp('meeting.slots', 'Meeting slots (HH:MM list)', 'list')}${inp('meeting.days_ahead', 'Days bookable ahead', 'number')}${inp('meeting.duration_min', 'Meeting minutes', 'number')}${inp('meeting.meet_link', 'Meeting link')}${inp('milestones', 'Project milestones', 'list')}</div></div>

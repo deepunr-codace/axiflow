@@ -1,5 +1,6 @@
 import { get, all, run, insert, update, transaction } from '../db.js';
 import { background } from '../background.js';
+import * as tools from '../tools.js';
 import { getSettings } from '../settings.js';
 import { STAGE_IDS, TERMINAL, PRE_REPLY } from '../stages.js';
 import { nowISO, addDays, addMinutes, isDue, token, money, formatInTz, zonedToUtc, normalizeEmail, normalizePhone, normalizeUrl, titleCase, truthy, BASE_URL } from '../util.js';
@@ -212,6 +213,7 @@ async function step(lead, { force }) {
       return true;
     case 'researching': {
       await runPitchMaker(lead.id);
+      await runLeadTools(lead.id);
       if (auto.auto_approve_brochure) await approveBrochure(lead.id, 'auto');
       else {
         await setStage(await getLead(lead.id), 'brochure_ready', 'pitch, design & brochure ready for approval');
@@ -221,6 +223,7 @@ async function step(lead, { force }) {
     }
     case 'brochure_approved': {
       if (!canSendCold) return false;
+      if (auto.auto_tools?.brochure && !(await tools.latestLeadDoc('brochure', lead.id))) await runLeadTools(lead.id, { script: false });
       const pitch = lead.pitch_json ? JSON.parse(lead.pitch_json) : null;
       const vars = { brochure_link: brochureUrl(lead), booking_link: `${BASE_URL}/book/${lead.token}` };
       const fill = (t) => String(t || '').replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => vars[k] ?? '');
@@ -255,13 +258,13 @@ async function step(lead, { force }) {
       if (!m || !auto.auto_proposal_after_meeting) return false;
       if (!isDue(addMinutes(m.start_at, m.duration_min || 30))) return false;
       await update('meetings', m.id, { status: 'done' });
-      await createAndSendProposal(lead.id);
+      await startProposal(lead.id, 'meeting done');
       return false;
     }
     case 'proposal_sent': {
       if (!isDue(lead.next_action_at)) return false;
       const p = await get(`SELECT * FROM proposals WHERE lead_id = :id AND status = 'sent' ORDER BY id DESC LIMIT 1`, { id: lead.id });
-      if (p) await sendToLead(lead.id, 'proposal_reminder', { proposal_link: proposalUrl(p), amount: money(p.total, getSettings().billing.currency) }, { attachment: proposalAttachment(lead, p) });
+      if (p) await sendToLead(lead.id, 'proposal_reminder', { proposal_link: proposalUrl(p), amount: money(p.total, getSettings().billing.currency) }, { attachment: proposalAttachment(lead, p) }); // the PDF is the designed proposal when p.doc_id is set
       await update('leads', lead.id, { next_action_at: null, next_action_type: null });
       await scheduleNext(lead.id, { type: 'call', in_hours: 24, goal: 'Call about the proposal: answer questions, handle objections, ask for the go-ahead', talking_points: [], source: 'rules' });
       return false;
@@ -669,7 +672,7 @@ export function buildProposalItems(lead, s = getSettings()) {
   return items;
 }
 
-export async function createAndSendProposal(leadId, items = null) {
+export async function createAndSendProposal(leadId, items = null, { docId = null } = {}) {
   const s = getSettings();
   const lead = await getLead(leadId);
   items = items || buildProposalItems(lead, s);
@@ -677,9 +680,10 @@ export async function createAndSendProposal(leadId, items = null) {
   const tax = Math.round((subtotal * s.billing.tax_pct) / 100);
   const p = { lead_id: leadId, token: token(), items_json: items, subtotal, tax, total: subtotal + tax, advance_pct: s.billing.advance_pct, status: 'sent', created_at: nowISO() };
   await run(`UPDATE proposals SET status = 'superseded' WHERE lead_id = :leadId AND status = 'sent'`, { leadId });
-  // AI Proposal Generator writes the document; prices above are computed in code.
-  const { content, source } = await writeProposal(lead, items);
-  Object.assign(p, { content_json: content, content_source: source });
+  // The designed proposal (Proposal tool) is the document when docId is given; otherwise the built-in AI write-up.
+  // Prices always come from code (the tool's line items or buildProposalItems), never from the AI.
+  const { content, source } = docId ? { content: { executive_summary: 'Designed proposal (Proposal tool)' }, source: 'tool' } : await writeProposal(lead, items);
+  Object.assign(p, { content_json: content, content_source: source, doc_id: docId });
   p.id = await insert('proposals', p);
   const saved = await get(`SELECT * FROM proposals WHERE id = :id`, { id: p.id });
   await addActivity(leadId, 'system', `Proposal #${p.id} created (${source}): ${money(p.total, s.billing.currency)}`, content.executive_summary);
@@ -849,3 +853,53 @@ export async function runPipeline(trigger = 'manual') {
   }
 }
 const countOut = async () => (await get(`SELECT COUNT(*) n FROM messages WHERE direction='out' AND status IN ('sent','mock')`)).n;
+
+// ------------------------------------------------- tools in the pipeline
+/** Pitch script + designed brochure for a lead (per settings.automation.auto_tools). Never stalls the lead. */
+export async function runLeadTools(leadId, { script = true, brochure = true } = {}) {
+  const at = getSettings().automation.auto_tools || {};
+  if (script && at.script) {
+    try {
+      const d = await tools.createDocForLead('script', leadId);
+      if (d.status === 'ready') await tools.useScriptForLead(d.id);
+      await logEvent(leadId, 'tools', 'pitch_script', d.status === 'ready' ? 'ok' : 'error', d.error || `#${d.id} ${d.source}`);
+    } catch (e) { await logEvent(leadId, 'tools', 'pitch_script', 'error', e.message); }
+  }
+  if (brochure && at.brochure) {
+    try {
+      const d = await tools.createDocForLead('brochure', leadId);
+      await logEvent(leadId, 'tools', 'brochure', d.status === 'ready' ? 'ok' : 'error', d.error || `#${d.id} ${d.source}`);
+      if (d.status === 'ready') await addActivity(leadId, 'system', `Designed brochure ready (${d.source}); the intro will attach it`);
+    } catch (e) { await logEvent(leadId, 'tools', 'brochure', 'error', e.message); }
+  }
+}
+
+/**
+ * Proposal step: with the Proposal tool on, make the designed proposal and (by default) wait for an OK on Today;
+ * otherwise send the built-in proposal straight away (previous behaviour).
+ */
+export async function startProposal(leadId, reason = '') {
+  const s = getSettings();
+  if (!s.automation.auto_tools?.proposal) return { sent: await createAndSendProposal(leadId) };
+  const d = await tools.createDocForLead('proposal', leadId);
+  if (d.status !== 'ready') {
+    await logEvent(leadId, 'tools', 'proposal', 'error', d.error || 'not ready');
+    return { sent: await createAndSendProposal(leadId) }; // never stall the lead
+  }
+  await logEvent(leadId, 'tools', 'proposal', 'ok', `#${d.id} ${d.source}${reason ? ` (${reason})` : ''}`);
+  if (!s.automation.proposal_needs_ok) return { sent: await sendProposalDoc(leadId, d.id) };
+  await addTask(leadId, `Check & send the proposal for ${d.title}`);
+  await addActivity(leadId, 'system', 'Designed proposal ready: check it and press Send', reason || null);
+  return { doc: d, waiting: true };
+}
+
+/** Sends a proposal document (its line items become the proposal; the client gets its PDF). */
+export async function sendProposalDoc(leadId, docId = null) {
+  const d = docId ? await tools.getDoc(docId) : (await tools.proposalsToCheck()).find((x) => x.lead_id === leadId) && await tools.latestLeadDoc('proposal', leadId);
+  if (!d || d.kind !== 'proposal' || d.status !== 'ready' || d.lead_id !== leadId) throw new Error('No proposal ready for this lead');
+  const items = (d.items || []).map((i) => ({ name: i.name, detail: '', qty: 1, price: i.price }));
+  if (!items.length) throw new Error('The proposal has no line items');
+  const p = await createAndSendProposal(leadId, items, { docId: d.id });
+  await completeTasks(leadId, 'Check & send the proposal');
+  return p;
+}

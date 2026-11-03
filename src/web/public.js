@@ -90,7 +90,7 @@ pub.get('/pdf/doc/:file', async (req, res) => {
 
 pub.get('/pdf/brochure/:file', async (req, res) => {
   const lead = await leadByToken(req.params.file.replace(/\.pdf$/, ''));
-  if (!lead?.brochure_version) return notFound(res);
+  if (!lead || (!lead.brochure_version && !(await tools.latestLeadDoc('brochure', lead.id)))) return notFound(res);
   await logEvent(lead.id, 'engagement', 'brochure_pdf_view', 'ok', req.get('user-agent')?.slice(0, 120) || '');
   sendPdf(res, await buildBrochureFor(lead), `${lead.company.replace(/[^\w]+/g, '-')}-website-plan.pdf`);
 });

@@ -65,11 +65,12 @@ export async function leadPrefill(leadId) {
 
 // ------------------------------------------------------------------ jobs
 const running = new Set();
-async function startJob(id, fn) {
+/** Runs a document job. wait=false: in the background (forms); wait=true: finishes before returning (pipeline). */
+async function startJob(id, fn, { wait = false } = {}) {
   if (running.has(id)) return;
   running.add(id);
   await update('docs', id, { status: 'working', error: null, updated_at: nowISO() });
-  background(async () => {
+  const job = async () => {
     try {
       await fn();
       await update('docs', id, { status: 'ready', updated_at: nowISO() });
@@ -78,7 +79,9 @@ async function startJob(id, fn) {
     } finally {
       running.delete(id);
     }
-  }, 'doc-job');
+  };
+  if (wait) await job();
+  else background(job, 'doc-job');
 }
 /** Restarts generation jobs that never finished. staleMinutes: only jobs idle that long (serverless: the instance may have been stopped). */
 export async function resumeDocs({ staleMinutes = 0 } = {}) {
@@ -97,6 +100,15 @@ export async function resumeDocs({ staleMinutes = 0 } = {}) {
   }
 }
 
+/** Research for a document: a lead's stored pitch-maker research if there is one (no second web search), else optional web research. */
+async function researchFor(doc) {
+  if (doc.lead_id) {
+    const l = await get(`SELECT research_json FROM leads WHERE id = :id`, { id: doc.lead_id });
+    const r = parse(l?.research_json);
+    if (r) return { ...r, sources: undefined };
+  }
+  return maybeResearch(doc.input);
+}
 async function maybeResearch(input) {
   if (!input.research || !aiEnabled()) return null;
   try { return await researchLead(pseudoLead(input), null); } catch { return null; }
@@ -116,7 +128,7 @@ export function defaultItems(input) {
   });
 }
 
-export async function createDoc(kind, raw) {
+export async function createDoc(kind, raw, { wait = false } = {}) {
   if (!KINDS.includes(kind)) throw new Error('Unknown document type');
   const s = getSettings();
   const input = cleanInput(raw);
@@ -125,7 +137,7 @@ export async function createDoc(kind, raw) {
     if (!LANGUAGES.includes(input.language)) input.language = LANGUAGES[0];
     const now = nowISO();
     const id = await insert('docs', { kind, token: token(), title: input.company, lead_id: Number(raw.lead_id) || null, template_id: null, input_json: input, status: 'working', created_at: now, updated_at: now });
-    await generate(id);
+    await generate(id, { wait });
     return id;
   }
   const tpl = (raw.template_id && await getTemplate(Number(raw.template_id))) || await defaultTemplate(kind);
@@ -140,23 +152,23 @@ export async function createDoc(kind, raw) {
     kind, token: token(), title: input.company, lead_id: Number(raw.lead_id) || null, template_id: tpl.id,
     input_json: input, items_json: kind === 'proposal' ? defaultItems(input) : null, status: 'working', created_at: now, updated_at: now,
   });
-  await generate(id);
+  await generate(id, { wait });
   return id;
 }
 
 /** (Re)builds the document's design from its template. Replaces manual edits. */
-export async function generate(id) {
+export async function generate(id, { wait = false } = {}) {
   await startJob(id, async () => {
     const doc = await getDoc(id);
     const s = getSettings();
     if (doc.kind === 'script') {
-      const [research, audit] = await Promise.all([maybeResearch(doc.input), auditWebsite(normalizeUrl(doc.input.website)).catch(() => null)]);
+      const [research, audit] = await Promise.all([researchFor(doc), auditWebsite(normalizeUrl(doc.input.website)).catch(() => null)]);
       const r = await writeScript(doc.input, research, audit);
       await update('docs', id, { content_json: r.content, source: r.source, error: r.error ? `AI failed, used the standard script: ${r.error}`.slice(0, 500) : null, updated_at: nowISO() });
       return;
     }
     const tpl = await getTemplate(doc.template_id) || await defaultTemplate(doc.kind);
-    const research = await maybeResearch(doc.input);
+    const research = await researchFor(doc);
     let design, content = null, source;
     if (tpl.mode === 'smart') {
       const r = doc.kind === 'brochure'
@@ -173,7 +185,7 @@ export async function generate(id) {
       source = r.source;
     }
     await update('docs', id, { design_json: cleanDesign(design), content_json: content, source, updated_at: nowISO() });
-  });
+  }, { wait });
 }
 
 // ----------------------------------------------------------- edit & pdf
@@ -277,4 +289,47 @@ export async function useScriptForLead(id) {
   await addActivity(lead.id, 'note', 'Call script updated from the Pitch Script Maker', d.content.pitch_point || null);
   await crmEvent(lead.id, 'lead.script_updated', { telecaller_script: d.content.script, pitch_point: d.content.pitch_point });
   return { ok: true };
+}
+
+// ----------------------------------------------------------- pipeline use
+addColumns('proposals', { doc_id: 'INTEGER' });
+
+const VERTICAL_WORDS = [
+  ['FMCG & Spices', /spice|fmcg|food|grocery|bakery|sweet|snack|tea|coffee|masala/i],
+  ['Clothing & Apparel', /cloth|apparel|fashion|boutique|garment|textile|saree|wear/i],
+  ['Toys & Baby Products', /toy|baby|kid|child/i],
+  ['Wellness & Beauty', /wellness|beauty|salon|spa|clinic|ayurved|physio|health|fitness|yoga|derma/i],
+  ['Automotive Parts', /auto|car|bike|vehicle|spare|tyre|motor|garage/i],
+  ['Home Decor, Furniture & Building Materials', /decor|furniture|interior|tile|hardware|building|cement|paint|sanitary|home/i],
+  ['Jewellery & Accessories', /jewel|gold|silver|accessor|watch/i],
+];
+const verticalFor = (industry) => (VERTICAL_WORDS.find(([, re]) => re.test(String(industry || ''))) || ['Other'])[0];
+
+/** Latest finished document of a kind for a lead (or null). */
+export async function latestLeadDoc(kind, leadId) {
+  const r = await get(`SELECT id FROM docs WHERE kind = :kind AND lead_id = :leadId AND status = 'ready' ORDER BY id DESC LIMIT 1`, { kind, leadId });
+  return r ? getDoc(r.id) : null;
+}
+
+/**
+ * Makes a tool document for a lead from its CRM details (default template, the lead's recommended package,
+ * the pitch maker's research) and waits until it is finished. Returns the document (status ready or error).
+ */
+export async function createDocForLead(kind, leadId) {
+  const p = await leadPrefill(leadId);
+  if (!p) throw new Error('Lead not found');
+  const l = await get(`SELECT industry, recommended_package FROM leads WHERE id = :id`, { id: leadId });
+  const raw = { ...p, lead_id: leadId, research: false, package: l?.recommended_package || p.package, vertical: verticalFor(l?.industry), language: 'English' };
+  const id = await createDoc(kind, raw, { wait: true });
+  return getDoc(id);
+}
+
+/** Unsent proposal documents waiting for an OK (the newest per lead, not yet turned into a sent proposal). */
+export async function proposalsToCheck() {
+  return all(`SELECT d.id, d.lead_id, d.title, d.items_json, d.updated_at, l.company, l.stage FROM docs d JOIN leads l ON l.id = d.lead_id
+    WHERE d.kind = 'proposal' AND d.status = 'ready' AND d.lead_id IS NOT NULL
+      AND d.id = (SELECT MAX(id) FROM docs d2 WHERE d2.kind = 'proposal' AND d2.lead_id = d.lead_id AND d2.status = 'ready')
+      AND NOT EXISTS (SELECT 1 FROM proposals p WHERE p.doc_id = d.id)
+      AND l.stage IN ('replied', 'meeting_booked', 'needs_manual', 'contacted', 'follow_up_1', 'follow_up_2')
+    ORDER BY d.updated_at DESC`);
 }
