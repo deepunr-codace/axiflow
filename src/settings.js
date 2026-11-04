@@ -483,8 +483,11 @@ export async function seedDefaults() {
     ...(a.address === 'Bengaluru, India' ? { address: D.address } : {}),
   };
   const about = Array.isArray(s.brochure?.about) && /^Axilume is a next-gen/.test(s.brochure.about[0] || '') ? DEFAULT_SETTINGS.brochure.about : null;
-  if (Object.keys(renamed).length || s.billing.invoice_prefix === 'WS' || about) {
-    await saveSettings({ agency: renamed, ...(s.billing.invoice_prefix === 'WS' ? { billing: { invoice_prefix: 'AWS' } } : {}), ...(about ? { brochure: { about } } : {}) });
+  // CRM writes: a list saved before call-script notes were allowed gets them (owner, 2026-11-04). An edited list is kept.
+  const wt = s.atomic?.write_tables;
+  const writeTables = Array.isArray(wt) && wt.join() === 'brochures,companies.pitch_point' ? DEFAULT_SETTINGS.atomic.write_tables : null;
+  if (Object.keys(renamed).length || s.billing.invoice_prefix === 'WS' || about || writeTables) {
+    await saveSettings({ agency: renamed, ...(s.billing.invoice_prefix === 'WS' ? { billing: { invoice_prefix: 'AWS' } } : {}), ...(about ? { brochure: { about } } : {}), ...(writeTables ? { atomic: { write_tables: writeTables } } : {}) });
   }
 }
 
