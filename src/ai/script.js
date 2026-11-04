@@ -82,6 +82,9 @@ function repair(c, std) {
   let point = s(c?.pitch_point);
   let script = s(c?.script);
   if (point.length > 300 || point.split('\n').length > 3) { if (script.length < point.length) script = point; point = ''; }
+  // A pitch point is what we offer the client, not a description of the call (seen from a free model:
+  // "Short phone call script for Arjun, Codeace, targeting ... Goal: book a 30-minute meeting.").
+  if (/\b(call script|phone call|script for|telecaller|goal:|targeting)\b/i.test(point)) point = '';
   if (point && std.pitch_point && point.toLowerCase().includes(String(std.pitch_point.split(' for ').pop() || '').replace(/\s*\(.*\)$/, '').toLowerCase().slice(0, 12))) out.pitch_point = point;
   if (s(c?.introduction) && s(c.introduction).length < 1200) out.introduction = s(c.introduction);
   const opps = list(c?.opportunities, (o) => s(o?.title) && s(o?.detail));

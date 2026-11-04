@@ -302,7 +302,7 @@ async function answerBrochureRequests(tools) {
 const brochureStatus = () => getSettings().atomic?.brochure_status || 'approved';
 const brochureLink = (lead) => `${BASE_URL}/pdf/brochure/${lead.token}.pdf`;
 /** Links written to the CRM must open for the telecaller: never a localhost address. */
-const publicLinks = () => /^https:\/\//.test(BASE_URL);
+export const publicLinks = () => /^https:\/\//.test(BASE_URL);
 const pdf = (src, title) => ({ src, title, type: 'application/pdf' });
 
 async function note(lead, text, attachments = []) {

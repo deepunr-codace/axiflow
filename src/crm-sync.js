@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { get, all, insert, update } from './db.js';
 import { nowISO, addMinutes, BASE_URL } from './util.js';
 import { background } from './background.js';
-import { atomicConfigured, canPush, pushEvent } from './atomic.js';
+import { atomicConfigured, canPush, pushEvent, publicLinks } from './atomic.js';
 
 /**
  * Outbound sync to the external CRM. Every change is written to crm_outbox first (durable),
@@ -70,6 +70,9 @@ export async function flushOutbox() {
     const rows = await all(`SELECT * FROM crm_outbox WHERE status = 'pending' AND next_attempt_at <= :now ORDER BY id LIMIT 50`, { now: nowISO() });
     for (const r of rows) {
       if (r.target === 'atomic') {
+        // CRM writes carry links for the telecaller, so only the live site (https BASE_URL) sends them;
+        // a local server leaves the row alone instead of using up its retries.
+        if (!publicLinks()) continue;
         try {
           const st = await pushEvent(r);
           await update('crm_outbox', r.id, { status: st, sent_at: nowISO(), attempts: r.attempts + 1 });
