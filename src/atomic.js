@@ -68,7 +68,7 @@ export async function rest(method, path, body, prefer) {
     signal: AbortSignal.timeout(15000),
   });
   const text = await r.text();
-  if (!r.ok) throw new Error(`CRM ${method} ${path.split('?')[0]}: HTTP ${r.status} ${text.slice(0, 200)}`);
+  if (!r.ok) { let m = text; try { const j = JSON.parse(text); m = [j.message, j.details, j.hint].filter(Boolean).join(" | "); } catch { /* not JSON */ } throw new Error(`CRM ${method} ${path.split("?")[0]}: HTTP ${r.status} ${m.slice(0, 400)}`); }
   return text ? JSON.parse(text) : null;
 }
 export const inList = (ids) => `in.(${[...new Set(ids.filter((x) => x != null))].join(',')})`;
@@ -281,7 +281,7 @@ async function answerBrochureRequests(tools) {
       await logEvent(lead.id, 'atomic', 'brochure_request', d.status === 'ready' ? 'ok' : 'error', d.error || `made #${d.id} for CRM request #${b.id}`);
       if (d.status !== 'ready') continue;
     }
-    await rest('PATCH', `brochures?id=eq.${b.id}`, { brochure_url: brochureLink(lead), title: b.title || `${lead.company}: website plan`, status: 'ready', updated_at: nowISO() });
+    await rest('PATCH', `brochures?id=eq.${b.id}`, { brochure_url: brochureLink(lead), title: b.title || `${lead.company}: website plan`, status: brochureStatus(), updated_at: nowISO() });
     done++;
   }
   return done;
@@ -289,6 +289,8 @@ async function answerBrochureRequests(tools) {
 
 // ------------------------------------------------------------------ AxiFlow → CRM
 
+/** The CRM's brochures.status has a check constraint: 'pending' = a request, 'approved' = brochure ready (found 2026-11-04). */
+const brochureStatus = () => getSettings().atomic?.brochure_status || 'approved';
 const brochureLink = (lead) => `${BASE_URL}/pdf/brochure/${lead.token}.pdf`;
 /** Links written to the CRM must open for the telecaller: never a localhost address. */
 const publicLinks = () => /^https:\/\//.test(BASE_URL);
@@ -308,7 +310,7 @@ async function note(lead, text, attachments = []) {
 async function upsertBrochure(lead) {
   // Throwing keeps the outbox row pending, so the live site (public BASE_URL) writes it instead.
   if (!publicLinks()) throw new Error('brochure links need a public https BASE_URL');
-  const row = { company_id: lead.crm_company_id ?? null, contact_id: lead.crm_contact_id ?? null, deal_id: lead.crm_deal_id ?? null, title: `${lead.company}: website plan`, brochure_url: brochureLink(lead), status: 'ready', updated_at: nowISO() };
+  const row = { company_id: lead.crm_company_id ?? null, contact_id: lead.crm_contact_id ?? null, deal_id: lead.crm_deal_id ?? null, title: `${lead.company}: website plan`, brochure_url: brochureLink(lead), status: brochureStatus(), updated_at: nowISO() };
   const where = lead.crm_company_id ? `company_id=eq.${lead.crm_company_id}` : lead.crm_contact_id ? `contact_id=eq.${lead.crm_contact_id}` : null;
   if (!where) return 'skipped';
   const existing = await rest('GET', `brochures?select=id&${where}&order=id.desc&limit=1`);
