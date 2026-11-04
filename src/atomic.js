@@ -391,8 +391,9 @@ async function uploadBrochurePdf(lead) {
   });
   if (!r.ok) throw new Error(`CRM storage upload: HTTP ${r.status} ${(await r.text()).slice(0, 300)}`);
   await logEvent(lead.id, 'atomic', 'brochure_pdf', 'ok', `uploaded ${(pdfBuf.length / 1024).toFixed(0)} KB to the CRM bucket "${bucket}" (${path})`);
-  // ?v= makes the CDN serve the new version right away after a replacement.
-  return `${url}/storage/v1/object/public/${bucket}/${path.split('/').map(encodeURIComponent).join('/')}?v=${Date.now()}`;
+  // The plain public link of the file (owner wants exactly the bucket URL); cache-control 60 s above
+  // lets a replaced version show within a minute.
+  return `${url}/storage/v1/object/public/${bucket}/${path.split('/').map(encodeURIComponent).join('/')}`;
 }
 
 /** One brochures row per CRM lead: created the first time, then kept up to date. */
