@@ -920,7 +920,7 @@ async function renderSettings() {
   <div class="card" id="crmCard"><div class="sec-h"><h2>Team CRM</h2><span class="spacer"></span><button class="btn sm" id="crmSync"><span class="mi">sync</span>Read the CRM now</button></div>
     <div id="crmStatus" class="small muted">Loading…</div>
     <div class="form-grid" style="margin-top:12px">${inp('atomic.enabled', 'Use the CRM (read deals and call results)', 'bool')}${inp('atomic.read_only', 'Read only: write nothing except the tables below', 'bool')}${inp('atomic.write_tables', 'What AxiFlow may write while read only (table or table.column)', 'list')}${inp('atomic.deal_means_consent', 'An open deal counts as consent for WhatsApp/email', 'bool')}${inp('atomic.poll_seconds', 'Check the CRM every N seconds', 'number')}${inp('atomic.import_per_poll', 'New CRM leads to bring in per check', 'number')}</div>
-    <p class="small muted">Every CRM lead becomes an AxiFlow lead. New CRM leads get a pitch, call script and brochure straight away; the pitch point is written to the company's pitch point field and the brochure link to the brochures table.</p>
+    <p class="small muted">Every CRM lead becomes an AxiFlow lead. New CRM leads get a pitch, call script and brochure straight away; the pitch point goes to the company's pitch point field, the call script to a note on the contact, and the brochure link to the brochures table.</p>
     <h3 style="margin-top:16px">What each deal stage does</h3>
     <p class="small muted">Stage values exactly as the CRM stores them. A new deal in a stage that is not listed counts as interested.</p>
     <div id="crmStages"></div></div>

@@ -30,6 +30,7 @@ import { TERMINAL } from './stages.js';
 
 addColumns('leads', { crm_deal_id: 'INTEGER', crm_company_id: 'INTEGER', crm_contact_id: 'INTEGER', crm_sales_id: 'INTEGER', crm_stage_key: 'TEXT', crm_sync_hash: 'TEXT' });
 addColumns('crm_outbox', { target: "TEXT DEFAULT 'webhook'" });
+addColumns('leads', { crm_script_note_id: 'INTEGER', crm_script_note_on: 'TEXT' }); // the one CRM note that holds this lead's call script
 
 export const ACTIONS = ['interested', 'proposal', 'won', 'lost', 'nurture', 'not_interested', 'ignore'];
 
@@ -50,10 +51,12 @@ export function canWrite(table, cols) {
   return !!cols?.length && cols.every((c) => w.includes(`${table}.${c}`));
 }
 const BROCHURE_EVENTS = new Set(['lead.brochure_ready', 'lead.pitch_ready']);
+const SCRIPT_EVENTS = new Set(['lead.script_ready', 'lead.script_updated']);
+const canWriteScript = () => canWrite('contact_notes') || canWrite('deal_notes');
 /** Whether an outbox event can be written to the CRM with the current settings. */
 export const canPush = (event) => !readOnly()
   || (BROCHURE_EVENTS.has(event) && canWrite('brochures'))
-  || (event === 'lead.script_updated' && canWrite('companies', ['pitch_point']));
+  || (SCRIPT_EVENTS.has(event) && (canWriteScript() || canWrite('companies', ['pitch_point'])));
 const tableOf = (path) => String(path).split(/[?/]/)[0];
 
 export async function rest(method, path, body, prefer) {
@@ -160,6 +163,12 @@ export async function syncLead(co, ct, deal, { engine, twenty, budget }) {
 
   await twenty.applyCrmUpdate(lead, input, 'the CRM');
   await update('leads', lead.id, { ...links, crm_sync_hash: hash });
+  // A contact or deal added in the CRM later: attach the call script there and link the brochure row to it.
+  if ((links.crm_contact_id && links.crm_contact_id !== lead.crm_contact_id) || (links.crm_deal_id && !lead.crm_deal_id)) {
+    const { crmEvent } = await import('./crm-sync.js');
+    if (await get(`SELECT 1 AS one FROM docs WHERE lead_id = :id AND kind = 'script' AND status = 'ready'`, { id: lead.id })) await crmEvent(lead.id, 'lead.script_ready', { reason: 'contact or deal added in the CRM' });
+    if (await get(`SELECT 1 AS one FROM docs WHERE lead_id = :id AND kind = 'brochure' AND status = 'ready'`, { id: lead.id })) await crmEvent(lead.id, 'lead.brochure_ready', { reason: 'contact or deal added in the CRM' });
+  }
 
   if (stageKey !== (lead.crm_stage_key || '') || (deal && deal.id !== lead.crm_deal_id)) {
     await update('leads', lead.id, { crm_stage_key: stageKey });
@@ -306,6 +315,43 @@ async function note(lead, text, attachments = []) {
   }
 }
 
+/** The call script as plain text for a CRM note. */
+function scriptText(lead, c, pdfUrl) {
+  const out = [`Call script for ${lead.company} (from AxiFlow, ${new Date().toISOString().slice(0, 10)})`];
+  if (c.pitch_point) out.push(`Pitch point: ${c.pitch_point}`);
+  if (c.script) out.push(`Script (word for word):\n${c.script}`);
+  else if (c.introduction) out.push(`Introduction:\n${c.introduction}`);
+  if (c.pitch_points?.length) out.push(`Pitching points:\n${c.pitch_points.map((p, i) => `${i + 1}. ${p.point}${p.detail ? `: ${p.detail}` : ''}`).join('\n')}`);
+  if (c.questions?.length) out.push(`Questions to ask:\n${c.questions.map((q) => `- ${q}`).join('\n')}`);
+  if (c.objections?.length) out.push(`If they say...\n${c.objections.map((o) => `- ${o.objection}: ${o.response}`).join('\n')}`);
+  const b = c.booking || {};
+  if (b.ask || b.if_yes || b.if_not_now) out.push(['Booking the meeting:', b.ask, b.if_yes && `If yes: ${b.if_yes}`, b.if_not_now && `If not now: ${b.if_not_now}`].filter(Boolean).join('\n'));
+  if (pdfUrl) out.push(`PDF: ${pdfUrl}`);
+  return out.join('\n\n').slice(0, 20000);
+}
+
+/** One CRM note per lead holds its latest call script: on the main contact, else on the deal. */
+async function upsertScriptNote(lead) {
+  const tools = await import('./tools.js');
+  const doc = await tools.latestLeadDoc('script', lead.id);
+  if (!doc?.content) return 'skipped';
+  if (!publicLinks()) throw new Error('script notes need a public https BASE_URL'); // the live site writes it
+  const on = lead.crm_contact_id && canWrite('contact_notes') ? 'contact' : lead.crm_deal_id && canWrite('deal_notes') ? 'deal' : null;
+  if (!on) return 'skipped';
+  const table = on === 'contact' ? 'contact_notes' : 'deal_notes';
+  const pdfUrl = doc.token ? `${BASE_URL}/pdf/doc/${doc.token}.pdf` : null;
+  const body = { text: scriptText(lead, doc.content, pdfUrl), date: nowISO(), ...(pdfUrl ? { attachments: [pdf(pdfUrl, `${lead.company} - call script.pdf`)] } : {}) };
+  if (lead.crm_script_note_id && lead.crm_script_note_on === on) {
+    const r = await rest('PATCH', `${table}?id=eq.${lead.crm_script_note_id}`, body, 'return=representation');
+    if (r?.length) { await logEvent(lead.id, 'atomic', 'script_note', 'ok', `updated the call script note in the CRM (${on})`); return 'sent'; }
+  }
+  const row = { ...body, ...(on === 'contact' ? { contact_id: lead.crm_contact_id } : { deal_id: lead.crm_deal_id }), sales_id: lead.crm_sales_id ?? null };
+  const r = await rest('POST', table, row, 'return=representation');
+  await update('leads', lead.id, { crm_script_note_id: r?.[0]?.id ?? null, crm_script_note_on: on });
+  await logEvent(lead.id, 'atomic', 'script_note', 'ok', `added the call script as a CRM ${on} note`);
+  return 'sent';
+}
+
 /** One brochures row per CRM lead: created the first time, then kept up to date. */
 async function upsertBrochure(lead) {
   // Throwing keeps the outbox row pending, so the live site (public BASE_URL) writes it instead.
@@ -332,14 +378,16 @@ export async function pushEvent(row) {
   const lead = await get(`SELECT * FROM leads WHERE id = :id`, { id: row.lead_id });
   if (!lead || !String(lead.external_id || '').startsWith('atomic:') || !canPush(event)) return 'skipped';
   const ws = s.write_stages || {};
-  // Brochures go to the CRM's brochures table for interested leads (allowed even while read-only).
+  // Every brochure made for a CRM lead goes to the CRM's brochures table (allowed even while read-only).
   if (BROCHURE_EVENTS.has(event)) {
-    if (!s.brochures_table || lead.interested !== 'yes') return 'skipped';
+    if (!s.brochures_table) return 'skipped';
     if (event === 'lead.pitch_ready' && !lead.brochure_version) return 'skipped';
     const st = await upsertBrochure(lead);
     if (event === 'lead.brochure_ready' && s.notes && lead.crm_deal_id && canWrite('deal_notes')) await note(lead, `Brochure ready for ${lead.company}. Send it to the client from the link below (it always shows the latest version).`, [pdf(brochureLink(lead), `${lead.company} - website plan.pdf`)]);
     return st;
   }
+  // Call scripts: one CRM note per lead (on the main contact, else the deal), kept up to date.
+  if (event === 'lead.script_ready') return await upsertScriptNote(lead);
   if (!lead.crm_deal_id && !['lead.call_requested', 'lead.script_updated'].includes(event)) return 'skipped'; // notes and deal changes need a deal
   switch (event) {
     case 'lead.script_updated': {
@@ -347,6 +395,7 @@ export async function pushEvent(row) {
         await rest('PATCH', `companies?id=eq.${lead.crm_company_id}`, { pitch_point: String(detail.pitch_point).slice(0, 1000) }, 'return=minimal');
         await logEvent(lead.id, 'atomic', 'pitch_point', 'ok', 'wrote the pitch point to the CRM company');
       }
+      if (canWriteScript()) { await upsertScriptNote(lead); return 'sent'; }
       if (!s.notes || !lead.crm_deal_id || !canWrite('deal_notes')) return 'sent';
       await note(lead, `Call script from AxiFlow\n\n${detail.pitch_point ? `Pitch point: ${detail.pitch_point}\n\n` : ''}${detail.telecaller_script || ''}`.trim());
       return 'sent';
@@ -409,5 +458,5 @@ export function pollSoon(background) {
   const every = (getSettings().atomic?.poll_seconds || 60) * 1000;
   if (Date.now() - lastKick < every) return;
   lastKick = Date.now();
-  background(() => pollCrm().catch(() => {}), 'crm-poll');
+  background(async () => { await pollCrm().catch(() => {}); await (await import('./crm-sync.js')).flushOutbox().catch(() => {}); }, 'crm-poll');
 }

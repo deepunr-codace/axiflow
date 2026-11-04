@@ -74,6 +74,7 @@ async function startJob(id, fn, { wait = false } = {}) {
     try {
       await fn();
       await update('docs', id, { status: 'ready', updated_at: nowISO() });
+      await announce(id);
     } catch (e) {
       await update('docs', id, { status: 'error', error: String(e.message).slice(0, 500), updated_at: nowISO() });
     } finally {
@@ -220,7 +221,21 @@ export async function saveDoc(id, { design, items, title, content }) {
     if (!patch.items_json.length) throw new Error('Add at least one line item');
   }
   await update('docs', id, patch);
+  if (content !== undefined) await announce(id, { edited: true });
   return await getDoc(id);
+}
+
+/**
+ * Tells the CRM about a lead's new or edited brochure / call script (the CRM write reads the latest
+ * version when it runs, so one waiting event per lead is enough while someone keeps editing).
+ */
+async function announce(id, { edited = false } = {}) {
+  const d = await get(`SELECT id, kind, lead_id FROM docs WHERE id = :id`, { id });
+  if (!d?.lead_id || !['brochure', 'script'].includes(d.kind)) return;
+  if (edited && d.kind === 'brochure') return; // the brochure link always shows the latest version
+  const event = d.kind === 'brochure' ? 'lead.brochure_ready' : 'lead.script_ready';
+  if (await get(`SELECT 1 AS one FROM crm_outbox WHERE lead_id = :lid AND event = :event AND target = 'atomic' AND status = 'pending'`, { lid: d.lead_id, event })) return;
+  await crmEvent(d.lead_id, event, { doc_id: d.id, edited }).catch(() => {});
 }
 
 /** AI assistant: applies a chat request to the design; returns the reply and the updated document. */

@@ -46,7 +46,7 @@ export const DEFAULT_SETTINGS = {
   atomic: {
     enabled: true,
     read_only: true, // only read from the CRM; nothing is written back until this is switched off, except:
-    write_tables: ['brochures', 'companies.pitch_point'], // written even while read-only (owner, 2026-11-04): brochure rows, the pitch point column
+    write_tables: ['brochures', 'companies.pitch_point', 'contact_notes', 'deal_notes'], // written even while read-only (owner, 2026-11-04): brochure rows, the pitch point, call script notes
     brochure_status: 'approved', // value the CRM accepts for a ready brochure (its check constraint rejects 'ready')
     new_lead_action: 'interested', // a CRM lead without a deal: pitch maker, call script and brochure
     import_per_poll: 20, // new CRM leads imported per poll (big imports are spread out)

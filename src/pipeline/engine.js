@@ -870,8 +870,7 @@ export async function runLeadTools(leadId, { script = true, brochure = true } = 
       const d = await tools.createDocForLead('brochure', leadId);
       await logEvent(leadId, 'tools', 'brochure', d.status === 'ready' ? 'ok' : 'error', d.error || `#${d.id} ${d.source}`);
       if (d.status === 'ready') {
-        await addActivity(leadId, 'system', `Designed brochure ready (${d.source}); the intro will attach it`);
-        await crmEvent(leadId, 'lead.brochure_ready', { doc_id: d.id });
+        await addActivity(leadId, 'system', `Designed brochure ready (${d.source}); the intro will attach it`); // tools.js tells the CRM
       }
     } catch (e) { await logEvent(leadId, 'tools', 'brochure', 'error', e.message); }
   }
