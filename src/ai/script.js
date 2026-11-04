@@ -85,6 +85,11 @@ function repair(c, std) {
   // A pitch point is what we offer the client, not a description of the call (seen from a free model:
   // "Short phone call script for Arjun, Codeace, targeting ... Goal: book a 30-minute meeting.").
   if (/\b(call script|phone call|script for|telecaller|goal:|targeting)\b/i.test(point)) point = '';
+  // ...and it must say more than the business name and place ("Back To Roots ..., Meloor" is not a pitch).
+  // The standard pitch point ends with "for <company>", so its tail gives the name to discount.
+  const words = (v) => String(v || '').toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+  const known = new Set([...words(String(std.pitch_point || '').split(' for ').pop()), 'the', 'and', 'for', 'of', 'in', 'at']);
+  if (words(point).filter((w) => !known.has(w)).length < 2) point = '';
   if (point && std.pitch_point && point.toLowerCase().includes(String(std.pitch_point.split(' for ').pop() || '').replace(/\s*\(.*\)$/, '').toLowerCase().slice(0, 12))) out.pitch_point = point;
   if (s(c?.introduction) && s(c.introduction).length < 1200) out.introduction = s(c.introduction);
   const opps = list(c?.opportunities, (o) => s(o?.title) && s(o?.detail));
