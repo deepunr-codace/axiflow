@@ -46,7 +46,11 @@ export const DEFAULT_SETTINGS = {
   atomic: {
     enabled: true,
     read_only: true, // only read from the CRM; nothing is written back until this is switched off, except:
-    write_tables: ['brochures', 'companies.pitch_point', 'contact_notes', 'deal_notes', 'storage.brochure'], // written even while read-only (owner, 2026-11-04): brochure rows, the pitch point, call script notes, brochure PDFs in the bucket
+    write_tables: ['brochures', 'companies.pitch_point', 'contact_notes', 'deal_notes', 'storage.brochure', 'proposal', 'storage.proposal'], // written even while read-only (owner, 2026-11-04): brochure rows + PDFs, the pitch point, call script notes, proposal rows + PDFs
+    proposal_bucket: 'proposal', // CRM storage bucket (public) for proposal PDFs
+    proposals_table: 'proposal', // CRM table with one row per lead's proposal
+    proposal_url_column: 'porposal_url', // spelled this way in the CRM
+    proposal_status: 'approved', // tried first; if the CRM rejects it, the row keeps the CRM default
     brochure_bucket: 'brochure', // CRM storage bucket (public) for the brochure PDFs; the brochures row links to the file there
     brochure_status: 'approved', // value the CRM accepts for a ready brochure (its check constraint rejects 'ready')
     new_lead_action: 'interested', // a CRM lead without a deal: pitch maker, call script and brochure
@@ -486,7 +490,7 @@ export async function seedDefaults() {
   const about = Array.isArray(s.brochure?.about) && /^Axilume is a next-gen/.test(s.brochure.about[0] || '') ? DEFAULT_SETTINGS.brochure.about : null;
   // CRM writes: a list saved before call-script notes were allowed gets them (owner, 2026-11-04). An edited list is kept.
   const wt = s.atomic?.write_tables;
-  const writeTables = Array.isArray(wt) && ['brochures,companies.pitch_point', 'brochures,companies.pitch_point,contact_notes,deal_notes'].includes(wt.join()) ? DEFAULT_SETTINGS.atomic.write_tables : null;
+  const writeTables = Array.isArray(wt) && ['brochures,companies.pitch_point', 'brochures,companies.pitch_point,contact_notes,deal_notes', 'brochures,companies.pitch_point,contact_notes,deal_notes,storage.brochure'].includes(wt.join()) ? DEFAULT_SETTINGS.atomic.write_tables : null;
   if (Object.keys(renamed).length || s.billing.invoice_prefix === 'WS' || about || writeTables) {
     await saveSettings({ agency: renamed, ...(s.billing.invoice_prefix === 'WS' ? { billing: { invoice_prefix: 'AWS' } } : {}), ...(about ? { brochure: { about } } : {}), ...(writeTables ? { atomic: { write_tables: writeTables } } : {}) });
   }

@@ -57,6 +57,7 @@ const canWriteScript = () => canWrite('contact_notes') || canWrite('deal_notes')
 /** Whether an outbox event can be written to the CRM with the current settings. */
 export const canPush = (event) => !readOnly()
   || (BROCHURE_EVENTS.has(event) && canWrite('brochures'))
+  || (event === 'lead.proposal_ready' && canWrite(getSettings().atomic?.proposals_table || 'proposal'))
   || (SCRIPT_EVENTS.has(event) && (canWriteScript() || canWrite('companies', ['pitch_point'])));
 const tableOf = (path) => String(path).split(/[?/]/)[0];
 
@@ -374,16 +375,19 @@ async function upsertScriptNote(lead) {
  * under a fixed name per lead, so a new version replaces the old file. Returns the public link.
  */
 async function uploadBrochurePdf(lead) {
-  const s = getSettings().atomic || {};
-  const bucket = s.brochure_bucket;
-  if (!bucket || !canWrite(`storage.${bucket}`)) return null;
   const { buildBrochureFor } = await import('./pdf/docs.js');
-  const pdfBuf = await buildBrochureFor(lead);
+  return uploadPdf(lead, getSettings().atomic?.brochure_bucket, () => buildBrochureFor(lead), 'website-plan');
+}
+
+/** Uploads a PDF for a lead to a CRM bucket: <uuid per lead>/<company>-<name>.pdf, replacing an older version. */
+async function uploadPdf(lead, bucket, build, name) {
+  if (!bucket || !canWrite(`storage.${bucket}`)) return null;
+  const pdfBuf = await build();
   const slug = String(lead.company || 'lead').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'lead';
   // Folder = a unique id per lead (owner, 2026-11-04), kept on the lead so new versions replace the old file.
   let folder = lead.crm_brochure_folder;
   if (!folder) { folder = crypto.randomUUID(); await update('leads', lead.id, { crm_brochure_folder: folder }); lead.crm_brochure_folder = folder; }
-  const path = `${folder}/${slug}-website-plan.pdf`;
+  const path = `${folder}/${slug}-${name}.pdf`;
   const { url, key } = conf();
   const r = await fetch(`${url}/storage/v1/object/${bucket}/${path}`, {
     method: 'POST',
@@ -392,10 +396,38 @@ async function uploadBrochurePdf(lead) {
     signal: AbortSignal.timeout(60000),
   });
   if (!r.ok) throw new Error(`CRM storage upload: HTTP ${r.status} ${(await r.text()).slice(0, 300)}`);
-  await logEvent(lead.id, 'atomic', 'brochure_pdf', 'ok', `uploaded ${(pdfBuf.length / 1024).toFixed(0)} KB to the CRM bucket "${bucket}" (${path})`);
+  await logEvent(lead.id, 'atomic', `${name}_pdf`, 'ok', `uploaded ${(pdfBuf.length / 1024).toFixed(0)} KB to the CRM bucket "${bucket}" (${path})`);
   // The plain public link of the file (owner wants exactly the bucket URL); cache-control 60 s above
   // lets a replaced version show within a minute.
   return `${url}/storage/v1/object/public/${bucket}/${path.split('/').map(encodeURIComponent).join('/')}`;
+}
+
+/**
+ * The lead's proposal PDF goes to the CRM bucket `atomic.proposal_bucket` and one row per lead in the CRM
+ * table `atomic.proposals_table` (`proposal`, link column `porposal_url` as spelled in the CRM).
+ */
+async function upsertProposal(lead, docId) {
+  const s = getSettings().atomic || {};
+  if (!publicLinks()) throw new Error('proposal links need a public https BASE_URL'); // the live site writes it
+  const tools = await import('./tools.js');
+  const doc = (docId && await tools.getDoc(docId)) || await tools.latestLeadDoc('proposal', lead.id);
+  if (!doc || doc.status !== 'ready' || doc.lead_id !== lead.id) return 'skipped';
+  let link = doc.token ? `${BASE_URL}/pdf/doc/${doc.token}.pdf` : null;
+  try { link = (await uploadPdf(lead, s.proposal_bucket, () => tools.docPdf(doc), 'website-proposal')) || link; } catch (e) { await logEvent(lead.id, 'atomic', 'proposal_pdf', 'error', `${e.message}; the row links to AxiFlow instead`); }
+  if (!link) return 'skipped';
+  const table = s.proposals_table || 'proposal', col = s.proposal_url_column || 'porposal_url';
+  const row = { company_id: lead.crm_company_id ?? null, contact_id: lead.crm_contact_id ?? null, deal_id: lead.crm_deal_id ?? null, title: `${lead.company}: website proposal`, [col]: link, updated_at: nowISO() };
+  const where = lead.crm_company_id ? `company_id=eq.${lead.crm_company_id}` : lead.crm_contact_id ? `contact_id=eq.${lead.crm_contact_id}` : null;
+  if (!where) return 'skipped';
+  const existing = await rest('GET', `${table}?select=id&${where}&order=id.desc&limit=1`);
+  const write = async (body) => (existing.length ? rest('PATCH', `${table}?id=eq.${existing[0].id}`, body, 'return=minimal') : rest('POST', table, body, 'return=minimal'));
+  try { await write({ ...row, status: s.proposal_status || 'approved' }); }
+  catch (e) {
+    if (!/23514|check constraint/i.test(e.message)) throw e;
+    await write(row); // the CRM does not accept that status value: keep its own default
+  }
+  await logEvent(lead.id, 'atomic', 'proposal', 'ok', `${existing.length ? 'updated' : 'added'} the proposal in the CRM ${table} table`);
+  return 'sent';
 }
 
 /** One brochures row per CRM lead: created the first time, then kept up to date. */
@@ -436,6 +468,7 @@ export async function pushEvent(row) {
   }
   // Call scripts: one CRM note per lead (on the main contact, else the deal), kept up to date.
   if (event === 'lead.script_ready') return await upsertScriptNote(lead);
+  if (event === 'lead.proposal_ready') return await upsertProposal(lead, detail.doc_id);
   if (!lead.crm_deal_id && !['lead.call_requested', 'lead.script_updated'].includes(event)) return 'skipped'; // notes and deal changes need a deal
   switch (event) {
     case 'lead.script_updated': {

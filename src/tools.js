@@ -222,7 +222,7 @@ export async function saveDoc(id, { design, items, title, content }) {
     if (!patch.items_json.length) throw new Error('Add at least one line item');
   }
   await update('docs', id, patch);
-  if (content !== undefined || designEdited) await announce(id, { edited: true });
+  if (content !== undefined || designEdited || items !== undefined) await announce(id, { edited: true }); // prices change the proposal PDF too
   return await getDoc(id);
 }
 
@@ -232,10 +232,10 @@ export async function saveDoc(id, { design, items, title, content }) {
  */
 async function announce(id, { edited = false } = {}) {
   const d = await get(`SELECT id, kind, lead_id FROM docs WHERE id = :id`, { id });
-  if (!d?.lead_id || !['brochure', 'script'].includes(d.kind)) return;
-  const event = d.kind === 'brochure' ? 'lead.brochure_ready' : 'lead.script_ready';
+  if (!d?.lead_id || !['brochure', 'script', 'proposal'].includes(d.kind)) return;
+  const event = { brochure: 'lead.brochure_ready', script: 'lead.script_ready', proposal: 'lead.proposal_ready' }[d.kind];
   if (await get(`SELECT 1 AS one FROM crm_outbox WHERE lead_id = :lid AND event = :event AND target = 'atomic' AND status = 'pending'`, { lid: d.lead_id, event })) return;
-  await crmEvent(d.lead_id, event, { doc_id: d.id, edited }, { delayMinutes: edited && d.kind === 'brochure' ? 2 : 0 }).catch(() => {});
+  await crmEvent(d.lead_id, event, { doc_id: d.id, edited }, { delayMinutes: edited && d.kind !== 'script' ? 2 : 0 }).catch(() => {});
 }
 
 /** AI assistant: applies a chat request to the design; returns the reply and the updated document. */
