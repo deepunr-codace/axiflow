@@ -24,7 +24,7 @@ async function safeFetch(url, hops = 0) {
   const res = await fetch(url, {
     redirect: 'manual',
     signal: AbortSignal.timeout(10000),
-    headers: { 'user-agent': 'Mozilla/5.0 (compatible; AxilumeAudit/1.0)' },
+    headers: { 'user-agent': 'Mozilla/5.0 (compatible; CodeaceAudit/1.0)' },
   });
   if (res.status >= 300 && res.status < 400 && res.headers.get('location') && hops < 5) {
     return safeFetch(new URL(res.headers.get('location'), url).toString(), hops + 1);

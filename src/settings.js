@@ -2,11 +2,11 @@ import { get, all, run } from './db.js';
 
 export const DEFAULT_SETTINGS = {
   agency: {
-    name: 'Axilume',
+    name: 'Codeace',
     sender_name: 'Arjun',
-    email: 'hello@axilume.com',
+    email: 'hello@codeace.com',
     phone: '+91 8296 93 8296',
-    website: 'https://axilume.com',
+    website: 'https://codeace.com',
     address: 'Sahya Building, Gov Cyberpark, Kozhikode, Kerala, India',
     review_link: 'https://g.page/r/your-google-review-link',
     portfolio: [
@@ -123,8 +123,8 @@ export const DEFAULT_SETTINGS = {
     cover_title: 'Digital Growth Solutions for {{company}}',
     cover_subtitle: 'From website to automation, ERP, SEO, and social media - tailored digital services to elevate your visibility, bookings, and growth.',
     about: [
-      'Axilume is a next-gen digital transformation company helping businesses grow through smart technology, strategic marketing, and seamless digital experiences.',
-      'Backed by CodeAce, a multi-million dollar global technology firm trusted since 2018, we bring together deep expertise in software development, automation, SEO, and branding - empowering modern businesses to scale faster, operate smarter, and engage customers better.',
+      'Codeace is a next-gen digital transformation company helping businesses grow through smart technology, strategic marketing, and seamless digital experiences.',
+      'A multi-million dollar global technology firm trusted since 2018, we bring together deep expertise in software development, automation, SEO, and branding - empowering modern businesses to scale faster, operate smarter, and engage customers better.',
     ],
     shift_title: 'The Digital Shift in {{industry}}',
     shift_paragraphs: [
@@ -475,14 +475,16 @@ export async function seedDefaults() {
   const a = s.agency;
   const D = DEFAULT_SETTINGS.agency;
   const renamed = {
-    ...(['WebStream Studio', 'Axilume Web Studio'].includes(a.name) ? { name: D.name } : {}),
-    ...(['hello@webstream.example', 'hello@axilume.example'].includes(a.email) ? { email: D.email } : {}),
-    ...(['https://webstream.example', 'https://axilume.example'].includes(a.website) ? { website: D.website } : {}),
+    // 2026-11-04: the agency is Codeace (was Axilume).
+    ...(['WebStream Studio', 'Axilume Web Studio', 'Axilume'].includes(a.name) ? { name: D.name } : {}),
+    ...(['hello@webstream.example', 'hello@axilume.example', 'hello@axilume.com'].includes(a.email) ? { email: D.email } : {}),
+    ...(['https://webstream.example', 'https://axilume.example', 'https://axilume.com'].includes(a.website) ? { website: D.website } : {}),
     ...(a.phone === '+91 98765 43210' ? { phone: D.phone } : {}),
     ...(a.address === 'Bengaluru, India' ? { address: D.address } : {}),
   };
-  if (Object.keys(renamed).length || s.billing.invoice_prefix === 'WS') {
-    await saveSettings({ agency: renamed, ...(s.billing.invoice_prefix === 'WS' ? { billing: { invoice_prefix: 'AWS' } } : {}) });
+  const about = Array.isArray(s.brochure?.about) && /^Axilume is a next-gen/.test(s.brochure.about[0] || '') ? DEFAULT_SETTINGS.brochure.about : null;
+  if (Object.keys(renamed).length || s.billing.invoice_prefix === 'WS' || about) {
+    await saveSettings({ agency: renamed, ...(s.billing.invoice_prefix === 'WS' ? { billing: { invoice_prefix: 'AWS' } } : {}), ...(about ? { brochure: { about } } : {}) });
   }
 }
 

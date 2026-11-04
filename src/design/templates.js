@@ -27,11 +27,12 @@ CREATE TABLE IF NOT EXISTS design_templates (
 const parse = (j) => { try { return j ? JSON.parse(j) : null; } catch { return null; } };
 
 export async function seedTemplates() {
+  await run(`UPDATE design_templates SET name = REPLACE(name, 'Axilume', 'Codeace') WHERE source = 'builtin' AND name LIKE 'Axilume%'`); // agency renamed 2026-11-04
   for (const kind of ['brochure', 'proposal']) {
     if (!await get(`SELECT 1 FROM design_templates WHERE kind = :kind AND mode = 'smart'`, { kind })) {
       const now = nowISO();
       const anyDefault = await get(`SELECT 1 FROM design_templates WHERE kind = :kind AND is_default = 1`, { kind });
-      await insert('design_templates', { kind, name: kind === 'brochure' ? 'Axilume Default Brochure' : 'Axilume Default Proposal', mode: 'smart', source: 'builtin', is_default: anyDefault ? 0 : 1, created_at: now, updated_at: now });
+      await insert('design_templates', { kind, name: kind === 'brochure' ? 'Codeace Default Brochure' : 'Codeace Default Proposal', mode: 'smart', source: 'builtin', is_default: anyDefault ? 0 : 1, created_at: now, updated_at: now });
     }
   }
 }

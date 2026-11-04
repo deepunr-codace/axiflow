@@ -1,4 +1,4 @@
-# AxiFlow: AI brochure & proposal studio + CRM automation for Axilume
+# AxiFlow: AI brochure & proposal studio + CRM automation for Codeace
 
 A working model of the fully automated web-dev sales and delivery pipeline. A lead comes in, then gets enriched, scored, sent a personalised brochure, followed up, booked for a call, sent a proposal and invoices, onboarded, tracked through milestones, delivered and asked for a review. Every message, stage change and decision is logged.
 
@@ -15,7 +15,7 @@ It replaces (and fixes) the n8n flow in `reference/Web Development.png`. See [Ch
 | **Pitch Script Maker** | `src/ai/pitchmaker.js` | Web research, then a pitch plus a word-for-word **telecaller script**, sent to Twenty with every call request |
 | **Brochure Maker** | `src/pdf/pdf.js` | 4-page **PDF**: cover, where they stand, a **homepage concept drawn from the design brief**, recommendation and call to action. Attached to the intro (email attachment / WhatsApp document). |
 | **AI Proposal Generator** | `src/ai/proposal.js` + `src/pdf/pdf.js` | The AI writes the proposal (summary, scope, timeline, why us). **Prices always come from your price list.** Delivered as a **PDF**. The client accepts by replying "YES", or the telecaller sets `proposalDecision = ACCEPTED` in Twenty. |
-| **Axilume engine** | this app | Decides everything: routing by interest, follow-up timing (call vs message), replies, meetings, invoices, delivery |
+| **AxiFlow engine** | this app | Decides everything: routing by interest, follow-up timing (call vs message), replies, meetings, invoices, delivery |
 
 PDF links (`/pdf/brochure/<token>.pdf`, `/pdf/proposal/<token>.pdf`) are built on request from stored data, and the unguessable token is the access key. WhatsApp sends the PDF as a document: as the template's DOCUMENT header, so templates `ws_intro`, `ws_proposal` and `ws_proposal_reminder` need a **document header** in Meta.
 
@@ -102,7 +102,7 @@ Dashboard (KPIs, funnel, 14-day activity, channel and source performance, attent
 
 ## The AI manager and the three pipes
 
-The system acts as the **manager of Axilume Web Studio**. Every lead goes into one of three pipes based on `interested`:
+The system acts as the **manager of the Codeace web studio**. Every lead goes into one of three pipes based on `interested`:
 
 | Pipe | Who | What happens |
 |---|---|---|

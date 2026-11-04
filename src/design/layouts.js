@@ -3,7 +3,7 @@ import { measureText, scratchDoc, pricingRows, PRICING } from './render-pdf.js';
 import { poss } from '../pdf/brand.js';
 
 /*
- * Built-in "Axilume Default" templates: turn structured copy (written by the AI or the
+ * Built-in "Codeace Default" templates: turn structured copy (written by the AI or the
  * template fallback) into editable pages. Layout copies the owner's reference PDFs.
  */
 const BLUE = '#2d4bd8', WHITE = '#ffffff', INK = '#141413', GREY = '#4b4f5c', RULE = '#d7dcf3';

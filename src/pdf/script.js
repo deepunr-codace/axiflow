@@ -2,7 +2,7 @@ import PDFDocument from 'pdfkit';
 import { registerFonts, wordmark, toBuffer, clean, BLUE, INK, GREY, RULE, TINT } from './brand.js';
 
 /**
- * Call script PDF (A4, Axilume brand). Text flows over as many pages as needed, so the content is
+ * Call script PDF (A4, agency brand). Text flows over as many pages as needed, so the content is
  * never squeezed; each section starts with a blue label and a rule.
  */
 export function scriptPdf(c, input, settings) {

@@ -252,7 +252,7 @@ async function boot() {
   if (!me.authed) return showLogin();
   META = await api('/meta');
   $('#shell').classList.remove('hidden');
-  const who = (typeof META.agency === 'string' && META.agency) || 'Axilume';
+  const who = (typeof META.agency === 'string' && META.agency) || 'Codeace';
   $('#whoName').textContent = who;
   $('#avName').textContent = who;
   $('#avBtn').textContent = who.trim().charAt(0).toUpperCase() || 'A';
