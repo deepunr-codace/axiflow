@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { get, all, insert, update } from './db.js';
 import { nowISO, addMinutes, BASE_URL } from './util.js';
 import { background } from './background.js';
-import { atomicConfigured, readOnly, pushEvent } from './atomic.js';
+import { atomicConfigured, canPush, pushEvent } from './atomic.js';
 
 /**
  * Outbound sync to the external CRM. Every change is written to crm_outbox first (durable),
@@ -55,10 +55,11 @@ export async function crmEvent(leadId, event, detail = {}) {
     lead_id: leadId, event, payload, target: 'webhook',
     status: crmConfigured() ? 'pending' : 'skipped', next_attempt_at: nowISO(), created_at: nowISO(),
   });
-  // Atomic CRM (direct writes). In read-only mode the event is only recorded.
-  const atomic = atomicConfigured() && lead.crm_deal_id;
-  if (atomic) await insert('crm_outbox', { lead_id: leadId, event, payload, target: 'atomic', status: readOnly() ? 'skipped' : 'pending', next_attempt_at: nowISO(), created_at: nowISO() });
-  if (crmConfigured() || (atomic && !readOnly())) background(() => flushOutbox(), 'crm-sync');
+  // Atomic CRM (direct writes). Events that cannot be written (read-only) are only recorded.
+  const atomic = atomicConfigured() && String(lead.external_id || '').startsWith('atomic:');
+  const push = atomic && canPush(event);
+  if (atomic) await insert('crm_outbox', { lead_id: leadId, event, payload, target: 'atomic', status: push ? 'pending' : 'skipped', next_attempt_at: nowISO(), created_at: nowISO() });
+  if (crmConfigured() || push) background(() => flushOutbox(), 'crm-sync');
 }
 
 let flushing = false;

@@ -38,11 +38,14 @@ const dealView = (d) => ({
   expected_closing_date: d.expected_closing_date || null, updated_at: d.updated_at,
 });
 
-/** AxiFlow leads that came from the CRM, by CRM company id. */
-async function linkedByCompany() {
-  const rows = await all(`SELECT id, stage, crm_company_id FROM leads WHERE crm_company_id IS NOT NULL ORDER BY id DESC`);
+/** AxiFlow leads that came from the CRM, by page key (co-<id> / ct-<id>). */
+async function linkedByKey() {
+  const rows = await all(`SELECT id, stage, external_id FROM leads WHERE external_id LIKE 'atomic:%' ORDER BY id DESC`);
   const m = new Map();
-  for (const r of rows) if (!m.has(r.crm_company_id)) m.set(r.crm_company_id, { id: r.id, stage: r.stage });
+  for (const r of rows) {
+    const [, kind, id] = String(r.external_id).match(/^atomic:(co|ct):(\d+)$/) || [];
+    if (kind && !m.has(`${kind}-${id}`)) m.set(`${kind}-${id}`, { id: r.id, stage: r.stage });
+  }
   return m;
 }
 
@@ -53,8 +56,8 @@ export async function crmLeads() {
     readAll('companies?select=id,name,sector,website,city,state_abbr,phone_number,email,whatsapp_number,lead_date,created_at,sales_id&order=created_at.desc'),
     readAll('contacts?select=*&order=id.asc'),
     readAll('deals?select=id,name,company_id,contact_ids,stage,amount,archived_at,expected_closing_date,updated_at&order=updated_at.desc'),
-    get('sales?select=id,first_name,last_name,email'),
-    linkedByCompany(),
+    get('sales?select=id,first_name,last_name,email').catch(() => []),
+    linkedByKey(),
   ]);
   const sales = new Map(salesRows.map((r) => [r.id, r]));
   const byCo = new Map();
@@ -83,7 +86,7 @@ export async function crmLeads() {
       deal: deal ? dealView(deal) : null, deals: ds.length,
       owner: salesName(sales, co?.sales_id ?? main?.sales_id),
       lead_date: co?.lead_date || co?.created_at?.slice(0, 10) || main?.first_seen?.slice(0, 10) || null,
-      axiflow: co ? linked.get(co.id) || null : null,
+      axiflow: linked.get(co ? `co-${co.id}` : `ct-${main.id}`) || null,
     };
   };
   const leads = companies.map((co) => row(co, byCo.get(co.id) || []));
@@ -110,7 +113,7 @@ export async function crmLead(key) {
     dids.length ? get(`deal_notes?select=*&deal_id=${inList(dids)}&order=date.desc&limit=200`) : [],
     cids.length ? get(`tasks?select=*&contact_id=${inList(cids)}&order=due_date.desc&limit=200`) : [],
     co ? get(`brochures?select=*&company_id=eq.${id}&order=id.desc`).catch(() => []) : [],
-    get('sales?select=id,first_name,last_name,email'),
+    get('sales?select=id,first_name,last_name,email').catch(() => []),
   ]);
   const sales = new Map(salesRows.map((r) => [r.id, r]));
   const cname = new Map(contacts.map((c) => [c.id, personName(c) || 'Contact']));
@@ -119,7 +122,7 @@ export async function crmLead(key) {
     ...contactNotes.map((n) => ({ on: cname.get(n.contact_id), kind: 'contact', text: n.text, date: n.date, status: n.status || null, by: salesName(sales, n.sales_id), attachments: n.attachments || [] })),
     ...dealNotes.map((n) => ({ on: dname.get(n.deal_id), kind: 'deal', text: n.text, date: n.date, status: null, by: salesName(sales, n.sales_id), attachments: n.attachments || [] })),
   ].sort((a, b) => String(b.date).localeCompare(String(a.date)));
-  const linked = co ? (await linkedByCompany()).get(co.id) || null : null;
+  const linked = (await linkedByKey()).get(key) || null;
   return {
     key, read_only: readOnly(), host: crmHost(), at: nowISO(),
     company: co ? {

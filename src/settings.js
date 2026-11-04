@@ -45,7 +45,10 @@ export const DEFAULT_SETTINGS = {
    */
   atomic: {
     enabled: true,
-    read_only: true, // only read from the CRM; nothing is written back until this is switched off
+    read_only: true, // only read from the CRM; nothing is written back until this is switched off, except:
+    write_tables: ['brochures', 'companies.pitch_point'], // written even while read-only (owner, 2026-11-04): brochure rows, the pitch point column
+    new_lead_action: 'interested', // a CRM lead without a deal: pitch maker, call script and brochure
+    import_per_poll: 20, // new CRM leads imported per poll (big imports are spread out)
     poll_seconds: 60,
     deal_means_consent: false, // true = an open deal counts as WhatsApp/email consent for the intro
     stages: { opportunity: 'interested', interested: 'interested', 'proposal-sent': 'proposal', 'send-proposal': 'proposal', 'in-negociation': 'ignore', won: 'won', lost: 'lost', delayed: 'nurture', 'not-interested': 'not_interested' },

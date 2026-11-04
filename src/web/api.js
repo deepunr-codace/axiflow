@@ -1,6 +1,7 @@
 import express from 'express';
 import * as atomic from '../atomic.js';
 import { crmLeads, crmLead } from '../crm-leads.js';
+import { background } from '../background.js';
 import { get, all, run, insert, update } from '../db.js';
 import { getSettings, saveSettings, getTemplates } from '../settings.js';
 import { STAGES, STAGE_IDS, SERVICES, SOURCES, PIPES } from '../stages.js';
@@ -30,6 +31,7 @@ api.post('/login', login);
 api.post('/logout', logout);
 api.get('/me', (req, res) => res.json({ authed: isAuthed(req) }));
 api.use(requireAuth);
+api.use((_req, _res, next) => { atomic.pollSoon(background); next(); }); // CRM data stays fresh while the app is used
 
 const LIST_COLS = `id, token, company, contact_name, email, phone, website, industry, city, source, service, budget, stage, score, interested,
   wa_opt_in, email_opt_in, do_not_contact, owner, tags, recommended_package, last_contacted_at, last_channel, next_action_at, attempts, created_at, updated_at,

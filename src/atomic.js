@@ -8,10 +8,13 @@ import { TERMINAL } from './stages.js';
 /*
  * Team CRM connector: Atomic CRM (Marmelab) on its own Supabase project.
  *
- *   CRM → AxiFlow (pollCrm, every `atomic.poll_seconds`, plus POST /webhooks/atomic to poll at once)
- *     - every open deal becomes an AxiFlow lead (external_id "atomic:<deal id>"), with the company and
- *       the deal's primary contact; later edits in the CRM update the lead
- *     - a deal-stage move runs the action set for that stage in `atomic.stages`
+ *   CRM → AxiFlow (pollCrm, every `atomic.poll_seconds`, on app use, plus POST /webhooks/atomic)
+ *     - every CRM lead becomes an AxiFlow lead: a company with its main contact (external_id
+ *       "atomic:co:<company id>"), or a contact without a company ("atomic:ct:<contact id>"), with its
+ *       current deal (the open one, else the latest); later edits in the CRM update the lead
+ *     - a lead without a deal runs `atomic.new_lead_action` (default: interested → pitch, script, brochure);
+ *       a deal-stage move runs the action set for that stage in `atomic.stages`
+ *     - leads whose deal was already won or lost are imported as history (no automation)
  *       (interested → pitch maker, proposal → designed proposal, won, lost, nurture, not_interested, ignore)
  *     - the telecaller's call result on the contact (last_outcome / last_attempt_at) is logged as a call
  *     - brochure requests (CRM table `brochures`, status pending) get the lead's brochure link
@@ -36,11 +39,28 @@ export const atomicConfigured = () => atomicKeys() && getSettings().atomic?.enab
 export const crmHost = () => { try { return new URL(conf().url).host; } catch { return null; } };
 
 export const readOnly = () => getSettings().atomic?.read_only !== false;
+/**
+ * What AxiFlow may write while read-only is on (owner, 2026-11-04): whole tables ("brochures")
+ * or single columns ("companies.pitch_point"). Read-only off = everything.
+ */
+export const writeTables = () => (readOnly() ? getSettings().atomic?.write_tables || [] : ['*']);
+export function canWrite(table, cols) {
+  const w = writeTables();
+  if (w.includes('*') || w.includes(table)) return true;
+  return !!cols?.length && cols.every((c) => w.includes(`${table}.${c}`));
+}
+const BROCHURE_EVENTS = new Set(['lead.brochure_ready', 'lead.pitch_ready']);
+/** Whether an outbox event can be written to the CRM with the current settings. */
+export const canPush = (event) => !readOnly()
+  || (BROCHURE_EVENTS.has(event) && canWrite('brochures'))
+  || (event === 'lead.script_updated' && canWrite('companies', ['pitch_point']));
+const tableOf = (path) => String(path).split(/[?/]/)[0];
 
 export async function rest(method, path, body, prefer) {
   const { url, key } = conf();
-  // Read-only mode (the default): nothing but GET ever reaches the CRM.
-  if (method !== 'GET' && readOnly()) throw new Error('CRM is in read-only mode');
+  // Read-only mode (the default): nothing but GET reaches the CRM, except tables in atomic.write_tables.
+  const cols = method === 'PATCH' && body && typeof body === 'object' ? Object.keys(body) : null; // inserts need the whole table
+  if (method !== 'GET' && !canWrite(tableOf(path), cols)) throw new Error(`CRM is in read-only mode (${tableOf(path)}${cols ? `: ${cols.join(', ')}` : ''})`);
   const r = await fetch(`${url}/rest/v1/${path}`, {
     method,
     headers: { apikey: key, authorization: `Bearer ${key}`, 'content-type': 'application/json', ...(prefer ? { prefer } : {}) },
@@ -65,70 +85,88 @@ async function byIds(table, ids) {
 
 export const firstOf = (arr, k) => (Array.isArray(arr) ? arr.map((x) => (typeof x === 'string' ? x : x?.[k])).find(Boolean) : undefined);
 
-function primaryContact(deal, contacts) {
-  const list = (deal.contact_ids || []).map((id) => contacts.get(id)).filter(Boolean);
-  return list.find((c) => c.is_primary) || list[0] || null;
-}
+const mainContact = (list) => list.find((c) => c.is_primary) || list[0] || null;
+const CLOSED_ACTIONS = ['won', 'lost'];
+const isClosed = (deal, s) => !!deal && (!!deal.archived_at || CLOSED_ACTIONS.includes(actionFor(deal.stage, s)));
+/** The deal that drives a lead: the newest open one, else the newest. */
+const currentDeal = (deals, s) => deals.find((d) => !isClosed(d, s)) || deals[0] || null;
+export const leadKey = (co, ct) => (co ? `atomic:co:${co.id}` : `atomic:ct:${ct.id}`);
 
-/** Lead fields from a deal, its company and its primary contact. */
+/** Lead fields from a CRM company, its main contact and its current deal (both may be missing). */
 export function dealInput(deal, co, ct, s = getSettings().atomic) {
   const name = [ct?.first_name, ct?.last_name].filter(Boolean).join(' ').trim();
   const input = {
-    external_id: `atomic:${deal.id}`, source: 'crm',
-    company: co?.name || deal.name,
+    external_id: leadKey(co, ct), source: 'crm',
+    company: co?.name || deal?.name || name || 'Unnamed lead',
     contact_name: name || undefined,
     email: firstOf(ct?.email_jsonb, 'email') || co?.email || undefined,
     phone: ct?.whatsapp_number || ct?.phone_e164 || firstOf(ct?.phone_jsonb, 'number') || co?.whatsapp_number || co?.phone_number || undefined,
     website: co?.website || undefined,
     city: co?.city || undefined,
     industry: co?.sector || undefined,
-    budget: deal.amount || undefined,
-    notes: deal.description || co?.description || undefined,
+    budget: deal?.amount || undefined,
+    notes: deal?.description || co?.description || undefined,
     do_not_contact: ct?.do_not_contact ? true : undefined,
   };
-  if (s.deal_means_consent) Object.assign(input, { wa_opt_in: true, email_opt_in: true, consent_source: 'CRM deal opened by the telecaller' });
+  if (s.deal_means_consent && deal && !isClosed(deal, s)) Object.assign(input, { wa_opt_in: true, email_opt_in: true, consent_source: 'CRM deal opened by the telecaller' });
   for (const k of Object.keys(input)) if (input[k] === undefined || input[k] === null || input[k] === '') delete input[k];
   return input;
 }
 
 const actionFor = (stage, s = getSettings().atomic) => (s.stages || {})[stage] || null;
 const hashOf = (deal, co, ct) => crypto.createHash('sha1').update(JSON.stringify([
-  deal.name, deal.stage, deal.amount, deal.description, deal.contact_ids, deal.archived_at,
-  co && [co.name, co.website, co.city, co.sector, co.email, co.phone_number, co.whatsapp_number],
-  ct && [ct.first_name, ct.last_name, ct.email_jsonb, ct.phone_jsonb, ct.whatsapp_number, ct.phone_e164, ct.do_not_contact, ct.last_outcome, ct.last_attempt_at],
+  deal && [deal.id, deal.name, deal.stage, deal.amount, deal.description, deal.archived_at],
+  co && [co.name, co.website, co.city, co.sector, co.email, co.phone_number, co.whatsapp_number, co.description],
+  ct && [ct.id, ct.first_name, ct.last_name, ct.email_jsonb, ct.phone_jsonb, ct.whatsapp_number, ct.phone_e164, ct.do_not_contact, ct.last_outcome, ct.last_attempt_at],
 ])).digest('hex').slice(0, 16);
 
-/** Applies one deal (with its company and primary contact) to AxiFlow. Returns what happened. */
-export async function syncDeal(deal, co, ct, { engine, twenty }) {
+/**
+ * Applies one CRM lead (company and/or main contact, with its current deal) to AxiFlow.
+ * Returns what happened: created | linked | history | updated | unchanged | deferred.
+ */
+export async function syncLead(co, ct, deal, { engine, twenty, budget }) {
   const s = getSettings().atomic;
-  const ext = `atomic:${deal.id}`;
-  let lead = await get(`SELECT * FROM leads WHERE external_id = :ext`, { ext });
+  const ext = leadKey(co, ct);
+  const lead = await get(`SELECT * FROM leads WHERE external_id = :ext`, { ext });
   const hash = hashOf(deal, co, ct);
   if (lead && lead.crm_sync_hash === hash) return 'unchanged';
-  const links = { crm_deal_id: deal.id, crm_company_id: deal.company_id ?? null, crm_contact_id: ct?.id ?? null, crm_sales_id: deal.sales_id ?? co?.sales_id ?? null };
+  const links = { crm_deal_id: deal?.id ?? null, crm_company_id: co?.id ?? null, crm_contact_id: ct?.id ?? null, crm_sales_id: deal?.sales_id ?? co?.sales_id ?? ct?.sales_id ?? null };
   const input = dealInput(deal, co, ct, s);
-  const action = actionFor(deal.stage, s);
+  const stageKey = deal ? deal.stage : '';
+  const action = deal ? actionFor(deal.stage, s) : s.new_lead_action || 'interested';
   const callKey = ct?.last_outcome ? [ct.last_outcome, ct.last_attempt_at || ''].join('|') : null;
 
   if (!lead) {
-    // Closed or archived deals from before the connection are history: not imported.
-    if (deal.archived_at || ['won', 'lost', 'ignore'].includes(action)) return 'skipped';
+    if (budget.left <= 0) return 'deferred'; // big imports are spread over several polls
+    budget.left--;
+    const label = deal ? `CRM deal "${deal.stage}"` : 'CRM lead without a deal';
+    if (isClosed(deal, s)) {
+      // Won or lost before AxiFlow saw it: keep it as history so the tools can still use it.
+      const r = await engine.createLead({ ...input, interested: deal.stage === 'won' || action === 'won' ? 'yes' : 'no' }, { source: 'crm', autoRun: false });
+      const stage = action === 'won' && !deal.archived_at ? 'won' : 'lost';
+      await update('leads', r.id, { ...links, stage, stage_changed_at: nowISO(), crm_stage_key: stageKey, crm_call_key: callKey, crm_sync_hash: hash });
+      await addActivity(r.id, 'system', `Imported from the CRM as ${stage === 'won' ? 'won' : 'closed'} (${label}); no automation`);
+      await logEvent(r.id, 'atomic', 'lead', 'ok', `imported as history from ${ext} (${label})`);
+      return 'history';
+    }
     const interested = action === 'nurture' ? 'unknown' : action === 'not_interested' ? 'no' : 'yes';
     const r = await engine.createLead({ ...input, interested }, { source: 'crm' });
-    await update('leads', r.id, { ...links, crm_stage_key: deal.stage, crm_call_key: callKey, crm_sync_hash: hash });
-    await logEvent(r.id, 'atomic', 'deal', 'ok', `${r.duplicate ? 'linked to existing lead' : 'created'} from CRM deal #${deal.id} (${deal.stage})`);
-    if (r.duplicate && interested !== 'unknown') await engine.applyInterestChange(r.id, interested, `CRM deal #${deal.id} (${deal.stage})`);
-    if (action === 'proposal') await runAction(r.id, 'proposal', deal.stage, engine);
+    await update('leads', r.id, { ...links, crm_stage_key: stageKey, crm_call_key: callKey, crm_sync_hash: hash });
+    await logEvent(r.id, 'atomic', 'lead', 'ok', `${r.duplicate ? 'linked to existing lead' : 'created'} from ${ext} (${label})`);
+    if (r.duplicate && interested !== 'unknown') await engine.applyInterestChange(r.id, interested, label);
+    if (action === 'proposal') await runAction(r.id, 'proposal', stageKey, engine);
     return r.duplicate ? 'linked' : 'created';
   }
 
   await twenty.applyCrmUpdate(lead, input, 'the CRM');
   await update('leads', lead.id, { ...links, crm_sync_hash: hash });
 
-  if (deal.stage !== lead.crm_stage_key) {
-    await update('leads', lead.id, { crm_stage_key: deal.stage });
-    await logEvent(lead.id, 'atomic', 'stage', 'ok', `CRM deal moved to "${deal.stage}"${action ? ` → ${action}` : ' (no action set)'}`);
-    if (action) await runAction(lead.id, action, deal.stage, engine);
+  if (stageKey !== (lead.crm_stage_key || '') || (deal && deal.id !== lead.crm_deal_id)) {
+    await update('leads', lead.id, { crm_stage_key: stageKey });
+    if (deal) {
+      await logEvent(lead.id, 'atomic', 'stage', 'ok', `CRM deal "${deal.name || deal.id}" is "${deal.stage}"${action ? ` → ${action}` : ' (no action set)'}`);
+      if (action) await runAction(lead.id, action, deal.stage, engine);
+    }
   }
 
   // The telecaller's latest call result on the contact.
@@ -177,28 +215,48 @@ export async function pollCrm({ force = false } = {}) {
   if (polling) return { skipped: 'already running' };
   polling = true;
   const [engine, twenty, tools] = await Promise.all([import('./pipeline/engine.js'), import('./twenty.js'), import('./tools.js')]);
-  const out = { at: nowISO(), deals: 0, created: 0, linked: 0, updated: 0, unchanged: 0, skipped: 0, brochures: 0, errors: [] };
+  const out = { at: nowISO(), leads: 0, deals: 0, created: 0, linked: 0, history: 0, updated: 0, unchanged: 0, deferred: 0, errors: [] };
   const stages = {};
   try {
-    const deals = [];
-    for (let from = 0; ; from += 1000) {
-      const page = await rest('GET', `deals?select=id,name,company_id,contact_ids,stage,description,amount,sales_id,archived_at,updated_at&order=id.asc&offset=${from}&limit=1000`);
-      deals.push(...page);
-      if (page.length < 1000) break;
-    }
+    const readAll = async (path) => {
+      const rows = [];
+      for (let from = 0; ; from += 1000) {
+        const page = await rest('GET', `${path}&offset=${from}&limit=1000`);
+        rows.push(...page);
+        if (page.length < 1000) return rows;
+      }
+    };
+    const [companies, contacts, deals] = await Promise.all([
+      readAll('companies?select=*&order=id.asc'),
+      readAll('contacts?select=*&order=id.asc'),
+      readAll('deals?select=id,name,company_id,contact_ids,stage,description,amount,sales_id,archived_at,updated_at&order=updated_at.desc'),
+    ]);
     out.deals = deals.length;
-    const [companies, contacts] = await Promise.all([byIds('companies', deals.map((d) => d.company_id)), byIds('contacts', deals.flatMap((d) => d.contact_ids || []))]);
-    for (const d of deals) {
-      stages[d.stage] = (stages[d.stage] || 0) + 1;
+    for (const d of deals) stages[d.stage] = (stages[d.stage] || 0) + 1;
+    const byCo = new Map();
+    const loose = [];
+    for (const c of contacts) {
+      if (c.company_id == null) { loose.push(c); continue; }
+      if (!byCo.has(c.company_id)) byCo.set(c.company_id, []);
+      byCo.get(c.company_id).push(c);
+    }
+    const units = [
+      ...companies.map((co) => ({ co, ct: mainContact(byCo.get(co.id) || []), deals: deals.filter((d) => d.company_id === co.id) })),
+      ...loose.map((ct) => ({ co: null, ct, deals: deals.filter((d) => d.company_id == null && (d.contact_ids || []).includes(ct.id)) })),
+    ];
+    out.leads = units.length;
+    const budget = { left: s.import_per_poll || 20 };
+    for (const u of units) {
+      const ref = u.co ? `company #${u.co.id}` : `contact #${u.ct.id}`;
       try {
-        const r = await syncDeal(d, companies.get(d.company_id), primaryContact(d, contacts), { engine, twenty });
+        const r = await syncLead(u.co, u.ct, currentDeal(u.deals, s), { engine, twenty, budget });
         out[r] = (out[r] || 0) + 1;
       } catch (e) {
-        out.errors.push(`deal #${d.id}: ${e.message}`);
-        await logEvent(null, 'atomic', 'deal', 'error', `deal #${d.id}: ${e.message}`);
+        out.errors.push(`${ref}: ${e.message}`);
+        await logEvent(null, 'atomic', 'lead', 'error', `${ref}: ${e.message}`);
       }
     }
-    if (s.brochures_table && !readOnly()) out.brochures = await answerBrochureRequests(tools).catch((e) => { out.errors.push(`brochures: ${e.message}`); return 0; });
+    if (s.brochures_table && canWrite('brochures') && publicLinks()) out.brochures = await answerBrochureRequests(tools).catch((e) => { out.errors.push(`brochures: ${e.message}`); return 0; });
   } catch (e) {
     out.errors.push(e.message);
     await logEvent(null, 'atomic', 'poll', 'error', e.message);
@@ -214,8 +272,9 @@ async function answerBrochureRequests(tools) {
   const rows = await rest('GET', `brochures?select=*&status=eq.pending&order=id.asc&limit=20`);
   let done = 0;
   for (const b of rows) {
-    const lead = (b.deal_id && await get(`SELECT * FROM leads WHERE crm_deal_id = :id`, { id: b.deal_id }))
-      || (b.company_id && await get(`SELECT * FROM leads WHERE crm_company_id = :id ORDER BY id DESC LIMIT 1`, { id: b.company_id }));
+    const lead = (b.company_id && await get(`SELECT * FROM leads WHERE external_id = :ext`, { ext: `atomic:co:${b.company_id}` }))
+      || (b.contact_id && await get(`SELECT * FROM leads WHERE external_id = :ext OR crm_contact_id = :id ORDER BY id DESC LIMIT 1`, { ext: `atomic:ct:${b.contact_id}`, id: b.contact_id }))
+      || (b.deal_id && await get(`SELECT * FROM leads WHERE crm_deal_id = :id ORDER BY id DESC LIMIT 1`, { id: b.deal_id }));
     if (!lead) continue; // the deal is not synced yet; try again next time
     if (!lead.brochure_version && !(await tools.latestLeadDoc('brochure', lead.id))) {
       const d = await tools.createDocForLead('brochure', lead.id);
@@ -231,6 +290,8 @@ async function answerBrochureRequests(tools) {
 // ------------------------------------------------------------------ AxiFlow → CRM
 
 const brochureLink = (lead) => `${BASE_URL}/pdf/brochure/${lead.token}.pdf`;
+/** Links written to the CRM must open for the telecaller: never a localhost address. */
+const publicLinks = () => /^https:\/\//.test(BASE_URL);
 const pdf = (src, title) => ({ src, title, type: 'application/pdf' });
 
 async function note(lead, text, attachments = []) {
@@ -243,11 +304,18 @@ async function note(lead, text, attachments = []) {
   }
 }
 
+/** One brochures row per CRM lead: created the first time, then kept up to date. */
 async function upsertBrochure(lead) {
-  const row = { company_id: lead.crm_company_id, contact_id: lead.crm_contact_id, deal_id: lead.crm_deal_id, title: `${lead.company}: website plan`, brochure_url: brochureLink(lead), status: 'ready', updated_at: nowISO() };
-  const existing = await rest('GET', `brochures?select=id&deal_id=eq.${lead.crm_deal_id}&order=id.desc&limit=1`);
+  // Throwing keeps the outbox row pending, so the live site (public BASE_URL) writes it instead.
+  if (!publicLinks()) throw new Error('brochure links need a public https BASE_URL');
+  const row = { company_id: lead.crm_company_id ?? null, contact_id: lead.crm_contact_id ?? null, deal_id: lead.crm_deal_id ?? null, title: `${lead.company}: website plan`, brochure_url: brochureLink(lead), status: 'ready', updated_at: nowISO() };
+  const where = lead.crm_company_id ? `company_id=eq.${lead.crm_company_id}` : lead.crm_contact_id ? `contact_id=eq.${lead.crm_contact_id}` : null;
+  if (!where) return 'skipped';
+  const existing = await rest('GET', `brochures?select=id&${where}&order=id.desc&limit=1`);
   if (existing.length) await rest('PATCH', `brochures?id=eq.${existing[0].id}`, row, 'return=minimal');
   else await rest('POST', 'brochures', row, 'return=minimal');
+  await logEvent(lead.id, 'atomic', 'brochure', 'ok', `${existing.length ? 'updated' : 'added'} the brochure in the CRM brochures table`);
+  return 'sent';
 }
 
 async function setDeal(lead, patch) {
@@ -260,12 +328,24 @@ export async function pushEvent(row) {
   const s = getSettings().atomic;
   const { event, detail = {} } = JSON.parse(row.payload);
   const lead = await get(`SELECT * FROM leads WHERE id = :id`, { id: row.lead_id });
-  if (!lead?.crm_deal_id || readOnly()) return 'skipped';
+  if (!lead || !String(lead.external_id || '').startsWith('atomic:') || !canPush(event)) return 'skipped';
   const ws = s.write_stages || {};
+  // Brochures go to the CRM's brochures table for interested leads (allowed even while read-only).
+  if (BROCHURE_EVENTS.has(event)) {
+    if (!s.brochures_table || lead.interested !== 'yes') return 'skipped';
+    if (event === 'lead.pitch_ready' && !lead.brochure_version) return 'skipped';
+    const st = await upsertBrochure(lead);
+    if (event === 'lead.brochure_ready' && s.notes && lead.crm_deal_id && canWrite('deal_notes')) await note(lead, `Brochure ready for ${lead.company}. Send it to the client from the link below (it always shows the latest version).`, [pdf(brochureLink(lead), `${lead.company} - website plan.pdf`)]);
+    return st;
+  }
+  if (!lead.crm_deal_id && !['lead.call_requested', 'lead.script_updated'].includes(event)) return 'skipped'; // notes and deal changes need a deal
   switch (event) {
     case 'lead.script_updated': {
-      if (s.pitch_point && detail.pitch_point && lead.crm_company_id) await rest('PATCH', `companies?id=eq.${lead.crm_company_id}`, { pitch_point: detail.pitch_point }, 'return=minimal');
-      if (!s.notes) return 'sent';
+      if (s.pitch_point && detail.pitch_point && lead.crm_company_id) {
+        await rest('PATCH', `companies?id=eq.${lead.crm_company_id}`, { pitch_point: String(detail.pitch_point).slice(0, 1000) }, 'return=minimal');
+        await logEvent(lead.id, 'atomic', 'pitch_point', 'ok', 'wrote the pitch point to the CRM company');
+      }
+      if (!s.notes || !lead.crm_deal_id || !canWrite('deal_notes')) return 'sent';
       await note(lead, `Call script from AxiFlow\n\n${detail.pitch_point ? `Pitch point: ${detail.pitch_point}\n\n` : ''}${detail.telecaller_script || ''}`.trim());
       return 'sent';
     }
@@ -310,7 +390,7 @@ export async function pushEvent(row) {
 /** Status for the Settings page. */
 export async function atomicStatus() {
   const st = await getState('atomic', {});
-  const linked = await get(`SELECT COUNT(*)::int AS n FROM leads WHERE crm_deal_id IS NOT NULL`);
+  const linked = await get(`SELECT COUNT(*)::int AS n FROM leads WHERE external_id LIKE 'atomic:%'`);
   const out = await all(`SELECT status, COUNT(*)::int AS n FROM crm_outbox WHERE target = 'atomic' GROUP BY status`);
   return {
     keys: atomicKeys(), enabled: atomicConfigured(), host: crmHost(), read_only: readOnly(),
@@ -318,4 +398,14 @@ export async function atomicStatus() {
     linked_leads: linked?.n || 0, outbox: Object.fromEntries(out.map((r) => [r.status, r.n])),
     actions: ACTIONS,
   };
+}
+
+let lastKick = 0;
+/** Reads the CRM in the background when the app is used (throttled by `atomic.poll_seconds`). */
+export function pollSoon(background) {
+  if (!atomicConfigured()) return;
+  const every = (getSettings().atomic?.poll_seconds || 60) * 1000;
+  if (Date.now() - lastKick < every) return;
+  lastKick = Date.now();
+  background(() => pollCrm().catch(() => {}), 'crm-poll');
 }

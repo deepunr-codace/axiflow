@@ -101,7 +101,8 @@ async function renderCrmLead(key) {
         <button class="btn sm icon-only" id="crmReload" title="Refresh now" aria-label="Refresh now">${I('refresh')}</button></div>
     </div>
     <div class="row" style="margin:-6px 0 14px" id="crmLive">${liveLine(d)}</div>
-    ${!d.axiflow ? `<p class="hint">AxiFlow starts working on a lead when the telecaller opens a deal for it in the CRM.${d.deals.length && d.deals.every((x) => x.closed) ? ' This lead\'s deal is already closed.' : ''}</p>` : ''}
+    <div id="crmMade"></div>
+    ${!d.axiflow ? '<p class="hint">AxiFlow brings this lead in at its next check of the CRM (within a minute), then makes the pitch, call script and brochure.</p>' : ''}
     <div class="grid g2">
       ${co ? `<div class="card"><h2>Company</h2>${rows([
         ['Website', site(co.website)], ['Phone', tel(co.phone)], ['WhatsApp', tel(co.whatsapp)], ['Email', mail(co.email)],
@@ -127,7 +128,32 @@ async function renderCrmLead(key) {
         ${(n.attachments || []).map((a) => a?.src ? `<a class="small" href="${H.esc(a.src)}" target="_blank" rel="noopener">${I('attach_file')}${H.esc(a.title || 'Attachment')}</a>` : '').join(' ')}</div></div>`).join('') || '<div class="empty">No notes yet.</div>'}
     </div>`;
     H.$('#crmReload').onclick = (e) => H.busy(e.currentTarget, async () => { draw(await H.api(`/atomic/leads/${encodeURIComponent(key)}`)); H.toast('Up to date'); });
+    made(key);
   };
   draw(await H.api(`/atomic/leads/${encodeURIComponent(key)}`));
   keepFresh(`#/crm/${key}`, async () => draw(await H.api(`/atomic/leads/${encodeURIComponent(key)}`)));
+}
+
+/** "Made for this lead": pitch script, brochure and proposal from AxiFlow, with quick actions. */
+async function made(key) {
+  const box = H.$('#crmMade');
+  const link = H.view.querySelector('a[href^="#/lead/"]');
+  const id = link?.getAttribute('href').split('/').pop();
+  if (!box || !id) return;
+  const d = await H.api(`/leads/${id}`).catch(() => null);
+  if (!d || !H.$('#crmMade')) return;
+  const l = d.lead;
+  const doc = (k) => d.tool_docs.find((x) => x.kind === k && x.status === 'ready') || d.tool_docs.find((x) => x.kind === k);
+  const item = (k, icon, label, open) => {
+    const x = doc(k);
+    return `<div class="item row"><span class="mi">${icon}</span><div class="grow"><b>${label}</b><div class="small muted">${x ? (x.status === 'ready' ? `Ready · ${H.fmtDate(x.updated_at)}` : x.status === 'working' ? 'Being made…' : H.esc(x.status)) : 'Not made yet'}</div></div>${x ? `<a class="btn sm" href="#/${k}/${x.id}"><span class="mi">edit</span>Open</a>` : open}</div>`;
+  };
+  box.innerHTML = `<div class="card" style="margin-bottom:16px"><div class="sec-h"><h2>Made by AxiFlow</h2><span class="spacer"></span>${H.simplePill(l.stage)}</div>
+    ${item('script', 'record_voice_over', 'Call script', `<a class="btn sm" href="#/script" data-script-lead="${l.id}"><span class="mi">add</span>Write one</a>`)}
+    ${item('brochure', 'menu_book', 'Brochure', l.brochure_version ? `<a class="btn sm" target="_blank" href="/pdf/brochure/${l.token}.pdf"><span class="mi">open_in_new</span>PDF</a>` : '')}
+    ${item('proposal', 'request_quote', 'Proposal', `<button class="btn sm" id="crmMakeProp"><span class="mi">add</span>Make it</button>`)}
+    ${l.brochure_version ? `<p class="small muted" style="margin-top:8px">Brochure link for the client: <a target="_blank" href="/pdf/brochure/${l.token}.pdf">/pdf/brochure/${H.esc(l.token)}.pdf</a>${l.interested === 'yes' ? ' · also in the CRM brochures table' : ''}</p>` : ''}</div>`;
+  H.groupItems?.(box);
+  const mk = H.$('#crmMakeProp');
+  if (mk) mk.onclick = (e) => H.busy(e.currentTarget, async () => { await H.api(`/leads/${l.id}/actions/proposal`, { body: {} }); H.toast('Making the proposal'); setTimeout(() => made(key), 4000); });
 }
