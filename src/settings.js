@@ -38,6 +38,23 @@ export const DEFAULT_SETTINGS = {
     min_score: 25,
     daily_digest: true,
   },
+  /**
+   * Team CRM: Atomic CRM on its own Supabase project (src/atomic.js; keys CRM_SUPABASE_URL + CRM_SUPABASE_SECRET_KEY).
+   * stages: CRM deal stage value → what AxiFlow does (interested | proposal | won | lost | nurture | not_interested | ignore).
+   * A new deal in a stage without an entry counts as interested. write_stages: AxiFlow stage → CRM deal stage to set.
+   */
+  atomic: {
+    enabled: true,
+    read_only: true, // only read from the CRM; nothing is written back until this is switched off
+    poll_seconds: 60,
+    deal_means_consent: false, // true = an open deal counts as WhatsApp/email consent for the intro
+    stages: { opportunity: 'interested', interested: 'interested', 'proposal-sent': 'proposal', 'send-proposal': 'proposal', 'in-negociation': 'ignore', won: 'won', lost: 'lost', delayed: 'nurture', 'not-interested': 'not_interested' },
+    write_stages: { proposal_sent: 'proposal-sent', won: 'won', lost: 'lost' },
+    notes: true, // deal notes: call script, brochure, replies, proposal, meetings
+    call_tasks: true, // call requests become CRM tasks on the contact
+    pitch_point: true, // the call script's pitch point goes to companies.pitch_point
+    brochures_table: true, // brochure links go to the CRM's brochures table (and pending requests are answered)
+  },
   billing: { currency: 'INR', tax_label: 'GST', tax_pct: 18, advance_pct: 50, invoice_prefix: 'AWS' },
   meeting: { slots: ['11:00', '15:00', '17:30'], days_ahead: 7, duration_min: 30, meet_link: 'https://meet.google.com/your-room' },
   packages: [

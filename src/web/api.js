@@ -1,4 +1,5 @@
 import express from 'express';
+import * as atomic from '../atomic.js';
 import { get, all, run, insert, update } from '../db.js';
 import { getSettings, saveSettings, getTemplates } from '../settings.js';
 import { STAGES, STAGE_IDS, SERVICES, SOURCES, PIPES } from '../stages.js';
@@ -322,12 +323,16 @@ api.get('/settings', async (_req, res) => res.json({
       intake: `${BASE_URL}/api/intake`, whatsapp: `${BASE_URL}/webhooks/whatsapp`, email: `${BASE_URL}/webhooks/email`,
       payment: `${BASE_URL}/webhooks/payment`, public_form: `${BASE_URL}/f`, crm_update: `${BASE_URL}/api/crm/leads/:external_id`,
     },
-    intake_key_set: !!process.env.INTAKE_API_KEY, webhook_secret_set: !!process.env.WEBHOOK_SECRET,
+    intake_key_set: !!process.env.INTAKE_API_KEY, webhook_secret_set: !!process.env.WEBHOOK_SECRET, atomic_keys: atomic.atomicKeys(),
     crm_webhook: crmConfigured(), ai: await aiStatus(),
     channels: channelStatus(getSettings()),
   },
 }));
 api.put('/settings', async (req, res) => res.json(await saveSettings(req.body || {})));
+
+// Team CRM (Atomic CRM): status and a read right now
+api.get('/atomic', async (_req, res) => res.json(await atomic.atomicStatus()));
+api.post('/atomic/sync', async (_req, res) => res.json({ result: await atomic.pollCrm({ force: true }), status: await atomic.atomicStatus() }));
 
 api.post('/demo/seed', async (_req, res) => res.json(await seedDemo()));
 

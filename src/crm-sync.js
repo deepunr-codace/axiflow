@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { get, all, insert, update } from './db.js';
 import { nowISO, addMinutes, BASE_URL } from './util.js';
 import { background } from './background.js';
+import { atomicConfigured, readOnly, pushEvent } from './atomic.js';
 
 /**
  * Outbound sync to the external CRM. Every change is written to crm_outbox first (durable),
@@ -49,21 +50,35 @@ export async function leadSnapshot(lead) {
 export async function crmEvent(leadId, event, detail = {}) {
   const lead = await get(`SELECT * FROM leads WHERE id = :leadId`, { leadId });
   if (!lead) return;
-  const payload = { event, at: nowISO(), detail, lead: await leadSnapshot(lead) };
+  const payload = JSON.stringify({ event, at: nowISO(), detail, lead: await leadSnapshot(lead) });
   await insert('crm_outbox', {
-    lead_id: leadId, event, payload: JSON.stringify(payload),
+    lead_id: leadId, event, payload, target: 'webhook',
     status: crmConfigured() ? 'pending' : 'skipped', next_attempt_at: nowISO(), created_at: nowISO(),
   });
-  if (crmConfigured()) background(() => flushOutbox(), 'crm-sync');
+  // Atomic CRM (direct writes). In read-only mode the event is only recorded.
+  const atomic = atomicConfigured() && lead.crm_deal_id;
+  if (atomic) await insert('crm_outbox', { lead_id: leadId, event, payload, target: 'atomic', status: readOnly() ? 'skipped' : 'pending', next_attempt_at: nowISO(), created_at: nowISO() });
+  if (crmConfigured() || (atomic && !readOnly())) background(() => flushOutbox(), 'crm-sync');
 }
 
 let flushing = false;
 export async function flushOutbox() {
-  if (!crmConfigured() || flushing) return;
+  if ((!crmConfigured() && !atomicConfigured()) || flushing) return;
   flushing = true;
   try {
     const rows = await all(`SELECT * FROM crm_outbox WHERE status = 'pending' AND next_attempt_at <= :now ORDER BY id LIMIT 50`, { now: nowISO() });
     for (const r of rows) {
+      if (r.target === 'atomic') {
+        try {
+          const st = await pushEvent(r);
+          await update('crm_outbox', r.id, { status: st, sent_at: nowISO(), attempts: r.attempts + 1 });
+        } catch (e) {
+          const attempts = r.attempts + 1;
+          await update('crm_outbox', r.id, { attempts, last_error: e.message, status: attempts >= 8 ? 'failed' : 'pending', next_attempt_at: addMinutes(nowISO(), Math.min(720, 2 ** attempts)) });
+        }
+        continue;
+      }
+      if (!crmConfigured()) continue;
       const sig = crypto.createHmac('sha256', SECRET()).update(r.payload).digest('hex');
       try {
         const res = await fetch(URL_(), {

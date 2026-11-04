@@ -1,4 +1,6 @@
 import express from 'express';
+import { background } from '../background.js';
+import { pollCrm } from '../atomic.js';
 import { get, all, update } from '../db.js';
 import { getSettings } from '../settings.js';
 import { esc, money, formatInTz } from '../util.js';
@@ -125,6 +127,17 @@ pub.patch('/api/crm/leads/:externalId', limiter, async (req, res) => {
  * Twenty CRM webhook, forwarded by n8n (header X-API-Key). Body: Twenty's { event, data, timestamp }.
  * If TWENTY_WEBHOOK_SECRET is set, Twenty's own signature headers must also be forwarded and valid.
  */
+/**
+ * POST /webhooks/atomic?key=<WEBHOOK_SECRET>: a Supabase Database Webhook on the CRM's deals/contacts tables.
+ * The body is not trusted: it only triggers a read of the CRM right away (instead of waiting for the next poll).
+ */
+pub.post('/webhooks/atomic', async (req, res) => {
+  const given = req.get('x-webhook-secret') || (req.get('authorization') || '').replace(/^Bearer\s+/i, '') || req.query.key || '';
+  if (!process.env.WEBHOOK_SECRET || !checkSecret(given, process.env.WEBHOOK_SECRET)) return res.status(401).json({ error: 'Invalid secret' });
+  background(() => pollCrm({ force: true }), 'crm-poll');
+  res.json({ ok: true });
+});
+
 pub.post('/webhooks/twenty', async (req, res) => {
   if (!checkSecret(req.get('x-api-key'), process.env.INTAKE_API_KEY)) return res.status(401).json({ error: 'Invalid API key' });
   if (process.env.TWENTY_WEBHOOK_SECRET) {

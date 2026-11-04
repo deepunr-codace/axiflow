@@ -1,4 +1,5 @@
 import { getSettings, loadSettings, getState, setState } from './settings.js';
+import { pollCrm } from './atomic.js';
 import { resumeDocs } from './tools.js';
 import { tzParts, nowISO, addMinutes } from './util.js';
 import { insert } from './db.js';
@@ -26,6 +27,8 @@ export async function cronTick() {
   await loadSettings();
   await flushOutbox().catch((e) => { out.crm_error = e.message; });
   await resumeDocs({ staleMinutes: 6 }).catch((e) => { out.docs_error = e.message; });
+  const crm = await pollCrm().catch((e) => ({ errors: [e.message] }));
+  if (!crm.skipped) out.crm = { deals: crm.deals, created: crm.created, updated: crm.updated, errors: crm.errors?.length || 0 };
   const s = getSettings();
   if (!s.schedule.enabled) return { ...out, ran: 'scheduler disabled' };
   const { date, hhmm } = tzParts(new Date(), s.schedule.timezone);

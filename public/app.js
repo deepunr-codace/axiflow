@@ -910,11 +910,17 @@ async function renderSettings() {
   <div class="card"><h2>Your business</h2><div class="form-grid">${inp('agency.name', 'Agency name')}${inp('agency.sender_name', 'Sender name')}${inp('agency.email', 'Email (digest goes here)')}${inp('agency.phone', 'Phone')}${inp('agency.website', 'Website')}${inp('agency.address', 'Address')}${inp('agency.review_link', 'Google review link')}</div></div>
   <div class="card"><h2>Connections</h2><div class="conn">
     ${[['Email', env.channels.email === 'live', 'Add SMTP details in .env'], ['WhatsApp', env.channels.whatsapp === 'live', 'Add WA_TOKEN + WA_PHONE_NUMBER_ID in .env'],
-      ['AI (' + (env.ai.provider === 'openrouter' ? 'OpenRouter' : 'Claude API') + ')', env.ai.enabled, env.ai.key_set ? 'Turn on below' : 'Add OPENROUTER_API_KEY or ANTHROPIC_API_KEY'], ['Team CRM', env.crm_webhook, 'Add CRM_WEBHOOK_URL in .env']]
+      ['AI (' + (env.ai.provider === 'openrouter' ? 'OpenRouter' : 'Claude API') + ')', env.ai.enabled, env.ai.key_set ? 'Turn on below' : 'Add OPENROUTER_API_KEY or ANTHROPIC_API_KEY'], ['Team CRM', env.crm_webhook || env.atomic_keys, 'Add CRM_SUPABASE_URL + CRM_SUPABASE_SECRET_KEY']]
       .map(([n, on, how]) => `<div class="row"><i class="dot-s ${on ? 'on' : ''}"></i><b>${n}</b><span class="spacer"></span><span class="small ${on ? 'ok' : 'muted'}">${on ? 'Connected' : how}</span></div>`).join('')}
     <p class="small muted">Not connected = messages are only saved here (safe test mode), not delivered.</p>
     <div class="form-grid">${inp('ai.enabled', 'Use AI', 'bool')}${inp('ai.daily_budget_usd', 'AI daily budget (USD)', 'number')}${inp('automation.auto_approve_brochure', 'Send pitches without my approval', 'bool')}</div></div></div>
   </div>
+  <div class="card" id="crmCard"><div class="sec-h"><h2>Team CRM</h2><span class="spacer"></span><button class="btn sm" id="crmSync"><span class="mi">sync</span>Read the CRM now</button></div>
+    <div id="crmStatus" class="small muted">Loading…</div>
+    <div class="form-grid" style="margin-top:12px">${inp('atomic.enabled', 'Use the CRM (read deals and call results)', 'bool')}${inp('atomic.read_only', 'Read only: never write to the CRM', 'bool')}${inp('atomic.deal_means_consent', 'An open deal counts as consent for WhatsApp/email', 'bool')}${inp('atomic.poll_seconds', 'Check the CRM every N seconds', 'number')}</div>
+    <h3 style="margin-top:16px">What each deal stage does</h3>
+    <p class="small muted">Stage values exactly as the CRM stores them. A new deal in a stage that is not listed counts as interested.</p>
+    <div id="crmStages"></div></div>
   <details class="block advanced"><summary><b>Advanced settings</b> <span class="small muted">schedule, limits, prices, AI tuning, marketing, integrations</span></summary>
   <div class="grid g2">
   <div class="card"><h2>Schedule &amp; sending</h2><div class="form-grid">${inp('schedule.enabled', 'Scheduler enabled', 'bool')}${inp('schedule.daily_time', 'Daily run time (HH:MM)')}${inp('schedule.timezone', 'Timezone')}${inp('schedule.sweep_minutes', 'Sweep every N minutes (0 = off)', 'number')}
@@ -958,6 +964,19 @@ async function renderSettings() {
   <div class="row save-bar"><span class="spacer"></span><button class="btn primary" id="saveSettings">Save settings</button></div>`;
 
   $('#seedBtn').onclick = (e) => busy(e.target, async () => { const r = await api('/demo/seed', { body: {} }); toast(`Created ${r.created} demo leads`); });
+  // Team CRM card
+  const ACTION_LABEL = { interested: 'Interested: pitch, script, brochure', proposal: 'Make the proposal', won: 'Won', lost: 'Lost', nurture: 'Undecided (nurture)', not_interested: 'Not interested (re-engage)', ignore: 'Do nothing' };
+  const fillCrm = (st) => {
+    const r = st.last_result;
+    $('#crmStatus').innerHTML = !st.keys ? 'Not connected. Add CRM_SUPABASE_URL and CRM_SUPABASE_SECRET_KEY to the server settings.'
+      : `<div class="row"><i class="dot-s ${st.enabled ? 'on' : ''}"></i><b>${esc(st.host || '')}</b><span class="pill">${st.read_only ? 'Read only' : 'Read and write'}</span><span class="spacer"></span>${st.linked_leads} leads from the CRM</div>
+        <div style="margin-top:6px">${st.last_poll_at ? `Last read ${esc(fmtDate(st.last_poll_at))}: ${r ? `${r.deals} deals, ${r.created} new, ${r.updated} updated${r.errors?.length ? ` · <span class="bad">${esc(r.errors[0])}</span>` : ''}` : ''}` : 'Not read yet.'}</div>`;
+    const stages = { ...(s.atomic?.stages || {}) };
+    for (const k of Object.keys(st.stages_seen || {})) if (!(k in stages)) stages[k] = '';
+    $('#crmStages').innerHTML = `<table class="small"><tr><th>CRM stage</th><th>Deals now</th><th>AxiFlow does</th></tr>${Object.entries(stages).map(([k, v]) => `<tr><td class="mono">${esc(k)}</td><td>${st.stages_seen?.[k] || 0}</td><td><select data-crm-stage="${esc(k)}"><option value="">Not set</option>${st.actions.map((a) => `<option value="${a}" ${a === v ? 'selected' : ''}>${ACTION_LABEL[a] || a}</option>`).join('')}</select></td></tr>`).join('')}</table>`;
+  };
+  api('/atomic').then(fillCrm).catch((e) => { $('#crmStatus').textContent = e.message; });
+  $('#crmSync').onclick = (e) => busy(e.target, async () => { const r = await api('/atomic/sync', { body: {} }); fillCrm(r.status); toast(r.result.skipped || `Read ${r.result.deals} deals from the CRM`); });
   $('#saveSettings').onclick = (e) => busy(e.target, async () => {
     const patch = {};
     for (const el of $$('[data-path]')) {
@@ -980,6 +999,9 @@ async function renderSettings() {
       patch.agency.portfolio = JSON.parse($('#portJson').value);
       patch.marketing = { nurture: JSON.parse($('#nurtureJson').value), reengage: JSON.parse($('#reengageJson').value) };
     } catch (err) { throw new Error('Invalid JSON: ' + err.message); }
+    const crmStages = {};
+    for (const el of $$('[data-crm-stage]')) if (el.value) crmStages[el.dataset.crmStage] = el.value;
+    patch.atomic = { ...(patch.atomic || {}), stages: crmStages };
     await api('/settings', { method: 'PUT', body: patch });
     META = await api('/meta');
     toast('Settings saved');
