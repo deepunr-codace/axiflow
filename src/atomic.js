@@ -290,7 +290,9 @@ async function answerBrochureRequests(tools) {
       await logEvent(lead.id, 'atomic', 'brochure_request', d.status === 'ready' ? 'ok' : 'error', d.error || `made #${d.id} for CRM request #${b.id}`);
       if (d.status !== 'ready') continue;
     }
-    await rest('PATCH', `brochures?id=eq.${b.id}`, { brochure_url: brochureLink(lead), title: b.title || `${lead.company}: website plan`, status: brochureStatus(), updated_at: nowISO() });
+    let link = brochureLink(lead);
+    try { link = (await uploadBrochurePdf(lead)) || link; } catch (e) { await logEvent(lead.id, 'atomic', 'brochure_pdf', 'error', `${e.message}; the row links to AxiFlow instead`); }
+    await rest('PATCH', `brochures?id=eq.${b.id}`, { brochure_url: link, title: b.title || `${lead.company}: website plan`, status: brochureStatus(), updated_at: nowISO() });
     done++;
   }
   return done;
@@ -352,11 +354,39 @@ async function upsertScriptNote(lead) {
   return 'sent';
 }
 
+/**
+ * Uploads the lead's current brochure PDF to the CRM storage bucket (`atomic.brochure_bucket`, public)
+ * under a fixed name per lead, so a new version replaces the old file. Returns the public link.
+ */
+async function uploadBrochurePdf(lead) {
+  const s = getSettings().atomic || {};
+  const bucket = s.brochure_bucket;
+  if (!bucket || !canWrite(`storage.${bucket}`)) return null;
+  const { buildBrochureFor } = await import('./pdf/docs.js');
+  const pdfBuf = await buildBrochureFor(lead);
+  const slug = String(lead.company || 'lead').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'lead';
+  const owner = lead.crm_company_id ? `company-${lead.crm_company_id}` : `contact-${lead.crm_contact_id || lead.id}`;
+  const path = `${owner}/${slug}-website-plan.pdf`;
+  const { url, key } = conf();
+  const r = await fetch(`${url}/storage/v1/object/${bucket}/${path}`, {
+    method: 'POST',
+    headers: { apikey: key, authorization: `Bearer ${key}`, 'content-type': 'application/pdf', 'x-upsert': 'true', 'cache-control': 'max-age=60' },
+    body: pdfBuf,
+    signal: AbortSignal.timeout(60000),
+  });
+  if (!r.ok) throw new Error(`CRM storage upload: HTTP ${r.status} ${(await r.text()).slice(0, 300)}`);
+  await logEvent(lead.id, 'atomic', 'brochure_pdf', 'ok', `uploaded ${(pdfBuf.length / 1024).toFixed(0)} KB to the CRM bucket "${bucket}" (${path})`);
+  // ?v= makes the CDN serve the new version right away after a replacement.
+  return `${url}/storage/v1/object/public/${bucket}/${path.split('/').map(encodeURIComponent).join('/')}?v=${Date.now()}`;
+}
+
 /** One brochures row per CRM lead: created the first time, then kept up to date. */
 async function upsertBrochure(lead) {
   // Throwing keeps the outbox row pending, so the live site (public BASE_URL) writes it instead.
   if (!publicLinks()) throw new Error('brochure links need a public https BASE_URL');
-  const row = { company_id: lead.crm_company_id ?? null, contact_id: lead.crm_contact_id ?? null, deal_id: lead.crm_deal_id ?? null, title: `${lead.company}: website plan`, brochure_url: brochureLink(lead), status: brochureStatus(), updated_at: nowISO() };
+  let link = brochureLink(lead);
+  try { link = (await uploadBrochurePdf(lead)) || link; } catch (e) { await logEvent(lead.id, 'atomic', 'brochure_pdf', 'error', `${e.message}; the row links to AxiFlow instead`); }
+  const row = { company_id: lead.crm_company_id ?? null, contact_id: lead.crm_contact_id ?? null, deal_id: lead.crm_deal_id ?? null, title: `${lead.company}: website plan`, brochure_url: link, status: brochureStatus(), updated_at: nowISO() };
   const where = lead.crm_company_id ? `company_id=eq.${lead.crm_company_id}` : lead.crm_contact_id ? `contact_id=eq.${lead.crm_contact_id}` : null;
   if (!where) return 'skipped';
   const existing = await rest('GET', `brochures?select=id&${where}&order=id.desc&limit=1`);

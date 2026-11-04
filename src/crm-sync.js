@@ -47,7 +47,7 @@ export async function leadSnapshot(lead) {
   };
 }
 
-export async function crmEvent(leadId, event, detail = {}) {
+export async function crmEvent(leadId, event, detail = {}, { delayMinutes = 0 } = {}) {
   const lead = await get(`SELECT * FROM leads WHERE id = :leadId`, { leadId });
   if (!lead) return;
   const payload = JSON.stringify({ event, at: nowISO(), detail, lead: await leadSnapshot(lead) });
@@ -58,7 +58,7 @@ export async function crmEvent(leadId, event, detail = {}) {
   // Atomic CRM (direct writes). Events that cannot be written (read-only) are only recorded.
   const atomic = atomicConfigured() && String(lead.external_id || '').startsWith('atomic:');
   const push = atomic && canPush(event);
-  if (atomic) await insert('crm_outbox', { lead_id: leadId, event, payload, target: 'atomic', status: push ? 'pending' : 'skipped', next_attempt_at: nowISO(), created_at: nowISO() });
+  if (atomic) await insert('crm_outbox', { lead_id: leadId, event, payload, target: 'atomic', status: push ? 'pending' : 'skipped', next_attempt_at: delayMinutes ? addMinutes(nowISO(), delayMinutes) : nowISO(), created_at: nowISO() });
   if (crmConfigured() || push) background(() => flushOutbox(), 'crm-sync');
 }
 

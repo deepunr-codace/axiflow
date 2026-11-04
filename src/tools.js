@@ -214,6 +214,7 @@ export async function saveDoc(id, { design, items, title, content }) {
     patch.content_json = cleanScript(content || {});
   }
   if (design !== undefined) patch.design_json = cleanDesign(design);
+  const designEdited = design !== undefined;
   if (title !== undefined) patch.title = str(title, 200) || doc.title;
   if (items !== undefined) {
     if (doc.kind !== 'proposal') throw new Error('Only proposals have line items');
@@ -221,7 +222,7 @@ export async function saveDoc(id, { design, items, title, content }) {
     if (!patch.items_json.length) throw new Error('Add at least one line item');
   }
   await update('docs', id, patch);
-  if (content !== undefined) await announce(id, { edited: true });
+  if (content !== undefined || designEdited) await announce(id, { edited: true });
   return await getDoc(id);
 }
 
@@ -232,10 +233,9 @@ export async function saveDoc(id, { design, items, title, content }) {
 async function announce(id, { edited = false } = {}) {
   const d = await get(`SELECT id, kind, lead_id FROM docs WHERE id = :id`, { id });
   if (!d?.lead_id || !['brochure', 'script'].includes(d.kind)) return;
-  if (edited && d.kind === 'brochure') return; // the brochure link always shows the latest version
   const event = d.kind === 'brochure' ? 'lead.brochure_ready' : 'lead.script_ready';
   if (await get(`SELECT 1 AS one FROM crm_outbox WHERE lead_id = :lid AND event = :event AND target = 'atomic' AND status = 'pending'`, { lid: d.lead_id, event })) return;
-  await crmEvent(d.lead_id, event, { doc_id: d.id, edited }).catch(() => {});
+  await crmEvent(d.lead_id, event, { doc_id: d.id, edited }, { delayMinutes: edited && d.kind === 'brochure' ? 2 : 0 }).catch(() => {});
 }
 
 /** AI assistant: applies a chat request to the design; returns the reply and the updated document. */
