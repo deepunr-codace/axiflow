@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { addColumns, get, all, update } from './db.js';
+import { addColumns, get, all, run, update } from './db.js';
 import { getSettings, getState, setState } from './settings.js';
 import { nowISO, BASE_URL } from './util.js';
 import { addActivity, addTask, logEvent } from './pipeline/log.js';
@@ -31,6 +31,7 @@ import { TERMINAL } from './stages.js';
 addColumns('leads', { crm_deal_id: 'INTEGER', crm_company_id: 'INTEGER', crm_contact_id: 'INTEGER', crm_sales_id: 'INTEGER', crm_stage_key: 'TEXT', crm_sync_hash: 'TEXT' });
 addColumns('crm_outbox', { target: "TEXT DEFAULT 'webhook'" });
 addColumns('leads', { crm_script_note_id: 'INTEGER', crm_script_note_on: 'TEXT' }); // the one CRM note that holds this lead's call script
+addColumns('leads', { crm_removed_at: 'TEXT' }); // set when the lead was deleted in the CRM: no more CRM writes for it
 
 export const ACTIONS = ['interested', 'proposal', 'won', 'lost', 'nurture', 'not_interested', 'ignore'];
 
@@ -162,7 +163,7 @@ export async function syncLead(co, ct, deal, { engine, twenty, budget }) {
   }
 
   await twenty.applyCrmUpdate(lead, input, 'the CRM');
-  await update('leads', lead.id, { ...links, crm_sync_hash: hash });
+  await update('leads', lead.id, { ...links, crm_sync_hash: hash, ...(lead.crm_removed_at ? { crm_removed_at: null } : {}) });
   // A contact or deal added in the CRM later: attach the call script there and link the brochure row to it.
   if ((links.crm_contact_id && links.crm_contact_id !== lead.crm_contact_id) || (links.crm_deal_id && !lead.crm_deal_id)) {
     const { crmEvent } = await import('./crm-sync.js');
@@ -254,6 +255,20 @@ export async function pollCrm({ force = false } = {}) {
       ...loose.map((ct) => ({ co: null, ct, deals: deals.filter((d) => d.company_id == null && (d.contact_ids || []).includes(ct.id)) })),
     ];
     out.leads = units.length;
+    // Leads deleted in the CRM: stop writing for them and take open ones out of the pipeline.
+    if (units.length) {
+      const keys = new Set(units.map((u) => leadKey(u.co, u.ct)));
+      for (const l of await all(`SELECT * FROM leads WHERE external_id LIKE 'atomic:%' AND crm_removed_at IS NULL`)) {
+        if (keys.has(l.external_id) || !/^atomic:(co|ct):\d+$/.test(l.external_id)) continue;
+        await update('leads', l.id, { crm_removed_at: nowISO() });
+        await logEvent(l.id, 'atomic', 'lead', 'ok', `${l.external_id} is no longer in the CRM (deleted there)`);
+        if (!TERMINAL.has(l.stage) && !['won', 'onboarding', 'in_development', 'delivered'].includes(l.stage)) {
+          await engine.setStage(l, 'lost', 'removed from the CRM', { lost_reason: 'deleted in the CRM', next_action_at: null, next_action_type: null });
+        } else await addActivity(l.id, 'system', 'This lead was deleted in the CRM; AxiFlow no longer writes to the CRM for it');
+        await run(`UPDATE crm_outbox SET status = 'skipped', last_error = 'lead deleted in the CRM' WHERE lead_id = :id AND target = 'atomic' AND status = 'pending'`, { id: l.id });
+        out.removed = (out.removed || 0) + 1;
+      }
+    }
     const budget = { left: s.import_per_poll || 20 };
     for (const u of units) {
       const ref = u.co ? `company #${u.co.id}` : `contact #${u.ct.id}`;
@@ -406,7 +421,7 @@ export async function pushEvent(row) {
   const s = getSettings().atomic;
   const { event, detail = {} } = JSON.parse(row.payload);
   const lead = await get(`SELECT * FROM leads WHERE id = :id`, { id: row.lead_id });
-  if (!lead || !String(lead.external_id || '').startsWith('atomic:') || !canPush(event)) return 'skipped';
+  if (!lead || !String(lead.external_id || '').startsWith('atomic:') || lead.crm_removed_at || !canPush(event)) return 'skipped';
   const ws = s.write_stages || {};
   // Every brochure made for a CRM lead goes to the CRM's brochures table (allowed even while read-only).
   if (BROCHURE_EVENTS.has(event)) {
