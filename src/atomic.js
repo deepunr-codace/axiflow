@@ -31,7 +31,7 @@ import { TERMINAL } from './stages.js';
 addColumns('leads', { crm_deal_id: 'INTEGER', crm_company_id: 'INTEGER', crm_contact_id: 'INTEGER', crm_sales_id: 'INTEGER', crm_stage_key: 'TEXT', crm_sync_hash: 'TEXT' });
 addColumns('crm_outbox', { target: "TEXT DEFAULT 'webhook'" });
 addColumns('leads', { crm_script_note_id: 'INTEGER', crm_script_note_on: 'TEXT' }); // the one CRM note that holds this lead's call script
-addColumns('leads', { crm_removed_at: 'TEXT' }); // set when the lead was deleted in the CRM: no more CRM writes for it
+addColumns('leads', { crm_removed_at: 'TEXT', crm_brochure_folder: 'TEXT' }); // set when the lead was deleted in the CRM: no more CRM writes for it
 
 export const ACTIONS = ['interested', 'proposal', 'won', 'lost', 'nurture', 'not_interested', 'ignore'];
 
@@ -380,8 +380,10 @@ async function uploadBrochurePdf(lead) {
   const { buildBrochureFor } = await import('./pdf/docs.js');
   const pdfBuf = await buildBrochureFor(lead);
   const slug = String(lead.company || 'lead').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'lead';
-  const owner = lead.crm_company_id ? `company-${lead.crm_company_id}` : `contact-${lead.crm_contact_id || lead.id}`;
-  const path = `${owner}/${slug}-website-plan.pdf`;
+  // Folder = a unique id per lead (owner, 2026-11-04), kept on the lead so new versions replace the old file.
+  let folder = lead.crm_brochure_folder;
+  if (!folder) { folder = crypto.randomUUID(); await update('leads', lead.id, { crm_brochure_folder: folder }); lead.crm_brochure_folder = folder; }
+  const path = `${folder}/${slug}-website-plan.pdf`;
   const { url, key } = conf();
   const r = await fetch(`${url}/storage/v1/object/${bucket}/${path}`, {
     method: 'POST',
