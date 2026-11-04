@@ -125,6 +125,14 @@ export function toCSV(rows, cols) {
 export const truthy = (v) => v === true || v === 1 || /^(1|true|yes|y|on)$/i.test(String(v ?? '').trim());
 
 /** First name for greetings, skipping honorifics ("Dr. Meera Iyer" → "Meera"). */
+/** First name of a contact, or fallback when the CRM contact is really the business (its name is the company name). */
+export function contactFirstName(contact, company, fallback = 'there') {
+  const norm = (v) => String(v || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const c = norm(contact), co = norm(company);
+  if (!c || (co && (c === co || (c.split(' ').length >= 2 && (co.includes(c) || c.includes(co)))))) return fallback;
+  return firstName(contact, fallback);
+}
+
 export function firstName(full, fallback = 'there') {
   const titles = /^(dr|mr|mrs|ms|miss|prof|shri|smt|sri|er|adv|ca|sir|madam)$/i;
   return String(full || '').replace(/\./g, ' ').split(/\s+/).find((w) => w && !titles.test(w)) || fallback;

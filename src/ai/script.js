@@ -1,7 +1,7 @@
 import { getSettings } from '../settings.js';
 import { runJson, aiEnabled, obj, str, arr } from './claude.js';
 import { managerSystem } from './playbook.js';
-import { money, firstName } from '../util.js';
+import { money, firstName, contactFirstName } from '../util.js';
 
 /*
  * Pitch Script Maker: a call script for the telecaller, following the owner's plan (Web Development.pdf p.6):
@@ -115,7 +115,7 @@ const DEFAULT_OPPS = [['A website that brings enquiries', 'Show up on Google and
 export function templateScript(input, audit) {
   const s = getSettings();
   const pkg = s.packages[1] || s.packages[0];
-  const name = firstName(input.contact_name, '');
+  const name = contactFirstName(input.contact_name, input.company, '');
   const caller = s.agency.sender_name || 'our team';
   const where = input.city ? ` in ${input.city}` : '';
   const issue = (audit?.findings || [])[0]?.text;

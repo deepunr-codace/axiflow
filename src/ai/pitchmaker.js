@@ -1,5 +1,5 @@
 import { getSettings } from '../settings.js';
-import { esc, money, firstName } from '../util.js';
+import { esc, money, firstName, contactFirstName } from '../util.js';
 import { runText, runJson, aiEnabled, obj, str, arr } from './claude.js';
 import { managerSystem, leadContext } from './playbook.js';
 
@@ -129,7 +129,7 @@ function paletteFor(industry) {
 export function fallbackPitch(lead, audit) {
   const s = getSettings();
   const pkg = s.packages.find((p) => p.id === lead.recommended_package) || s.packages[0];
-  const first = firstName(lead.contact_name);
+  const first = contactFirstName(lead.contact_name, lead.company);
   const issues = (audit?.findings || []).map((f) => f.text);
   return {
     headline: `A website that turns ${poss(lead.company)} visitors into enquiries`,
