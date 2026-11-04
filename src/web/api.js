@@ -1,5 +1,6 @@
 import express from 'express';
 import * as atomic from '../atomic.js';
+import { crmLeads, crmLead } from '../crm-leads.js';
 import { get, all, run, insert, update } from '../db.js';
 import { getSettings, saveSettings, getTemplates } from '../settings.js';
 import { STAGES, STAGE_IDS, SERVICES, SOURCES, PIPES } from '../stages.js';
@@ -333,6 +334,8 @@ api.put('/settings', async (req, res) => res.json(await saveSettings(req.body ||
 // Team CRM (Atomic CRM): status and a read right now
 api.get('/atomic', async (_req, res) => res.json(await atomic.atomicStatus()));
 api.post('/atomic/sync', async (_req, res) => res.json({ result: await atomic.pollCrm({ force: true }), status: await atomic.atomicStatus() }));
+api.get('/atomic/leads', async (_req, res) => { try { res.json(await crmLeads()); } catch (e) { res.status(502).json({ error: e.message }); } });
+api.get('/atomic/leads/:key', async (req, res) => { try { res.json(await crmLead(req.params.key)); } catch (e) { res.status(/no longer|Unknown/.test(e.message) ? 404 : 502).json({ error: e.message }); } });
 
 api.post('/demo/seed', async (_req, res) => res.json(await seedDemo()));
 

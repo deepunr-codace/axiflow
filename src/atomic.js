@@ -37,7 +37,7 @@ export const crmHost = () => { try { return new URL(conf().url).host; } catch { 
 
 export const readOnly = () => getSettings().atomic?.read_only !== false;
 
-async function rest(method, path, body, prefer) {
+export async function rest(method, path, body, prefer) {
   const { url, key } = conf();
   // Read-only mode (the default): nothing but GET ever reaches the CRM.
   if (method !== 'GET' && readOnly()) throw new Error('CRM is in read-only mode');
@@ -51,7 +51,7 @@ async function rest(method, path, body, prefer) {
   if (!r.ok) throw new Error(`CRM ${method} ${path.split('?')[0]}: HTTP ${r.status} ${text.slice(0, 200)}`);
   return text ? JSON.parse(text) : null;
 }
-const inList = (ids) => `in.(${[...new Set(ids.filter((x) => x != null))].join(',')})`;
+export const inList = (ids) => `in.(${[...new Set(ids.filter((x) => x != null))].join(',')})`;
 async function byIds(table, ids) {
   const out = new Map();
   const list = [...new Set(ids.filter((x) => x != null))];
@@ -63,7 +63,7 @@ async function byIds(table, ids) {
 
 // ------------------------------------------------------------------ CRM → AxiFlow
 
-const firstOf = (arr, k) => (Array.isArray(arr) ? arr.map((x) => (typeof x === 'string' ? x : x?.[k])).find(Boolean) : undefined);
+export const firstOf = (arr, k) => (Array.isArray(arr) ? arr.map((x) => (typeof x === 'string' ? x : x?.[k])).find(Boolean) : undefined);
 
 function primaryContact(deal, contacts) {
   const list = (deal.contact_ids || []).map((id) => contacts.get(id)).filter(Boolean);

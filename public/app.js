@@ -1,6 +1,7 @@
 import { openEditor, thumb, loadMeta, pdfToTemplate } from './editor.js';
 import { setupPlans, homePlanCard, wirePlanButtons, renderPlans, renderPlan, renderPlanEdit } from './plans.js';
 import { setupScripts, renderScripts } from './scripts.js';
+import { setupCrmLeads, renderCrmLeads } from './crm-leads.js';
 import { autoEnhanceSelects } from './select.js';
 // AxiFlow: single-page admin. No build step; talks to /api.
 const $ = (s, el = document) => el.querySelector(s);
@@ -73,6 +74,7 @@ function modal(title, body, actions = '') {
 
 setupPlans({ $, $$, api, esc, money, toast, busy, modal, get view() { return view; } });
 setupScripts({ $, $$, api, esc, toast, busy, modal, get view() { return view; } });
+setupCrmLeads({ $, $$, api, esc, toast, busy, fmtDate, fmtDay, money, simplePill, groupItems: (el) => groupItems(el), get view() { return view; } });
 
 function formData(form) {
   const out = {};
@@ -149,7 +151,7 @@ async function fillBell() {
 
 // ---------------------------------------------------------------- search palette
 const PAL_PAGES = [
-  ['#/today', 'home', 'Today'], ['#/plans', 'track_changes', 'Targets'], ['#/leads', 'view_kanban', 'Pipeline'], ['#/board', 'view_week', 'Pipeline board'],
+  ['#/today', 'home', 'Today'], ['#/plans', 'track_changes', 'Targets'], ['#/crm', 'contacts', 'Leads'], ['#/leads', 'view_kanban', 'Pipeline'], ['#/board', 'view_week', 'Pipeline board'],
   ['#/customers', 'group', 'Customers'], ['#/inbox', 'chat', 'Messages'], ['#/brochure', 'menu_book', 'Brochures'], ['#/proposal', 'request_quote', 'Proposals'], ['#/script', 'record_voice_over', 'Pitch scripts'],
   ['#/designs', 'grid_view', 'Templates'], ['#/approvals', 'edit_note', 'Pitch approvals'], ['#/tasks', 'checklist', 'All tasks'], ['#/dashboard', 'monitoring', 'Reports'],
   ['#/automation', 'receipt_long', 'Automation log'], ['#/templates', 'mail', 'Message templates'], ['#/settings', 'settings', 'Settings'],
@@ -291,7 +293,7 @@ const initials = (s) => esc(String(s || '?').replace(/[^\p{L}\p{N} ]/gu, ' ').tr
 // ---------------------------------------------------------------- router
 const ROUTES = {
   brochure: ['Brochure Generator', (id) => renderTool('brochure', id)], proposal: ['Proposal Generator', (id) => renderTool('proposal', id)], designs: ['Templates', renderDesigns],
-  script: ['', renderScripts],
+  script: ['', renderScripts], crm: ['', renderCrmLeads],
   plans: ['', renderPlans], plan: ['Revenue plan', renderPlan], 'plan-edit': ['', renderPlanEdit],
   today: ['', renderManager], manager: ['', renderManager], customers: ['Customers', renderCustomers], dashboard: ['Reports', renderDashboard], leads: ['Pipeline', renderLeads], board: ['Pipeline board', renderBoard],
   lead: ['Lead', renderLead], approvals: ['Pitch approvals', renderApprovals], tasks: ['Tasks', renderTasks],

@@ -162,6 +162,9 @@ td.num, th.num { text-align: right; }
 /* ---------- lead detail ---------- */
 .detail-head { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 16px; }
 .detail-head h2 { font-size: 26px; margin: 0; }
+.crm-contact + .crm-contact { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line, rgba(255,255,255,.08)); }
+.crm-phone { min-width: 120px; text-align: right; }
+@media (max-width: 720px) { .crm-phone { display: none; } }
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: 16px; overflow-x: auto; }
 .tabs button { background: none; border: 0; padding: 10px 14px; font: 500 13.5px var(--sans); color: var(--muted); border-bottom: 2px solid transparent; cursor: pointer; white-space: nowrap; }
 .tabs button:hover { color: var(--ink); }
