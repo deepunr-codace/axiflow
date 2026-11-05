@@ -23,6 +23,8 @@ export const KEY_DEFS = [
   { name: 'OPENROUTER_API_KEY', group: 'claude', label: 'OpenRouter API key', hint: 'openrouter.ai → Keys. Claude through OpenRouter (engine "OpenRouter"), or any OpenRouter model for the editor assistant.', prefix: 'sk-or-' },
   { name: 'GITHUB_DISPATCH_TOKEN', group: 'github', label: 'GitHub token', hint: 'Fine-grained token for this repo: Contents read and write (starts the workflow). Add Secrets read and write to let AxiFlow save the repo secrets for you.', prefix: 'github_pat_' },
   { name: 'CLAUDE_WORKER_SECRET', group: 'github', label: 'Callback secret', hint: 'Shared with the GitHub repo secret AXIFLOW_CALLBACK_SECRET. Generate one, then save it to GitHub.', gen: true, github: 'AXIFLOW_CALLBACK_SECRET' },
+  { name: 'PEXELS_API_KEY', group: 'images', label: 'Pexels API key', hint: 'pexels.com/api → Your API key (free). Photos that fit each lead\'s vertical; free for commercial use, no credit needed.' },
+  { name: 'UNSPLASH_ACCESS_KEY', group: 'images', label: 'Unsplash access key', hint: 'unsplash.com/developers → New application → Access Key (free). Premium editorial photos; AxiFlow records each photographer.' },
   { name: 'CRM_SUPABASE_URL', group: 'crm', label: 'CRM Supabase URL', hint: 'https://<project>.supabase.co of the team CRM.', plain: true },
   { name: 'CRM_SUPABASE_SECRET_KEY', group: 'crm', label: 'CRM secret key', hint: 'The CRM project\'s secret (service) key. AxiFlow stays read-only except the allowed writes.' },
   { name: 'WEBHOOK_SECRET', group: 'sync', label: 'CRM trigger secret', hint: 'Checked on /webhooks/atomic. If you change it, run the CRM trigger SQL again with the new value.', gen: true },
@@ -174,6 +176,7 @@ export async function testAiKey(provider) {
       const j = (await r.json()).data || {};
       return { ok: true, detail: `OpenRouter accepted the key${j.limit_remaining != null ? ` · credit left $${Number(j.limit_remaining).toFixed(2)}` : ''}${j.is_free_tier ? ' · free tier (no credits)' : ''}`, ms: Date.now() - t0 };
     }
+    if (provider === 'stock') { const r = await (await import('./images.js')).testStock(); return { ...r, ms: Date.now() - t0 }; }
     throw new Error('Unknown provider');
   } catch (e) { return { ok: false, detail: e.message, ms: Date.now() - t0 }; }
 }

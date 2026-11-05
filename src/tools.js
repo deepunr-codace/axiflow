@@ -42,6 +42,9 @@ import { renderDesignPdf } from './design/render-pdf.js';
 import { cleanDesign, cloneDesign, fillTokens } from './design/model.js';
 import { getTemplate, defaultTemplate } from './design/templates.js';
 import { freeformJob } from './ai/claude-freeform.js';
+import { verticalFor as verticalOf, playbookFor, playbookSection } from './ai/verticals.js';
+import { strategySection, qualitySection, withStrategy } from './ai/strategy.js';
+import { stockCandidates } from './images.js';
 import { resolvePairing } from './design/fonts.js';
 
 /*
@@ -50,6 +53,7 @@ import { resolvePairing } from './design/fonts.js';
  * plus (proposals) the price line items. The editor, the AI assistant and the PDF all use the design.
  */
 addColumns('docs', { design_json: 'TEXT', template_id: 'INTEGER', chat_json: 'TEXT' });
+addColumns('leads', { strategy_json: 'TEXT' }); // the lead's agreed pitch strategy (src/ai/strategy.js), shared by all three tools
 
 const parse = (j, fb = null) => { try { return j ? JSON.parse(j) : fb; } catch { return fb; } };
 const str = (v, max = 2000) => String(v ?? '').trim().slice(0, max);
@@ -137,7 +141,7 @@ export async function resumeDocs({ staleMinutes = 0 } = {}) {
   for (const d of await all(`SELECT id FROM docs WHERE status = 'working' AND updated_at <= :before AND (input_json IS NULL OR input_json NOT LIKE '%"waiting":true%')`, { before })) await generate(d.id);
   // Documents made before the editor existed: lay out their saved copy with the built-in template (no AI).
   const s = getSettings();
-  for (const { id } of await all(`SELECT id FROM docs WHERE status = 'ready' AND design_json IS NULL AND content_json IS NOT NULL`)) {
+  for (const { id } of await all(`SELECT id FROM docs WHERE status = 'ready' AND kind <> 'script' AND design_json IS NULL AND content_json IS NOT NULL`)) { // scripts have no page design
     try {
       const d = await getDoc(id);
       const design = d.kind === 'brochure' ? brochureLayout(null, d.content, s, d.input.company) : proposalDesign(d.content, d.items, s, { preparedFor: d.input.company });
@@ -288,6 +292,8 @@ export async function buildClaudeJob(doc, s = getSettings()) {
   const base = crm?.company ? { ...doc.input, website: crm.company.website || '' } : doc.input;
   const research = usableResearch(await researchFor({ ...doc, input: base }).catch(() => null), crm?.company?.name || doc.input.company);
   const input = { ...base, notes: [base.notes, dossier && `What the CRM and AxiFlow know about this lead:\n${dossier}`].filter(Boolean).join('\n\n') };
+  const vertical = VERTICALS.includes(doc.input.vertical) && doc.input.vertical !== 'Other' ? doc.input.vertical
+    : verticalOf(base.industry, crm?.company?.sector, crm?.company?.name || base.company, crm?.company?.business_description);
   let job, ctx = {};
   if (doc.kind === 'script') {
     // Built from scratch by Claude around the lead (research first, CRM call history, one angle).
@@ -305,10 +311,22 @@ export async function buildClaudeJob(doc, s = getSettings()) {
       if (audit?.findings?.length) input.notes += `\n\nWebsite check: ${audit.findings.map((f) => f.text).join('; ')}`;
       const design = deckOf(tpl) || '';
       const brief = buildBrief(input, { design, research, settings: s });
-      if (tpl.source === 'builtin-claude') { job = freeformJob(brief, dossier); ctx = {}; } // no template: Claude lays out every slide
-      else { job = deckJob(brief); ctx = { brief, design }; }
+      // Stock photos that fit the vertical and this business (Pexels / Unsplash keys), offered next to the sample images
+      const stock = await stockCandidates([
+        [base.industry, crm?.company?.sector].filter(Boolean).join(' ') || null,
+        ...playbookFor(vertical).images,
+      ]).catch(() => ({ assets: [], map: {} }));
+      if (stock.assets.length) brief.assets = [...stock.assets, ...brief.assets.map((a) => ({ ...a, description: `${a.description} (generic sample image: use only if nothing better fits)` }))];
+      if (tpl.source === 'builtin-claude') { job = freeformJob(brief, dossier); ctx = { stock: stock.map }; } // no template: Claude lays out every slide
+      else { job = deckJob(brief); ctx = { brief, design, stock: stock.map }; }
     }
   }
+  // Every job: the vertical's playbook, the lead's agreed strategy (so call, brochure and proposal tell one story),
+  // and a quality review before answering (owner, 2026-11-05: premium, relevant to the vertical and the business).
+  const strategy = doc.lead_id ? (await get(`SELECT strategy_json FROM leads WHERE id = :id`, { id: doc.lead_id }).catch(() => null))?.strategy_json : null;
+  job.prompt = [job.prompt, playbookSection(vertical), strategySection(strategy ? JSON.parse(strategy) : null), qualitySection(doc.kind)].join('\n\n');
+  job.schema = withStrategy(job.schema);
+  job.vertical = vertical;
   // Claude Code researches the business itself (website, Google listing, social pages) unless switched off.
   job.web = s.claude?.web_research !== false || !!doc.input.research;
   return { job, ctx };

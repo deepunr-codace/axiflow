@@ -28,7 +28,7 @@ export async function integrationsStatus() {
   const sched = await getState('scheduler', {});
   const { aiStatus } = await import('./ai/claude.js');
   const { channelStatus } = await import('./pipeline/channels.js');
-  const claudeDocs = await all(`SELECT id, kind, title, status, error, input_json, updated_at FROM docs WHERE input_json LIKE '%"claude":%' ORDER BY id DESC LIMIT 8`).catch(() => []);
+  const claudeDocs = await all(`SELECT id, kind, title, status, error, input_json, content_json, updated_at FROM docs WHERE input_json LIKE '%"claude":%' ORDER BY id DESC LIMIT 8`).catch(() => []);
   const tpl = await all(`SELECT id, kind, name, source, is_default FROM design_templates ORDER BY kind, is_default DESC, id`).catch(() => []);
   const storage = set('SUPABASE_URL') && (set('SUPABASE_SECRET_KEY') || set('SUPABASE_SERVICE_ROLE_KEY')) ? 'supabase' : set('BLOB_READ_WRITE_TOKEN') ? 'blob' : 'local';
   const outbox = await get(`SELECT COUNT(*)::int AS n FROM crm_outbox WHERE status IN ('pending', 'failed')`).catch(() => ({ n: 0 }));
@@ -59,9 +59,10 @@ export async function integrationsStatus() {
       last_result: seenAt.claude_result || null,
       settings: s.claude,
       recent: claudeDocs.map((d) => {
-        let c = {};
+        let c = {}, review = null;
         try { c = JSON.parse(d.input_json).claude || {}; } catch { /* old row */ }
-        return { engine: c.engine || 'github', id: d.id, kind: d.kind, title: d.title, status: d.status, error: d.error, attempts: c.attempts || 0, run_url: c.run_url || null, job: c.job?.kind || null, waiting: !!c.waiting, done: !!c.done, dispatched_at: c.dispatched_at || null, updated_at: d.updated_at };
+        try { review = JSON.parse(d.content_json || 'null')?.review || null; } catch { /* old row */ }
+        return { review, engine: c.engine || 'github', id: d.id, kind: d.kind, title: d.title, status: d.status, error: d.error, attempts: c.attempts || 0, run_url: c.run_url || null, job: c.job?.kind || null, waiting: !!c.waiting, done: !!c.done, dispatched_at: c.dispatched_at || null, updated_at: d.updated_at };
       }),
     },
     templates: {

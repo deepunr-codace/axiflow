@@ -1,4 +1,4 @@
-import { all, update } from './db.js';
+import { all, update, run } from './db.js';
 import { getSettings } from './settings.js';
 import { nowISO, BASE_URL } from './util.js';
 import { logEvent, addActivity } from './pipeline/log.js';
@@ -138,6 +138,14 @@ export async function acceptResult(body) {
   if (body.error || !body.output) return retry(doc, String(body.error || 'Claude returned no result').slice(0, 300));
   try {
     const { content, source } = await postProcess(doc, body.output);
+    // The lead's strategy: the first one Claude worked out is kept, so later documents follow it (src/ai/strategy.js)
+    const { cleanStrategy, cleanReview } = await import('./ai/strategy.js');
+    const strategy = cleanStrategy(body.output.strategy), review = cleanReview(body.output.review);
+    if (review) content.review = review;
+    if (strategy) {
+      content.strategy = strategy;
+      if (doc.lead_id) await run(`UPDATE leads SET strategy_json = :s WHERE id = :id AND (strategy_json IS NULL OR strategy_json = '')`, { s: JSON.stringify(strategy), id: doc.lead_id });
+    }
     const input = { ...doc.input, claude: { ...c, waiting: false, job: undefined, done: nowISO(), last_error: null } };
     await saveClaude(doc.id, input);
     await tools.completeDoc(doc.id, { content, source });
@@ -154,13 +162,16 @@ async function postProcess(doc, output) {
   if (kind === 'script') return { content: (await import('./ai/script.js')).postScript(output, doc.input, ctx.audit || null), source: 'claude' };
   if (kind === 'proposal') return { content: (await import('./ai/proposal-doc.js')).postProposal(output, doc.input, doc.items || []), source: 'claude' };
   if (kind === 'brochure') return { content: (await import('./ai/brochure.js')).postBrochure(output, doc.input, doc.input.services || []), source: 'claude' };
+  const { materializeStock } = await import('./images.js'); // the stock photos Claude chose: downloaded and saved now
   if (kind === 'free') {
-    const r = (await import('./ai/claude-freeform.js')).postFreeform(output);
-    return { content: { free: { design: r.design, concept: String(output.concept || ''), issues: r.issues, engine: 'claude_code' } }, source: 'claude' };
+    const r = (await import('./ai/claude-freeform.js')).postFreeform(output, ctx.stock);
+    const design = await materializeStock(r.design, ctx.stock, doc.id);
+    return { content: { free: { design, concept: String(output.concept || ''), issues: r.issues, engine: 'claude_code' } }, source: 'claude' };
   }
   if (kind === 'deck') {
     const r = (await import('./ai/brochure-deck.js')).postDeck(output, ctx.brief);
-    return { content: { deck: { design: ctx.design || r.design, data: r.data, concept: r.concept, issues: r.issues, removed: r.removed, engine: 'claude_code' } }, source: 'claude' };
+    const data = await materializeStock(r.data, ctx.stock, doc.id);
+    return { content: { deck: { design: ctx.design || r.design, data, concept: r.concept, issues: r.issues, removed: r.removed, engine: 'claude_code' } }, source: 'claude' };
   }
   throw new Error(`unknown job kind ${kind}`);
 }

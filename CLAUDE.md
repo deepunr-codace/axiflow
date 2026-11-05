@@ -13,7 +13,33 @@ The team's main CRM is **Twenty**, set up by a co-worker and run by the **teleca
 
 Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATABASE_URL` and `pg`; embedded PGlite in `data/pg` when `DATABASE_URL` is empty), Vercel Blob for uploads (`data/uploads` locally), nodemailer, `@anthropic-ai/sdk` (Claude, `claude-opus-5-5`), and a vanilla-JS admin SPA in `public/`. There is no build step. Code map: see README. The old SQLite file `data/crm.db` is kept only as a backup/migration source.
 
-## Status (2026-11-05, latest): classic typefaces + font pairings for brochures and proposals
+## Status (2026-11-05, latest): vertical playbooks, one strategy per lead, quality review, stock photos
+- **Owner's goal:** "creative brochures with premium quality with correct pitch and contents and relevancy according to the business vertical and their needs. the case of proposals also needs like that". Then "ok do it" for: playbooks, strategy, review, stock photos (Pexels + Unsplash).
+- **`src/ai/verticals.js`:**
+  - `PLAYBOOKS` for the owner's 7 verticals plus Other: buyers, buying journey, what the owner cares about, website must-haves, angles, objections with answers, proof, tone, look, font pairings, photo searches;
+  - `verticalFor(...texts)` (industry + CRM sector, name and description; "hospital", "retreat" and similar → Wellness);
+  - `playbookSection(vertical)`.
+- **`src/ai/strategy.js`:**
+  - every Claude job gets `<strategy>`: either work out the lead's needs, angle, offer, proof, tone and what to avoid, or follow the agreed one;
+  - every job gets `<quality_review>`: score relevance, specificity, consistency, premium and facts from 1 to 10 and rewrite anything below 8;
+  - `withStrategy(schema)` adds `strategy` + `review` to every output schema.
+  - `acceptResult` keeps the **first** strategy on the lead (`leads.strategy_json`) and stores `content.strategy` / `content.review`.
+  - post.mjs treats strategy, review and font fields as soft.
+  - Integrations → Last jobs shows the lowest score (hover for all five).
+- **Everything is added in `tools.buildClaudeJob`** (playbook + strategy + quality sections appended to `job.prompt`; `job.vertical`).
+- **`src/images.js`:**
+  - **Search:** with PEXELS_API_KEY and/or UNSPLASH_ACCESS_KEY (Keys, group "Stock photos", with a Test button), brochure jobs search with the industry plus the playbook's photo queries (up to 8 queries, about 40 candidates). The candidates join `brief.assets` first (ids `px-…` / `us-…`, src `stock:<id>`); the sample images are marked "generic, use only if nothing fits".
+  - **Download:** `materializeStock` (in claude-worker `postProcess`, for deck and free) downloads only the chosen photos at 1600 px, saves them as `upload:stock/<id>.jpg`, records the photographer and page in table `stock_images`, and reports Unsplash downloads as its API requires. A failed download drops the image.
+  - **Sources allowed:** `SRC_RE` / `SAFE_SRC` accept `stock:` until the photo is saved.
+  - **Tests only:** `PEXELS_API_URL` / `UNSPLASH_API_URL` overrides.
+- **Fix:** `resumeDocs` no longer gives scripts a proposal layout at start-up.
+- **Tested** (`quality-e2e.mjs`: stand-in OpenRouter + Pexels):
+  - the playbook (Wellness for an Ayurveda retreat) and the review section were in the jobs, and the script's strategy reached the proposal prompt;
+  - Pexels was searched with the playbook queries, and the chosen photo was downloaded and is the cover image in the design;
+  - all 4 kinds ready; GitHub-engine e2e passes.
+  - **Not tested:** the real Pexels and Unsplash APIs (no keys yet).
+
+## Status (2026-11-05): classic typefaces + font pairings for brochures and proposals
 - Owner: "use standard fonts too. not generic ai feel fonts", "in brochure, proposal".
 - **Typefaces:** 16 OFL families as static TTFs from the Google Fonts CSS API, in `assets/fonts` with their OFL files (about 7 MB): EB Garamond, Libre Baskerville, Bodoni Moda, Playfair Display, DM Serif Display, Libre Caslon Text, Source Serif 4, Libre Franklin, IBM Plex Sans, Work Sans, Jost, Archivo, Oswald, Bebas Neue, Anton, Abril Fatface.
 - **`src/design/fonts.js`** (no dependencies):

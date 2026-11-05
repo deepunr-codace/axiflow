@@ -1166,6 +1166,7 @@ async function renderIntegrations(section) {
   const KEY_GROUPS = [
     ['claude', 'Claude and AI keys', 'Your own keys (BYOK). Claude mode can run on them instead of GitHub, and the editor assistant uses them.'],
     ['github', 'Claude Code on GitHub', 'The token that starts the GitHub job, and the secret its answer is signed with.'],
+    ['images', 'Stock photos', 'Free photo libraries. With a key, every brochure gets real photos that fit the lead\'s vertical and business (Claude picks them; only the chosen ones are saved, with the photographer recorded).'],
     ['crm', 'Team CRM', 'Where the CRM lives and the key AxiFlow reads it with.'],
     ['sync', 'Live sync and scheduler', 'Secrets that protect the CRM trigger and the scheduler URL.'],
     ['email', 'Email (SMTP)', ''], ['whatsapp', 'WhatsApp Cloud API', ''],
@@ -1178,7 +1179,7 @@ async function renderIntegrations(section) {
         <button class="btn sm primary" data-key-save>Save</button>
         ${k.gen ? '<button class="btn sm" data-key-gen title="Make a new random secret">Generate</button>' : ''}
         ${k.source === 'app' || k.source === 'unreadable' ? `<button class="btn sm ghost" data-key-del title="${st.live ? 'Remove the key saved here' : 'Remove'}">Remove</button>` : ''}
-        ${k.name === 'ANTHROPIC_API_KEY' ? '<button class="btn sm" data-key-test="anthropic">Test</button>' : k.name === 'OPENROUTER_API_KEY' ? '<button class="btn sm" data-key-test="openrouter">Test</button>' : ''}</div>
+        ${k.name === 'ANTHROPIC_API_KEY' ? '<button class="btn sm" data-key-test="anthropic">Test</button>' : k.name === 'OPENROUTER_API_KEY' ? '<button class="btn sm" data-key-test="openrouter">Test</button>' : k.group === 'images' ? '<button class="btn sm" data-key-test="stock">Test</button>' : ''}</div>
       <div class="int-test" data-key-res></div></div>`;
   const ghSeen = kk.github_secrets || {};
   const ghRow = (name, desc, from) => `<div class="key-row"><div class="key-meta"><b>${name}</b><span class="small muted key-hint">${desc}</span>${ghSeen[name] ? `<span class="tag green">Saved to GitHub ${fmtDate(ghSeen[name])}</span>` : ''}</div>
@@ -1205,6 +1206,7 @@ async function renderIntegrations(section) {
   const tiles = [
     ['claude', 'Claude mode', c.on, c.mode && !c.on, c.on ? `On · ${({ github: 'GitHub', anthropic: 'Claude API', openrouter: 'OpenRouter' })[c.engine]}` : c.mode ? 'On, setup missing' : 'Off'],
     ['keys', 'Keys', kk.keys.some((k) => k.source === 'app'), kk.keys.some((k) => k.source === 'unreadable'), `${kk.keys.filter((k) => k.source).length} of ${kk.keys.length} set · ${kk.keys.filter((k) => k.source === 'app').length} saved here`],
+    ['keys', 'Stock photos', kk.keys.some((k) => k.group === 'images' && k.source), false, kk.keys.filter((k) => k.group === 'images' && k.source).map((k) => k.label.split(' ')[0]).join(' + ') || 'No key: sample images only'],
     ['crm', 'Team CRM', crmOk, crm.keys && !crmOk, crmOk ? `${crm.linked_leads} leads · ${crm.read_only ? 'read only' : 'read and write'}` : crm.keys ? 'Switched off' : 'Not connected'],
     ['sync', 'Live sync', liveSync, false, liveSync ? `Last change ${fmtDate(crm.last_webhook.at)}` : 'No CRM trigger yet'],
     ['templates', 'Templates', true, false, 'Automatic and by hand'],
@@ -1214,7 +1216,7 @@ async function renderIntegrations(section) {
     ['channels', 'Email and WhatsApp', st.channels.email === 'live' || st.channels.whatsapp === 'live', false, `Email ${st.channels.email} · WhatsApp ${st.channels.whatsapp}`],
   ];
   const tplOpts = (kind) => [[0, 'The default template'], ...st.templates.list.filter((t) => t.kind === kind && t.source !== 'builtin-claude').map((t) => [t.id, t.name + (t.is_default ? ' (default)' : '')])];
-  const runs = c.recent.length ? `<table class="small int-table"><tr><th>Document</th><th>Job</th><th>Status</th><th>Tries</th><th>Sent</th><th></th></tr>${c.recent.map((d) => `<tr><td><a href="#/${d.kind}/${d.id}">${esc(d.title || '#' + d.id)}</a></td><td>${esc(d.job || d.kind)}</td><td>${d.waiting ? '<span class="tag amber">Writing</span>' : d.status === 'ready' ? '<span class="tag green">Ready</span>' : d.status === 'error' ? `<span class="tag red" title="${esc(d.error || '')}">Failed</span>` : esc(d.status)}</td><td>${d.attempts}</td><td>${fmtDate(d.dispatched_at)}</td><td>${d.run_url ? `<a href="${esc(d.run_url)}" target="_blank" rel="noopener">GitHub run</a>` : ''}</td></tr>`).join('')}</table>` : '<p class="small muted">No Claude jobs yet.</p>';
+  const runs = c.recent.length ? `<table class="small int-table"><tr><th>Document</th><th>Job</th><th>Status</th><th>Quality</th><th>Tries</th><th>Sent</th><th></th></tr>${c.recent.map((d) => `<tr><td><a href="#/${d.kind}/${d.id}">${esc(d.title || '#' + d.id)}</a></td><td>${esc(d.job || d.kind)}</td><td>${d.waiting ? '<span class="tag amber">Writing</span>' : d.status === 'ready' ? '<span class="tag green">Ready</span>' : d.status === 'error' ? `<span class="tag red" title="${esc(d.error || '')}">Failed</span>` : esc(d.status)}</td><td>${d.review ? `<span title="${esc(`relevance ${d.review.relevance} · specific ${d.review.specificity} · consistent ${d.review.consistency} · premium ${d.review.premium} · facts ${d.review.facts}${d.review.notes ? ' · ' + d.review.notes : ''}`)}">${Math.min(...['relevance', 'specificity', 'consistency', 'premium', 'facts'].map((k) => d.review[k] || 10))}/10</span>` : '–'}</td><td>${d.attempts}</td><td>${fmtDate(d.dispatched_at)}</td><td>${d.run_url ? `<a href="${esc(d.run_url)}" target="_blank" rel="noopener">GitHub run</a>` : ''}</td></tr>`).join('')}</table>` : '<p class="small muted">No Claude jobs yet.</p>';
   view.innerHTML = `
   <p class="hint">Every connection AxiFlow uses, what is set up and what each one does. Add your own keys under <b>Keys</b> (stored encrypted), or keep them on the server (.env locally, Vercel environment variables live). Secret values are never shown, only whether they are set.${st.live ? '' : ' This is a local server: it never sends CRM writes or GitHub jobs.'}</p>
   <div class="int-tiles">${tiles.map(([id, n, on, warn, sub]) => `<a class="int-tile" href="#/integrations/${id}" data-jump="${id}">${dot(on, warn)}<b>${n}</b><span class="small muted">${esc(sub)}</span></a>`).join('')}</div>

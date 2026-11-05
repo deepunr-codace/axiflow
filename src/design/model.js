@@ -57,7 +57,7 @@ export async function saveDataUrl(dataUrl, dir, name = null) {
 const num = (v, min, max, d) => { const n = Number(v); return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : d; };
 const color = (v, d) => (/^#[0-9a-f]{6}$/i.test(String(v || '').trim()) ? String(v).trim() : d);
 const str = (v, max) => String(v ?? '').slice(0, max);
-const SRC_RE = /^(asset|upload):[\w\-./]+$/;
+const SRC_RE = /^(asset|upload|stock):[\w\-./]+$/; // stock: = a chosen stock photo until it is saved (src/images.js)
 
 function cleanGradient(g) {
   if (!g || !Array.isArray(g.stops) || g.stops.length < 2) return null;

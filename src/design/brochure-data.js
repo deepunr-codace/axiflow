@@ -84,7 +84,7 @@ export function serviceSlideTitle(svc) {
   return words.length < 2 ? svc.name : `${words.slice(0, -1).join(' ')}\n${words.at(-1)}`;
 }
 
-const SAFE_SRC = /^(asset|upload):[\w\-./]+$/;
+const SAFE_SRC = /^(asset|upload|stock):[\w\-./]+$/;
 const safeImage = (img) => (img && SAFE_SRC.test(img.src || '') ? { src: img.src, alt: String(img.alt || '') } : undefined);
 
 /** Fills defaults, trims lists to what the layout holds, drops unsafe images. Never mutates the input. */

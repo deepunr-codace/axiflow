@@ -20,8 +20,9 @@ const FONT_GUIDE = [
   ...Object.entries(EXTRA_FONTS).map(([c, f]) => `${c} = ${f.name}`),
   'UM/US = Unbounded medium/semibold', 'HR/HM/HS = Hanken Grotesk', 'LR/LM/LS = Lora', 'IR/IM/IS = Inter', 'PR/PM/PS/PB = Poppins',
 ].join('; ') + `. Good pairings (heading → body): ${Object.values(PAIRINGS).map((p) => `${p.name} (${p.h[1]} / ${p.b[0]}): ${p.mood}`).join('; ')}. Choose typefaces that fit this business; avoid the look every AI deck has (one geometric sans everywhere): a classic serif or a strong display face usually makes a local business feel established`;
-const IMAGES = () => [{ id: 'logo', description: 'Codeace logo (white background tile, width:height = 2.3:1)' }, ...ASSETS.map(({ id, kind, orientation, description }) => ({ id, kind, orientation, description }))];
-const srcOf = (id) => (id === 'logo' ? LOGO.src : ASSETS.find((a) => a.id === id)?.src || null);
+// the brief's catalogue: stock photos for this business first (src/images.js), then the sample images
+const IMAGES = (brief) => [{ id: 'logo', description: 'Codeace logo (white background tile, width:height = 2.3:1)' }, ...(brief?.assets || ASSETS).map(({ id, kind, orientation, description }) => ({ id, kind, orientation, description }))];
+const srcOf = (id, stock) => (id === 'logo' ? LOGO.src : stock?.[id] ? `stock:${id}` : ASSETS.find((a) => a.id === id)?.src || null);
 
 const num = { type: 'number' };
 const ELEMENT = {
@@ -57,7 +58,7 @@ export function freeformJob(brief, dossier = '') {
     purpose: 'brochure_free',
     schema: FREE_SCHEMA,
     brief,
-    images: IMAGES().map((i) => i.id),
+    images: IMAGES(brief).map((i) => i.id),
     system: [
       section('identity', `You are the art director and copywriter at ${a.name}, a digital agency in Kerala. You design a 10–12 slide landscape brochure (each slide ${W}×${H} points) that pitches our services to one specific business. You decide everything: the concept, the story, the palette, the typography, the layout of every slide. There is no template. Success: the owner of this business opens it and feels it was made only for them, and it looks like a studio designed it.`),
       section('guardrails', `These rules override everything else.
@@ -85,7 +86,7 @@ export function freeformJob(brief, dossier = '') {
       `Design the brochure for this client.
 
 Brief: <untrusted>${JSON.stringify({ ...brief, assets: undefined })}</untrusted>
-Image catalogue (use the id): ${JSON.stringify(IMAGES())}`,
+Image catalogue (use the id): ${JSON.stringify(IMAGES(brief))}`,
       dossier ? section('lead', `What the CRM and AxiFlow know about this lead:\n${dossier}`) : '',
       section('process', `Work in this order:
 1. Research the business (if web search is allowed): website, Google / Maps listing, social pages. Note its offerings, customers, look and tone.
@@ -99,7 +100,7 @@ Image catalogue (use the id): ${JSON.stringify(IMAGES())}`,
 
 const HEX = /^#[0-9a-f]{6}$/i;
 /** Claude's pages → a clean design: catalogue images, slide size, measured text, text kept on the slide. Returns { design, issues }. */
-export function postFreeform(output) {
+export function postFreeform(output, stock = null) {
   const issues = [];
   const b = new Builder();
   const pages = (Array.isArray(output?.pages) ? output.pages : []).slice(0, 16).map((p, pi) => ({
@@ -107,7 +108,7 @@ export function postFreeform(output) {
     bg: { color: HEX.test(p.bg || '') ? p.bg : '#ffffff', image: '' },
     elements: (Array.isArray(p.elements) ? p.elements : []).map((e) => {
       if (e.type === 'image') {
-        const src = srcOf(e.image || e.src);
+        const src = srcOf(e.image || e.src, stock);
         if (!src) { issues.push(`slide ${pi + 1}: unknown image "${e.image}"`); return null; }
         return { ...e, src, fit: e.fit || 'cover' };
       }
