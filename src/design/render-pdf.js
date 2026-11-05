@@ -40,8 +40,92 @@ const baselineShift = (e) => ((e.lh - fm(e.font)[0]) / 2) * e.size;
 export function lineWidth(doc, e, text = e.text) { doc.font(e.font).fontSize(e.size); return doc.widthOfString(String(text ?? ''), { characterSpacing: e.ls }); }
 
 /** Height a text element needs (used by layouts and for pagination). */
+/*
+ * Rich text (owner, 2026-11-05: editing split headings did not work): `**words**` in a text element with `hl` set are
+ * drawn in the highlight colour, so a heading stays one editable box. Lines are wrapped word by word here (the same
+ * greedy rule the browser uses); the editor shows the same text with <span>s.
+ */
+const isRich = (e) => !!e.hl && String(e.text || '').includes('**');
+function richTokens(p) {
+  const out = [];
+  let on = false, gap = false;
+  for (const part of String(p).split('**')) {
+    for (const bit of part.split(/(\s+)/)) {
+      if (!bit) continue;
+      if (/^\s+$/.test(bit)) { gap = true; continue; }
+      out.push({ t: clean(bit), hl: on, gap });
+      gap = false;
+    }
+    on = !on;
+  }
+  return out;
+}
+function richLines(doc, e, p) {
+  doc.font(e.font).fontSize(e.size);
+  const sp = doc.widthOfString(' ') + (e.ls || 0);
+  const lines = [];
+  let line = [], lw = 0;
+  for (const tk of richTokens(p)) {
+    const w = doc.widthOfString(tk.t, { characterSpacing: e.ls }) + (e.ls || 0);
+    const add = (line.length && tk.gap ? sp : 0) + w;
+    if (line.length && lw + add > e.w + 0.5) { lines.push({ tokens: line, w: lw }); line = []; lw = 0; }
+    tk.w = w;
+    lw += (line.length && tk.gap ? sp : 0) + w;
+    line.push(tk);
+  }
+  lines.push({ tokens: line, w: lw });
+  return { lines, sp };
+}
+function drawRich(doc, e) {
+  const lineH = e.lh * e.size;
+  let y = e.y + baselineShift(e);
+  for (const p of paras(e.text)) {
+    const { lines, sp } = richLines(doc, e, p);
+    for (const ln of lines) {
+      let x = e.x + (e.align === 'center' ? (e.w - ln.w) / 2 : e.align === 'right' ? e.w - ln.w : 0);
+      ln.tokens.forEach((tk, i) => {
+        if (i && tk.gap) x += sp;
+        doc.fillColor(tk.hl ? e.hl : e.color).text(tk.t, x, y, { lineBreak: false, characterSpacing: e.ls });
+        x += tk.w;
+      });
+      y += lineH;
+    }
+  }
+}
+/*
+ * Text around a circle (`arc` = radius, centred in the element), like an SVG textPath that starts at the left and runs
+ * clockwise over the top, stretched to the whole circumference. "✦" is drawn as a small four-point star.
+ */
+const STAR = 'M12 0Q12 12 24 12Q12 12 12 24Q12 12 0 12Q12 12 12 0Z';
+function drawArc(doc, e) {
+  const r = e.arc, cx = e.x + e.w / 2, cy = e.y + e.h / 2;
+  doc.font(e.font).fontSize(e.size);
+  const asc = (doc._font?.ascender || 900) / 1000 * e.size;
+  const chars = [...String(e.text || '')];
+  const widths = chars.map((c) => (c === '✦' ? e.size * 0.8 : doc.widthOfString(clean(c) || ' ')));
+  const extra = (2 * Math.PI * r - widths.reduce((a, b) => a + b, 0)) / Math.max(1, chars.length);
+  let s = 0;
+  chars.forEach((c, i) => {
+    const mid = s + widths[i] / 2;
+    s += widths[i] + extra;
+    if (/\s/.test(c)) return;
+    const th = Math.PI + mid / r;
+    const px = cx + r * Math.cos(th), py = cy + r * Math.sin(th);
+    doc.save().rotate((th * 180) / Math.PI + 90, { origin: [px, py] });
+    if (c === '✦') {
+      const z = e.size * 0.62;
+      doc.translate(px - z / 2, py - e.size * 0.35 - z / 2).scale(z / 24).path(STAR).fill(e.color);
+    } else {
+      doc.fillColor(e.color).text(clean(c), px - widths[i] / 2, py - asc, { lineBreak: false });
+    }
+    doc.restore();
+  });
+}
+
 export function measureText(doc, e) {
   doc.font(e.font).fontSize(e.size);
+  if (e.arc) return e.h;
+  if (isRich(e)) return paras(e.text).reduce((a, p) => a + Math.max(1, richLines(doc, e, p).lines.length) * e.lh * e.size, 0);
   if (!e.list) return paraHeights(doc, e).reduce((a, h) => a + h, 0);
   const items = listItems(e.text);
   const ind = listIndent(e);
@@ -147,7 +231,9 @@ function drawText(doc, e) {
   doc.save().opacity(e.opacity).fillColor(e.color).font(e.font).fontSize(e.size);
   if (e.rot) doc.rotate(e.rot, { origin: [e.x + e.w / 2, e.y + (e.h || e.size * e.lh) / 2] });
   const y0 = e.y + baselineShift(e);
-  if (!e.list) {
+  if (e.arc) drawArc(doc, e);
+  else if (isRich(e)) drawRich(doc, e);
+  else if (!e.list) {
     const hs = paraHeights(doc, e), o = wrapOpts(doc, e), x = e.x - hangX(doc, e);
     if (e.outline) doc.lineWidth(e.outline).strokeColor(e.color);
     let y = y0;

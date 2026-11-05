@@ -13,7 +13,22 @@ The team's main CRM is **Twenty**, set up by a co-worker and run by the **teleca
 
 Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATABASE_URL` and `pg`; embedded PGlite in `data/pg` when `DATABASE_URL` is empty), Vercel Blob for uploads (`data/uploads` locally), nodemailer, `@anthropic-ai/sdk` (Claude, `claude-opus-5-5`), and a vanilla-JS admin SPA in `public/`. There is no build step. Code map: see README. The old SQLite file `data/crm.db` is kept only as a backup/migration source.
 
-## Status (2026-11-05, latest): Claude mode live and working; brochures from scratch
+## Status (2026-11-05, latest): editable headings and stickers; "Claude designs (no template)"
+- **Editing fix** (owner: "some texts or items editing not working properly"):
+  - highlighted headings are now one text box: the words in the highlight colour are marked with `**…**` and the element has `hl` (colour);
+  - stickers are one text box with `arc` (radius), drawn around the circle;
+  - both work in the editor (spans / SVG textPath) and the PDF (`drawRich` / `drawArc` in render-pdf), and the properties panel has Highlight colour and Circle size. Checked editor vs PDF on all editorial slides.
+  - Not changed: chips and benefit cards still have their text separate from the box behind it. Existing documents keep the old split elements until regenerated.
+- **"Claude designs (no template)"** (owner: "without any templates claude can design? pls bypass for now let me test"): brochure template row `builtin-claude` (seeded, not the default). Claude Code returns every slide as positioned elements of the design model (`src/ai/claude-freeform.js`: `freeformJob`, `postFreeform`; job kind `free`). Guard rails:
+  - images only from the catalogue plus the logo;
+  - slides are 1920×1080;
+  - text is measured, and text that runs off a slide is shrunk (to 70%) and moved up.
+  - `validate.mjs` gives soft `layout:` warnings (off slide, overlap, unknown image, slide count).
+  - The result is stored as `content.free.design` and used as is by `brochureLayout`.
+  - Timing: the workflow timeout is now 25 min with 60 turns; free jobs are retried only after 27 min.
+  - Without Claude mode it falls back to the classic layout.
+
+## Status (2026-11-05): Claude mode live and working; brochures from scratch
 - **Live setup (owner's tokens):**
   - `GITHUB_DISPATCH_TOKEN`: fine-grained, Contents read and write, expires 2026-12-05. It is in `.env` and on Vercel, and was pasted in chat, so regenerate it after testing.
   - `CLAUDE_WORKER_SECRET`: on Vercel.

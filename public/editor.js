@@ -37,6 +37,22 @@ function textInner(e) {
     letterSpacing: `${e.ls}px`, color: e.color, textAlign: e.align,
   });
   if (e.outline) Object.assign(box.style, { color: 'transparent', webkitTextStroke: `${e.outline}px ${e.color}` });
+  if (e.arc) {
+    // text around a circle (same rule as render-pdf drawArc: starts at the left, clockwise, whole circumference)
+    const r = e.arc, cx = e.w / 2, cy = e.h / 2, id = `arc-${e.id}`;
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+    box.innerHTML = `<svg width="${e.w}" height="${e.h}" style="position:absolute;left:0;top:0;overflow:visible;pointer-events:none"><defs><path id="${id}" d="M ${cx - r},${cy} a ${r},${r} 0 1,1 ${2 * r},0 a ${r},${r} 0 1,1 ${-2 * r},0"/></defs><text fill="${e.color}" style="font-family:${FONT_FAMILY[e.font] || 'Poppins'},sans-serif;font-weight:${FONT_W[e.font] || 400};font-size:${e.size}px"><textPath href="#${id}" textLength="${(2 * Math.PI * r).toFixed(1)}" lengthAdjust="spacing">${esc(e.text)}</textPath></text></svg>`;
+    return box;
+  }
+  if (e.hl && String(e.text).includes('**')) {
+    // **marked** words in the highlight colour; the box keeps the raw text for editing
+    String(e.text).split('**').forEach((part, i) => {
+      if (!part) return;
+      if (i % 2) { const s = document.createElement('span'); s.style.color = e.outline ? 'transparent' : e.hl; if (e.outline) s.style.webkitTextStroke = `${e.outline}px ${e.hl}`; s.textContent = part; box.append(s); }
+      else box.append(document.createTextNode(part));
+    });
+    return box;
+  }
   if (!e.list) { box.textContent = e.text; return box; }
   const ind = e.list === 'icon' ? e.size * 2.3 : e.size * 1.6;
   const lineH = e.lh * e.size;
@@ -81,7 +97,7 @@ function elementNode(e, items) {
   el.className = `del del-${e.type}`;
   el.dataset.id = e.id;
   Object.assign(el.style, { left: `${e.x}px`, top: `${e.y}px`, width: `${e.w}px`, opacity: e.opacity ?? 1 });
-  if (e.type !== 'text' && e.type !== 'pricing') el.style.height = `${e.h}px`;
+  if ((e.type !== 'text' && e.type !== 'pricing') || e.arc) el.style.height = `${e.h}px`;
   if (e.type === 'text') { el.append(textInner(e)); if (e.rot) el.style.transform = `rotate(${e.rot}deg)`; }
   else if (e.type === 'image') {
     Object.assign(el.style, { backgroundImage: e.src ? `url("${fileUrl(e.src)}")` : 'none', backgroundSize: e.fit === 'fill' ? '100% 100%' : e.fit, backgroundPosition: `${e.ha || 'center'} ${e.va || 'center'}`, backgroundRepeat: 'no-repeat', borderRadius: `${e.radius}px` });
@@ -202,7 +218,7 @@ export async function openEditor(root, { doc, api, toast, busy, modal, onChange 
     wrap.append(pg);
     $('.ed-zoom', root).textContent = `${Math.round(S.scale * 100)}%`;
     // measure text heights so selection boxes and the AI see real sizes
-    for (const e of p.elements) if (e.type === 'text' || e.type === 'pricing') {
+    for (const e of p.elements) if ((e.type === 'text' && !e.arc) || e.type === 'pricing') {
       const node = $(`.del[data-id="${e.id}"]`, pg);
       if (node) { const h = Math.ceil(node.offsetHeight); if (Math.abs(h - e.h) > 1) e.h = h; }
     }
@@ -264,6 +280,8 @@ export async function openEditor(root, { doc, api, toast, busy, modal, onChange 
       html = `<h3>Text</h3>
         <div class="ed-grid"><label>Font<select data-k="font">${Object.entries(FONT_NAMES).map(([k, n]) => `<option value="${k}" ${k === e.font ? 'selected' : ''}>${n}</option>`).join('')}</select></label>${num('Size', 'size', e.size, 0.5)}</div>
         ${colorField('Colour', 'color', e.color)}
+        ${e.hl ? colorField('Highlight colour', 'hl', e.hl) + '<p class="small muted">Words between ** and ** use the highlight colour.</p>' : ''}
+        ${e.arc ? `<div class="ed-grid">${num('Circle size', 'arc', e.arc)}${num('Turn', 'rot', e.rot)}</div>` : ''}
         <div class="row ed-row seg ed-align">${['left', 'center', 'right'].map((a) => `<button data-align="${a}" class="${e.align === a ? 'on' : ''}">${a}</button>`).join('')}</div>
         <div class="ed-grid">${num('Line height', 'lh', e.lh, 0.05)}${num('Letter spacing', 'ls', e.ls, 0.1)}</div>
         <div class="ed-grid"><label>List<select data-k="list"><option value="">None</option><option value="dot" ${e.list === 'dot' ? 'selected' : ''}>Bullets</option><option value="icon" ${e.list === 'icon' ? 'selected' : ''}>Icon bullets</option></select></label>${e.list ? num('Item gap', 'gap', e.gap) : ''}</div>

@@ -76,23 +76,21 @@ export class Builder {
       e.h = Math.ceil(lineH * lines.length);
       return { els: [e], h: e.h, lines };
     }
-    const els = [];
+    // one editable text box: the highlighted words are marked with ** (per line) and drawn in `hl`
     let pos = 0;
-    lines.forEach((line, i) => {
+    const marked = lines.map((line) => {
       const start = pos, end = pos + line.length;
       pos = end + 1;
       const a = Math.max(at, start), b = Math.min(at + highlight.length, end);
-      const parts = a < b ? [[line.slice(0, a - start), color], [line.slice(a - start, b - start), hl], [line.slice(b - start), color]] : [[line, color]];
-      const lw = this.width(proto, line);
-      let cx = align === 'center' ? x + (w - lw) / 2 : x;
-      for (const [t, c] of parts) {
-        if (!t) continue;
-        const tw = this.width(proto, t);
-        if (t.trim()) els.push(T({ ...proto, text: t.trim(), x: cx + (tw - this.width(proto, t.trimStart())), y: y + i * lineH, w: Math.ceil(this.width(proto, t.trim())) + 8, h: Math.ceil(lineH), color: c }));
-        cx += tw;
-      }
+      if (a >= b) return line;
+      const mid = line.slice(a - start, b - start);
+      const lead = mid.match(/^\s*/)[0], tail = mid.match(/\s*$/)[0];
+      return `${line.slice(0, a - start)}${lead}**${mid.trim()}**${tail}${line.slice(b - start)}`;
     });
-    return { els, h: Math.ceil(lineH * lines.length), lines };
+    const e = T({ ...proto, text: marked.join('\n'), x, y, w: w + 8, align, hl });
+    if (align === 'center') e.x = x - 4;
+    e.h = Math.ceil(lineH * lines.length);
+    return { els: [e], h: e.h, lines };
   }
   /** A pill with text (tags, chips). Returns { els, w, h }. */
   pill({ text, x, y, font = 'HS', size = 24, ls = 2, upper = true, fg, bg = 'none', border = 'none', bw = 1, padX = 22, padY = 10 }) {
@@ -125,27 +123,8 @@ export class Builder {
    * One rotated text element per letter; "✦" becomes a small star icon. turn = whole-sticker rotation in degrees.
    */
   circleText({ text, cx, cy, r, font = 'IS', size, ls = 0, color, turn = 0 }) {
-    const chars = [...String(text)];
-    const proto = T({ font, size, ls: 0, color });
-    const widths = chars.map((c) => (c === '✦' ? size * 0.8 : this.width(proto, c)));
-    const total = 2 * Math.PI * r;
-    const extra = (total - widths.reduce((a, b) => a + b, 0)) / chars.length;
-    const asc = ASCENT[font] ?? 0.95, lineN = NORMAL[font] ?? 1.25;
-    const lift = (asc - lineN / 2) * size; // box centre above the baseline
-    const tr = (turn * Math.PI) / 180;
-    const els = [];
-    let s = 0;
-    chars.forEach((c, i) => {
-      const mid = s + widths[i] / 2;
-      s += widths[i] + extra;
-      if (c === ' ') return;
-      const th = Math.PI + mid / r + tr;
-      const px = cx + (r + lift) * Math.cos(th), py = cy + (r + lift) * Math.sin(th);
-      const rot = ((th * 180) / Math.PI + 90) % 360;
-      if (c === '✦') { const z = size * 0.62; els.push(ICON({ name: 'star4', x: px - z / 2, y: py - z / 2, w: z, h: z, color })); return; }
-      const bw = Math.ceil(widths[i]) + 6, bh = Math.ceil(size * lineN);
-      els.push(T({ text: c, font, size, ls, color, x: px - bw / 2, y: py - bh / 2, w: bw, h: bh, align: 'center', rot: rot > 180 ? rot - 360 : rot }));
-    });
-    return els;
+    // one text element drawn around the circle (`arc` = radius), so the sticker is edited as one line of text
+    const side = 2 * (r + Math.ceil(size * 1.2));
+    return [T({ text: String(text), font, size, ls, color, x: cx - side / 2, y: cy - side / 2, w: side, h: side, align: 'center', arc: r, rot: turn })];
   }
 }

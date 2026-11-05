@@ -19,7 +19,7 @@ concurrency:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -53,7 +53,7 @@ jobs:
           TOOLS="Read,Write,Edit,Bash(node claude-worker/validate.mjs),Bash(node claude-worker/validate.mjs:*)"
           if [ "$(node -p "require('./claude-worker/work/job.json').web ? 1 : 0")" = "1" ]; then TOOLS="$TOOLS,WebSearch,WebFetch"; fi
           claude -p "$(cat claude-worker/PROMPT.txt)" \
-            --allowedTools "$TOOLS" --max-turns 45 --output-format json > claude-worker/work/claude.json
+            --allowedTools "$TOOLS" --max-turns 60 --output-format json > claude-worker/work/claude.json
 
       - name: Send the result back to AxiFlow
         if: always()

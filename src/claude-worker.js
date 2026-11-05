@@ -89,6 +89,10 @@ async function postProcess(doc, output) {
   if (kind === 'script') return { content: (await import('./ai/script.js')).postScript(output, doc.input, ctx.audit || null), source: 'claude' };
   if (kind === 'proposal') return { content: (await import('./ai/proposal-doc.js')).postProposal(output, doc.input, doc.items || []), source: 'claude' };
   if (kind === 'brochure') return { content: (await import('./ai/brochure.js')).postBrochure(output, doc.input, doc.input.services || []), source: 'claude' };
+  if (kind === 'free') {
+    const r = (await import('./ai/claude-freeform.js')).postFreeform(output);
+    return { content: { free: { design: r.design, concept: String(output.concept || ''), issues: r.issues, engine: 'claude_code' } }, source: 'claude' };
+  }
   if (kind === 'deck') {
     const r = (await import('./ai/brochure-deck.js')).postDeck(output, ctx.brief);
     return { content: { deck: { design: ctx.design || r.design, data: r.data, concept: r.concept, issues: r.issues, removed: r.removed, engine: 'claude_code' } }, source: 'claude' };
@@ -127,7 +131,8 @@ export async function retryStale({ force = false } = {}) {
     const doc = await tools.getDoc(id);
     const c = doc?.input?.claude;
     if (!c?.waiting) continue;
-    const late = Date.now() - new Date(c.dispatched_at).getTime() > limit;
+    // a whole designed brochure ("Claude designs", kind free) takes longer: the GitHub job may run 25 minutes
+    const late = Date.now() - new Date(c.dispatched_at).getTime() > (c.job?.kind === 'free' ? Math.max(limit, 27 * 60000) : limit);
     if (!late && !c.last_error) continue; // still within its time and the dispatch worked
     if (c.last_error && !late && Date.now() - new Date(c.dispatched_at).getTime() < 120000) continue; // a failed dispatch: wait 2 min before trying again
     if ((c.attempts || 1) >= (s.claude?.max_attempts || 3)) await giveUp(doc, c.last_error || `no answer within ${s.claude?.timeout_minutes || 20} minutes`);

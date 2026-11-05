@@ -40,7 +40,38 @@ export async function validate() {
       for (const x of r.removed) problems.push(`removed by the truth checks: ${x}`);
     } catch (e) { problems.push(e.message); }
   }
+  if (!problems.length && job.kind === 'free') problems.push(...checkSlides(result));
   return problems;
+}
+
+// "Claude designs" brochures: a rough, dependency-free layout check (AxiFlow measures exactly and shrinks text that
+// still runs off). Width per character ≈ 0.55 em; these problems are warnings ("layout:"), post.mjs still sends them.
+function checkSlides(r) {
+  const W = 1920, H = 1080, out = [];
+  const known = new Set(job.images || []);
+  (r.pages || []).forEach((p, pi) => {
+    const where = `slide ${pi + 1}${p.name ? ` (${p.name})` : ''}`;
+    if (!/^#[0-9a-f]{6}$/i.test(p.bg || '')) out.push(`layout: ${where}: bg should be a #rrggbb colour`);
+    const boxes = [];
+    (p.elements || []).forEach((e, i) => {
+      if (e.type === 'image' && !known.has(e.image)) out.push(`layout: ${where}, element ${i}: unknown image "${e.image}" (use an id from the catalogue)`);
+      if (e.type !== 'text' || e.arc) return;
+      const size = e.size || 16, lh = e.lh || 1.3, perLine = Math.max(1, Math.floor(e.w / (size * 0.55 + (e.ls || 0))));
+      const lines = String(e.text || '').replace(/\*\*/g, '').split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / perLine)), 0);
+      const h = lines * size * lh;
+      const label = `"${String(e.text || '').slice(0, 30)}"`;
+      if (e.x < 0 || e.y < 0 || e.x + e.w > W) out.push(`layout: ${where}: text ${label} is outside the slide`);
+      if (e.y + h > H) out.push(`layout: ${where}: text ${label} probably runs off the bottom (about ${Math.round(e.y + h - H)} pt)`);
+      boxes.push({ x: e.x, y: e.y, w: e.w, h, label });
+    });
+    for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+      const a = boxes[i], b = boxes[j];
+      const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x), oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+      if (ox > 20 && oy > 8) out.push(`layout: ${where}: text ${a.label} and ${b.label} probably overlap`);
+    }
+  });
+  if ((r.pages || []).length < 8) out.push(`layout: give 10–12 slides (got ${(r.pages || []).length})`);
+  return out;
 }
 
 if (/validate\.mjs$/.test(process.argv[1] || '')) { // run as a script (post.mjs imports it)

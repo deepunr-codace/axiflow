@@ -9,7 +9,8 @@ import { saveUpload, readUpload, UPLOADS } from '../storage.js';
  * Design documents: { pages: [{ id, w, h, bg: { color, image }, elements: [...] }] }
  * Element types (all have id, type, x, y, w, h in points; optional opacity):
  *   text    { text, font: PR|PM|PS|PB (Poppins) | UM|US (Unbounded) | HR|HM|HS (Hanken Grotesk), size, color, align, lh, ls,
- *             list: ''|'dot'|'icon', gap, outline (stroke width, 0 = filled), rot (degrees) }
+ *             list: ''|'dot'|'icon', gap, outline (stroke width, 0 = filled), rot (degrees),
+ *             hl (colour for **marked** words, '' = none), arc (radius: text runs around a circle, 0 = off) }
  *   image   { src, fit: cover|contain|fill, radius, ha: left|center|right, va: top|center|bottom }
  *   shape   { shape: rect|ellipse|line (horizontal, through the box's middle; dash: '' | 'dot'), fill, stroke, sw, radius, gradient: { angle, stops: [[offset, color, opacity]] } }
  *   icon    { name, color }
@@ -68,7 +69,7 @@ export function cleanElement(e) {
   if (e.locked) base.locked = true;
   switch (e.type) {
     case 'text':
-      return { ...base, text: str(e.text, 8000), font: FONTS.includes(e.font) ? e.font : 'PR', size: num(e.size, 4, 400, 16), color: color(e.color, '#141413'), align: ['left', 'center', 'right'].includes(e.align) ? e.align : 'left', lh: num(e.lh, 0.7, 3, 1.4), ls: num(e.ls, -20, 40, 0), list: ['', 'dot', 'icon'].includes(e.list) ? e.list : '', gap: num(e.gap, 0, 200, 8), outline: num(e.outline, 0, 20, 0), rot: num(e.rot, -180, 180, 0) };
+      return { ...base, text: str(e.text, 8000), font: FONTS.includes(e.font) ? e.font : 'PR', size: num(e.size, 4, 400, 16), color: color(e.color, '#141413'), align: ['left', 'center', 'right'].includes(e.align) ? e.align : 'left', lh: num(e.lh, 0.7, 3, 1.4), ls: num(e.ls, -20, 40, 0), list: ['', 'dot', 'icon'].includes(e.list) ? e.list : '', gap: num(e.gap, 0, 200, 8), outline: num(e.outline, 0, 20, 0), rot: num(e.rot, -180, 180, 0), hl: e.hl ? color(e.hl, '') : '', arc: num(e.arc, 0, 2000, 0) };
     case 'image':
       return { ...base, src: SRC_RE.test(e.src || '') ? e.src : '', fit: ['cover', 'contain', 'fill'].includes(e.fit) ? e.fit : 'cover', radius: num(e.radius, 0, 1000, 0), ha: ['left', 'center', 'right'].includes(e.ha) ? e.ha : 'center', va: ['top', 'center', 'bottom'].includes(e.va) ? e.va : 'center' };
     case 'shape':
@@ -112,7 +113,7 @@ export function describeDesign(design) {
 }
 
 const PROP_KEYS = {
-  text: ['x', 'y', 'w', 'h', 'opacity', 'font', 'size', 'color', 'align', 'lh', 'ls', 'list', 'gap', 'text', 'outline', 'rot'],
+  text: ['x', 'y', 'w', 'h', 'opacity', 'font', 'size', 'color', 'align', 'lh', 'ls', 'list', 'gap', 'text', 'outline', 'rot', 'hl', 'arc'],
   image: ['x', 'y', 'w', 'h', 'opacity', 'fit', 'radius'],
   shape: ['x', 'y', 'w', 'h', 'opacity', 'shape', 'fill', 'stroke', 'sw', 'radius'],
   icon: ['x', 'y', 'w', 'h', 'opacity', 'name', 'color'],

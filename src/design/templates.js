@@ -39,6 +39,11 @@ export async function seedTemplates() {
     const now = nowISO();
     await insert('design_templates', { kind: 'brochure', name: 'Codeace Editorial', mode: 'smart', source: 'builtin-editorial', is_default: 0, created_at: now, updated_at: now });
   }
+  // "Claude designs (no template)" (owner, 2026-11-05): Claude Code lays out every slide itself (src/ai/claude-freeform.js).
+  if (!await get(`SELECT 1 FROM design_templates WHERE kind = 'brochure' AND source = 'builtin-claude'`)) {
+    const now = nowISO();
+    await insert('design_templates', { kind: 'brochure', name: 'Claude designs (no template)', mode: 'smart', source: 'builtin-claude', is_default: 0, created_at: now, updated_at: now });
+  }
   for (const kind of ['brochure', 'proposal']) {
     if (!await get(`SELECT 1 FROM design_templates WHERE kind = :kind AND mode = 'smart' AND source = 'builtin'`, { kind })) {
       const now = nowISO();

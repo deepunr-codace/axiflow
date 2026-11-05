@@ -26,6 +26,7 @@ const DECK_DESIGNS = { 'builtin-deck': 'classic', 'builtin-editorial': 'editoria
 const deckOf = (tpl) => DECK_DESIGNS[tpl?.source] || null;
 const drawDeck = (design, data) => (design === 'editorial' ? editorialDesign(data) : classicDesign(data));
 const brochureLayout = (tpl, content, s, company) => {
+  if (content?.free?.design) return content.free.design; // "Claude designs": Claude drew the pages itself
   if (content?.deck?.data) return drawDeck(content.deck.design, content.deck.data);
   const design = deckOf(tpl);
   return design ? drawDeck(design, contentToData(content, s, { company, design })) : brochureDesign(content, s);
@@ -38,6 +39,7 @@ async function writeDeck(doc, design, research, s) {
 import { renderDesignPdf } from './design/render-pdf.js';
 import { cleanDesign, cloneDesign, fillTokens } from './design/model.js';
 import { getTemplate, defaultTemplate } from './design/templates.js';
+import { freeformJob } from './ai/claude-freeform.js';
 
 /*
  * AI Brochure Generator and AI Proposal Generator.
@@ -286,8 +288,8 @@ export async function buildClaudeJob(doc, s = getSettings()) {
       if (audit?.findings?.length) input.notes += `\n\nWebsite check: ${audit.findings.map((f) => f.text).join('; ')}`;
       const design = deckOf(tpl) || '';
       const brief = buildBrief(input, { design, research, settings: s });
-      job = deckJob(brief);
-      ctx = { brief, design };
+      if (tpl.source === 'builtin-claude') { job = freeformJob(brief, dossier); ctx = {}; } // no template: Claude lays out every slide
+      else { job = deckJob(brief); ctx = { brief, design }; }
     }
   }
   // Claude Code researches the business itself (website, Google listing, social pages) unless switched off.
