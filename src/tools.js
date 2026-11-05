@@ -332,6 +332,27 @@ export async function buildClaudeJob(doc, s = getSettings()) {
   return { job, ctx };
 }
 
+/**
+ * Puts the current closing slide into an existing classic-deck brochure without regenerating it (owner, 2026-11-05:
+ * "redesign this last. dont generate anymore"): the deck is laid out again from its saved content and only the last
+ * page is swapped, so every edit on the other pages stays. Returns true when the slide was replaced.
+ */
+export async function refreshClosingSlide(id) {
+  const d = await getDoc(id);
+  if (!d || d.kind !== 'brochure' || d.status !== 'ready' || !d.design?.pages?.length || !d.content) return false;
+  const tpl = await getTemplate(d.template_id) || await defaultTemplate('brochure');
+  const isClassic = d.content?.deck ? d.content.deck.design === 'classic' : deckOf(tpl) === 'classic';
+  if (!isClassic || d.content?.free) return false;
+  const old = d.design.pages.at(-1);
+  const looksClosing = old.elements.some((e) => e.type === 'text' && /THANK|Thank you/.test(e.text || '')) || old.elements.some((e) => e.type === 'image' && /closing-bg/.test(e.src || ''));
+  if (!looksClosing) return false;
+  const fresh = cleanDesign(brochureLayout(tpl, d.content, getSettings(), d.input.company));
+  const design = { ...d.design, pages: [...d.design.pages.slice(0, -1), fresh.pages.at(-1)] };
+  await update('docs', id, { design_json: cleanDesign(design), updated_at: nowISO() });
+  await announce(id, { edited: true }); // the CRM copy of the PDF is replaced too (one waiting upload)
+  return true;
+}
+
 /** True while a document is with Claude Code (Claude mode). */
 export const waitingForClaude = (d) => d?.status === 'working' && !!d?.input?.claude?.waiting;
 

@@ -267,33 +267,69 @@ function buildClassic(input) {
     return page(tn.bg, els);
   });
 
-  // ---- thank you
-  slides.push(() => {
-    const cl = d.closing, els = [];
-    if (cl.backgroundImage) els.push(I({ ...cl.backgroundImage, x: 0, y: 0, w: W, h: H, fit: 'cover' }));
-    els.push(ring(1572, 500, 210, WHITE, 2, 0.4), ring(1572, 500, 155, WHITE, 2, 0.25), ring(1572, 500, 100, WHITE, 2, 0.15), R({ shape: 'ellipse', x: 1352 + 368 - 14, y: 280 + 72 - 14, w: 28, h: 28, fill: t.accent }));
-    els.push(I({ src: logoOf(d).src, x: PAD, y: PAD, w: Math.round(95 * LOGO.ratio), h: 95, ha: 'left' }));
-    const contacts = [['Call', cl.phone, 1], ['Visit', cl.address, 1.7], ['Write', cl.email, 1], ['Web', cl.website, 1]].filter((x) => x[1]);
-    const grow = contacts.reduce((s, x) => s + x[2], 0);
-    const avail = W - 2 * PAD - 52 * (contacts.length - 1);
-    const vals = contacts.map(([, v, g]) => b.fit(T({ text: v, w: (avail * g) / grow, size: 30, lh: 1.4, color: WHITE })));
-    const cH = 1 + 24 + 32 + 12 + Math.max(0, ...vals.map((v) => v.h)), cy = H - PAD - cH;
-    let x = PAD;
-    contacts.forEach(([label, , g], i) => {
-      const w = (avail * g) / grow;
-      els.push(R({ x, y: cy, w, h: 1, fill: WHITE, opacity: 0.3 }), T({ text: label.toUpperCase(), x, y: cy + 25, w, h: 32, font: 'HS', size: 24, ls: 3, color: t.accent }), Object.assign(vals[i], { x, y: cy + 25 + 32 + 12 }));
-      x += w + 52;
-    });
-    const heading = cl.heading || 'THANK\nYOU.', hl = cl.heading ? cl.highlight : cl.highlight || 'YOU.';
-    const title = b.rich({ text: heading, highlight: hl, x: PAD, y: 0, w: 1400, size: 220, lh: 0.92, ls: -8, color: WHITE, hl: t.accent });
-    const topY = PAD + 95, room = (contacts.length ? cy : H - PAD) - topY;
-    title.els.forEach((e) => (e.y += topY + (room - title.h) / 2));
-    els.push(...title.els);
-    return page(t.ink, els);
-  });
+  // ---- thank you (owner, 2026-11-05: "redesign this last"): a personal sign-off in the brochure's own palette and
+  // type, the next step, and a contact card. No stock blur photo, no decoration that means nothing.
+  slides.push((n, total) => closingSlide(d, b, t, tone, footLabel, n, total));
 
   const total = slides.length;
   return { pages: slides.map((build, i) => build(i + 1, total)) };
+}
+
+/** The classic deck's last slide. Exported so existing brochures can get the new slide without being regenerated. */
+export function closingSlide(d, b, t, tone, footLabel, n, total) {
+  const cl = d.closing, els = [];
+  const muted = mix(WHITE, 62, t.ink), line = mix(WHITE, 16, t.ink), card = mix(WHITE, 7, t.ink);
+  const client = d.client.name;
+  // left: logo, sign-off, next step
+  els.push(I({ src: logoOf(d).src, x: PAD, y: PAD, w: Math.round(78 * LOGO.ratio), h: 78, ha: 'left' }));
+  const LW = 980;
+  const heading = cl.heading || `Thank you,\n${client}.`, hl = cl.heading ? cl.highlight : `${client}.`;
+  const TOP = PAD + 78 + 64, BOTTOM = H - 124 - 56; // between the logo and the footer rule
+  const lead = b.fitIn(T({ text: `It was a pleasure preparing this for ${client}. The next step is a short call to walk you through the plan and answer your questions.`, x: PAD, y: 0, w: 820, size: 30, lh: 1.5, color: muted }), 150);
+  const label = d.cta?.buttonLabel || 'Book a strategy call';
+  const bt = T({ text: label, font: 'HS', size: 26, color: t.onAccent });
+  const bth = Math.ceil(26 * NORMAL.HS) + 52, btw = Math.ceil(b.width(bt, label)) + 96 + 44;
+  const GAPS = [44, 52];
+  let size = 150, title;
+  for (;;) { // a long client name: shrink the sign-off until everything fits above the footer
+    title = b.rich({ text: heading, highlight: hl, x: PAD, y: 0, w: LW, size, lh: 1.02, ls: -size * 0.035, color: WHITE, hl: t.accent });
+    if (title.h + GAPS[0] + lead.h + GAPS[1] + bth <= BOTTOM - TOP || size <= 72) break;
+    size -= 6;
+  }
+  const btn = [R({ x: PAD, y: 0, w: btw, h: bth, radius: bth / 2, fill: t.accent }), Object.assign(bt, { x: PAD + 48, y: 26, w: btw - 96 - 44 + 6, h: Math.ceil(26 * NORMAL.HS) }),
+    ICON({ name: 'arrow-bar', x: PAD + btw - 48 - 30, y: (bth - 30) / 2, w: 30, h: 30, color: t.onAccent })];
+  const blocks = [block(title.els, title.h), block([lead], lead.h), block(btn, bth)];
+  const used = title.h + GAPS[0] + lead.h + GAPS[1] + bth;
+  stack(blocks, TOP + Math.max(0, (BOTTOM - TOP - used) / 2), GAPS);
+  els.push(...blocks.flatMap((x) => x.els));
+  // right: contact card
+  const contacts = [['phone', 'Call', cl.phone], ['pin', 'Visit', cl.address], ['mail', 'Write', cl.email], ['web', 'Web', cl.website]].filter((x) => x[2]);
+  if (contacts.length) {
+    const CX = 1200, CW = W - PAD - CX, P = 56, IC = 60;
+    const rows = contacts.map(([icon, lab, val]) => ({ icon, lab, val: b.fit(T({ text: val, x: CX + P + IC + 28, y: 0, w: CW - 2 * P - IC - 28, size: 28, lh: 1.4, color: WHITE })) }));
+    const rowH = (r) => Math.max(IC, 32 + 6 + r.val.h);
+    const gap = 30;
+    const prep = b.fit(T({ text: `Prepared for ${client}`, x: CX + P, y: 0, w: CW - 2 * P, font: 'HS', size: 22, ls: 1, lh: 1.35, color: t.accent }));
+    const head = prep.h + 28;
+    const CH = 2 * P + head + rows.reduce((s, r) => s + rowH(r), 0) + gap * 2 * (rows.length - 1);
+    const CY = Math.max(PAD, Math.min((PAD + BOTTOM) / 2 - CH / 2, BOTTOM - CH));
+    els.push(R({ x: CX, y: CY, w: CW, h: CH, radius: 36, fill: card, stroke: line, sw: 1.5 }));
+    els.push(Object.assign(prep, { y: CY + P - 4 }));
+    let y = CY + P + head;
+    rows.forEach((r, i) => {
+      if (i) { y += gap; els.push(R({ x: CX + P, y, w: CW - 2 * P, h: 1.5, fill: line })); y += gap; }
+      const h = rowH(r);
+      els.push(R({ shape: 'ellipse', x: CX + P, y: y + (h - IC) / 2, w: IC, h: IC, fill: mix(t.accent, 16, t.ink) }),
+        ICON({ name: r.icon, x: CX + P + 16, y: y + (h - IC) / 2 + 16, w: IC - 32, h: IC - 32, color: t.accent }),
+        T({ text: r.lab, x: CX + P + IC + 28, y: y + (h - (32 + 6 + r.val.h)) / 2, w: 300, h: 32, font: 'HS', size: 22, ls: 1, color: muted }),
+        Object.assign(r.val, { y: y + (h - (32 + 6 + r.val.h)) / 2 + 38 }));
+      y += h;
+    });
+  }
+  // footer, like every other slide
+  els.push(R({ x: PAD, y: H - 64 - 32 - 28, w: W - 2 * PAD, h: 1.5, fill: line }));
+  els.push(...b.footer({ muted }, footLabel, n, total));
+  return page(t.ink, els);
 }
 
 /** Old entry point: brochure copy (src/ai/brochure.js) → classic deck. */
