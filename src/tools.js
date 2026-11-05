@@ -18,6 +18,7 @@ import { editorialDesign } from './design/editorial.js';
 import { contentToData } from './design/brochure-data.js';
 import { buildBrief, generateDeckData, deckJob } from './ai/brochure-deck.js';
 import { claudeOn, claudeBroken, dispatchJob, claudeState } from './claude-worker.js';
+import { claudeScriptJob, claudeProposalJob } from './ai/claude-jobs.js';
 
 /**
  * Built-in brochure layouts by template source: 'builtin-deck' = Codeace Growth Deck (classic design),
@@ -265,13 +266,14 @@ async function sendToClaude(doc, s) {
   const input = { ...doc.input, notes: [doc.input.notes, dossier && `What the CRM and AxiFlow know about this lead:\n${dossier}`].filter(Boolean).join('\n\n') };
   let job, ctx = {};
   if (doc.kind === 'script') {
-    const audit = await auditWebsite(normalizeUrl(input.website)).catch(() => null);
-    job = scriptJob(input, research, audit);
+    // Built from scratch by Claude around the lead (research first, CRM call history, one angle).
+    const audit = await auditWebsite(normalizeUrl(doc.input.website)).catch(() => null);
+    job = claudeScriptJob(doc.input, research, audit, dossier);
     ctx = { audit };
   } else {
     const tpl = await getTemplate(doc.template_id) || await defaultTemplate(doc.kind);
     if (!tpl || tpl.mode !== 'smart') return false;
-    if (doc.kind === 'proposal') job = proposalJob(input, doc.items || [], research);
+    if (doc.kind === 'proposal') job = claudeProposalJob(doc.input, doc.items || [], research, dossier); // their own site structure; prices stay ours
     else {
       // Brochures are built from scratch by Claude: concept, copy, palette, images and layout (the deck job).
       // A Growth Deck / Editorial template fixes the design; with the classic template Claude chooses it.
