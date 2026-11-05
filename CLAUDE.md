@@ -13,7 +13,25 @@ The team's main CRM is **Twenty**, set up by a co-worker and run by the **teleca
 
 Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATABASE_URL` and `pg`; embedded PGlite in `data/pg` when `DATABASE_URL` is empty), Vercel Blob for uploads (`data/uploads` locally), nodemailer, `@anthropic-ai/sdk` (Claude, `claude-opus-5-5`), and a vanilla-JS admin SPA in `public/`. There is no build step. Code map: see README. The old SQLite file `data/crm.db` is kept only as a backup/migration source.
 
-## Status (2026-11-05, latest): Claude mode (the 3 tools write with Claude Code on GitHub) + Codeace Editorial
+## Status (2026-11-05, latest): Claude mode live and working; brochures from scratch
+- **Live setup (owner's tokens):**
+  - `GITHUB_DISPATCH_TOKEN`: fine-grained, Contents read and write, expires 2026-12-05. It is in `.env` and on Vercel, and was pasted in chat, so regenerate it after testing.
+  - `CLAUDE_WORKER_SECRET`: on Vercel.
+  - Repo secrets `CLAUDE_CODE_OAUTH_TOKEN` (also pasted in chat, so regenerate it with `claude setup-token`) and `AXIFLOW_CALLBACK_SECRET`.
+  - The repo is still public, on purpose for testing; the owner makes it private afterwards.
+- **First real runs:**
+  - script #34: GitHub run about 1 min, `source: claude`;
+  - brochure #39 for Back To Roots: about 2 min, Editorial design picked by Claude, green/gold palette, concept and copy specific to the lead, no removed stats, no layout issues.
+- **Bug found live and fixed:** my local dev server (sharing the Supabase DB, started with an empty token) re-sent a waiting job three times without credentials, then the job was rewritten in-app. Fixes:
+  - `retryStale` only runs where `claudeOn()` holds (`claudeHost` = https);
+  - on the live site, Claude mode with missing setup makes the job wait with an error (`claudeBroken`), never in-app.
+- **Owner: "same result in all generations … build the brochure from scratch based on the lead's data".** Claude jobs now get:
+  - `leadDossier()` (tools.js): the CRM record read live via `crmLead()` (company, sector, description, contacts with call stage and last result, deals, team notes without AxiFlow's own, open tasks), earlier research, AxiFlow notes, and the website check;
+  - web research: `claude.web_research` (default on) allows WebSearch/WebFetch, and INSTRUCTIONS.md tells Claude to research the business first;
+  - brochures always as the deck job (from scratch). With the classic template, Claude picks the design (`ctx.design || r.design`).
+- **Known limit:** the image catalogue is the template's generic sample set (salon stylist, 3D props), so visuals do not fit every industry. An image library per vertical is a possible next step.
+
+## Status (2026-11-05): Claude mode (the 3 tools write with Claude Code on GitHub) + Codeace Editorial
 - **Owner's requests:**
   - "integrate claude through git repo with an invoke function … sends back to axiflow"
   - "add an icon of claude in sidebar (colored) on click claude mode enable"
