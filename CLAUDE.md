@@ -29,6 +29,11 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - `leadDossier()` (tools.js): the CRM record read live via `crmLead()` (company, sector, description, contacts with call stage and last result, deals, team notes without AxiFlow's own, open tasks), earlier research, AxiFlow notes, and the website check;
   - web research: `claude.web_research` (default on) allows WebSearch/WebFetch, and INSTRUCTIONS.md tells Claude to research the business first;
   - brochures always as the deck job (from scratch). With the classic template, Claude picks the design (`ctx.design || r.design`).
+- **Scripts and proposals from scratch too** (owner: "do the same system for proposals and pitch generation. let claude fully build based on the lead"). `src/ai/claude-jobs.js` has `claudeScriptJob` and `claudeProposalJob`:
+  - each has its own identity, guardrails and craft layers (banned list shared from `brochure-deck-core.js`), a `<lead>` dossier section and a research-first `<process>`;
+  - they reuse the in-app schemas, context and post-processing;
+  - no agency example to copy; the proposal job carries no price figures at all.
+  - Live test on Back To Roots: script #42 and proposal #43 done in about 1 min. The proposal found the real address (Poolany, Meloor) and built the page structure from the business's treatments, programmes, physicians, rooms and stay flow; prices stayed AxiFlow's line items.
 - **Known limit:** the image catalogue is the template's generic sample set (salon stylist, 3D props), so visuals do not fit every industry. An image library per vertical is a possible next step.
 
 ## Status (2026-11-05): Claude mode (the 3 tools write with Claude Code on GitHub) + Codeace Editorial
