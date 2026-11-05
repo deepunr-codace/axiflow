@@ -33,7 +33,8 @@ addColumns('crm_outbox', { target: "TEXT DEFAULT 'webhook'" });
 addColumns('leads', { crm_script_note_id: 'INTEGER', crm_script_note_on: 'TEXT' }); // the one CRM note that holds this lead's call script
 addColumns('leads', { crm_removed_at: 'TEXT', crm_brochure_folder: 'TEXT' });
 addColumns('leads', { crm_brochure_state: 'TEXT', crm_proposal_state: 'TEXT' });
-addColumns('leads', { crm_lead_stage: 'TEXT' }); // last contacts.lead_stage seen (the telecaller's call stage) // last brochure/proposal status seen in or written to the CRM // set when the lead was deleted in the CRM: no more CRM writes for it
+addColumns('leads', { crm_lead_stage: 'TEXT' });
+addColumns('leads', { crm_created_at: 'TEXT' }); // creation time of the CRM record: a reused id with another time is another lead // last contacts.lead_stage seen (the telecaller's call stage) // last brochure/proposal status seen in or written to the CRM // set when the lead was deleted in the CRM: no more CRM writes for it
 
 export const ACTIONS = ['script', 'interested', 'proposal', 'won', 'lost', 'nurture', 'not_interested', 'ignore'];
 
@@ -134,7 +135,19 @@ const hashOf = (deal, co, ct) => crypto.createHash('sha1').update(JSON.stringify
 export async function syncLead(co, ct, deal, { engine, twenty, budget, useCallLogs = false }) {
   const s = getSettings().atomic;
   const ext = leadKey(co, ct);
-  const lead = await get(`SELECT * FROM leads WHERE external_id = :ext`, { ext });
+  let lead = await get(`SELECT * FROM leads WHERE external_id = :ext`, { ext });
+  // The CRM can reuse ids (a table emptied with its counter reset): the same id with another creation time,
+  // or an id coming back after its record was deleted, is a different lead. Keep the old one apart.
+  const born = co?.created_at || ct?.first_seen || null;
+  if (lead && ((born && lead.crm_created_at && lead.crm_created_at !== born) || (lead.crm_removed_at && !lead.crm_created_at))) {
+    await update('leads', lead.id, { external_id: `${ext}:old:${lead.id}`, crm_removed_at: lead.crm_removed_at || nowISO() });
+    await logEvent(lead.id, 'atomic', 'lead', 'ok', `${ext} now belongs to another CRM record (id reused); this lead is kept apart`);
+    if (!TERMINAL.has(lead.stage) && !['won', 'onboarding', 'in_development', 'delivered'].includes(lead.stage)) {
+      await engine.setStage(lead, 'lost', 'removed from the CRM', { lost_reason: 'deleted in the CRM (its id now belongs to another record)', next_action_at: null, next_action_type: null });
+    }
+    lead = null;
+  }
+  if (lead && born && !lead.crm_created_at) await update('leads', lead.id, { crm_created_at: born });
   const hash = hashOf(deal, co, ct);
   if (lead && lead.crm_sync_hash === hash) return 'unchanged';
   const links = { crm_deal_id: deal?.id ?? null, crm_company_id: co?.id ?? null, crm_contact_id: ct?.id ?? null, crm_sales_id: deal?.sales_id ?? co?.sales_id ?? ct?.sales_id ?? null };
@@ -151,8 +164,9 @@ export async function syncLead(co, ct, deal, { engine, twenty, budget, useCallLo
     if (isClosed(deal, s)) {
       // Won or lost before AxiFlow saw it: keep it as history so the tools can still use it.
       const r = await engine.createLead({ ...input, interested: deal.stage === 'won' || action === 'won' ? 'yes' : 'no' }, { source: 'crm', autoRun: false });
+      if (r.duplicate) await reattach(r.id, ext);
       const stage = action === 'won' && !deal.archived_at ? 'won' : 'lost';
-      await update('leads', r.id, { ...links, stage, stage_changed_at: nowISO(), crm_stage_key: stageKey, crm_call_key: callKey, crm_sync_hash: hash });
+      await update('leads', r.id, { ...links, crm_created_at: born, stage, stage_changed_at: nowISO(), crm_stage_key: stageKey, crm_call_key: callKey, crm_sync_hash: hash });
       await addActivity(r.id, 'system', `Imported from the CRM as ${stage === 'won' ? 'won' : 'closed'} (${label}); no automation`);
       await logEvent(r.id, 'atomic', 'lead', 'ok', `imported as history from ${ext} (${label})`);
       return 'history';
@@ -161,7 +175,8 @@ export async function syncLead(co, ct, deal, { engine, twenty, budget, useCallLo
       // A new lead: only the call script for the telecaller's first call (pitch point + script note go to the CRM).
       // The brochure comes when the lead turns interested.
       const r = await engine.createLead({ ...input, interested: 'unknown' }, { source: 'crm', autoRun: false });
-      await update('leads', r.id, { ...links, crm_stage_key: stageKey, crm_lead_stage: ct?.lead_stage || null, crm_call_key: callKey, crm_sync_hash: hash, ...(r.duplicate ? {} : { stage: 'prepared', stage_changed_at: nowISO() }) });
+      if (r.duplicate) await reattach(r.id, ext);
+      await update('leads', r.id, { ...links, crm_created_at: born, crm_stage_key: stageKey, crm_lead_stage: ct?.lead_stage || null, crm_call_key: callKey, crm_sync_hash: hash, ...(r.duplicate ? {} : { stage: 'prepared', stage_changed_at: nowISO() }) });
       await logEvent(r.id, 'atomic', 'lead', 'ok', `${r.duplicate ? 'linked to existing lead' : 'created'} from ${ext} (${label}): call script only`);
       if (!r.duplicate) {
         await addActivity(r.id, 'system', 'New lead from the CRM: writing the call script (the brochure follows when the lead is interested)');
@@ -172,7 +187,8 @@ export async function syncLead(co, ct, deal, { engine, twenty, budget, useCallLo
     }
     const interested = action === 'nurture' ? 'unknown' : action === 'not_interested' ? 'no' : 'yes';
     const r = await engine.createLead({ ...input, interested }, { source: 'crm' });
-    await update('leads', r.id, { ...links, crm_stage_key: stageKey, crm_lead_stage: ct?.lead_stage || null, crm_call_key: callKey, crm_sync_hash: hash });
+    if (r.duplicate) await reattach(r.id, ext);
+    await update('leads', r.id, { ...links, crm_created_at: born, crm_stage_key: stageKey, crm_lead_stage: ct?.lead_stage || null, crm_call_key: callKey, crm_sync_hash: hash });
     await logEvent(r.id, 'atomic', 'lead', 'ok', `${r.duplicate ? 'linked to existing lead' : 'created'} from ${ext} (${label})`);
     if (r.duplicate && interested !== 'unknown') await engine.applyInterestChange(r.id, interested, label);
     if (action === 'proposal') await runAction(r.id, 'proposal', stageKey, engine);
@@ -180,7 +196,7 @@ export async function syncLead(co, ct, deal, { engine, twenty, budget, useCallLo
   }
 
   await twenty.applyCrmUpdate(lead, input, 'the CRM');
-  await update('leads', lead.id, { ...links, crm_sync_hash: hash, ...(lead.crm_removed_at ? { crm_removed_at: null } : {}) });
+  await update('leads', lead.id, { ...links, crm_created_at: born, crm_sync_hash: hash, ...(lead.crm_removed_at ? { crm_removed_at: null } : {}) });
   // A contact or deal added in the CRM later: attach the call script there and link the brochure row to it.
   if ((links.crm_contact_id && links.crm_contact_id !== lead.crm_contact_id) || (links.crm_deal_id && !lead.crm_deal_id)) {
     const { crmEvent } = await import('./crm-sync.js');
@@ -211,6 +227,14 @@ export async function syncLead(co, ct, deal, { engine, twenty, budget, useCallLo
     else await logEvent(lead.id, 'atomic', 'call_outcome', 'skipped', `unknown call result "${ct.last_outcome}"`);
   }
   return 'updated';
+}
+
+/** A duplicate found for a CRM record: link it to that record when it is not linked to another live one. */
+async function reattach(id, ext) {
+  const l = await get(`SELECT id, external_id, crm_removed_at FROM leads WHERE id = :id`, { id });
+  if (!l) return;
+  const free = !l.external_id || l.crm_removed_at || String(l.external_id).startsWith(`${ext}:old:`) || !String(l.external_id).startsWith('atomic:');
+  if (free) await update('leads', id, { external_id: ext, crm_removed_at: null });
 }
 
 /** Writes the call script for a new CRM lead and sends its pitch point + script note to the CRM. */
