@@ -58,6 +58,7 @@ export const DEFAULT_SETTINGS = {
     new_lead_action: 'script', // a new CRM lead (no deal): call script only; the brochure comes when it turns interested
     lead_stages: { interested: 'interested', not_interested: 'not_interested' }, // contacts.lead_stage (telecaller call stage) → action; new, queued, in_progress, recycled: nothing
     import_per_poll: 20, // new CRM leads imported per poll (big imports are spread out)
+    purge_removed_days: 7, // leads deleted in the CRM are deleted from AxiFlow this many days later (hidden at once; -1 = never)
     poll_seconds: 60,
     deal_means_consent: false, // true = an open deal counts as WhatsApp/email consent for the intro
     stages: { opportunity: 'interested', interested: 'interested', 'proposal-sent': 'proposal', 'send-proposal': 'proposal', 'in-negociation': 'ignore', won: 'won', lost: 'lost', delayed: 'nurture', 'not-interested': 'not_interested' },

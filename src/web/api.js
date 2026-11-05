@@ -339,7 +339,7 @@ api.post('/atomic/sync', async (_req, res) => res.json({ result: await atomic.po
 api.get('/atomic/leads', async (_req, res) => { try { res.json(await crmLeads()); } catch (e) { res.status(502).json({ error: e.message }); } });
 api.get('/atomic/leads/:key', async (req, res) => { try { res.json(await crmLead(req.params.key)); } catch (e) { res.status(/no longer|Unknown/.test(e.message) ? 404 : 502).json({ error: e.message }); } });
 
-api.post('/demo/seed', async (_req, res) => res.json(await seedDemo()));
+api.post('/demo/seed', (_req, res) => res.status(410).json({ error: 'Demo leads are off: leads come only from the team CRM' })); // owner 2026-11-05
 
 // ------------------------------------------------- AI Brochure / Proposal tools
 api.get('/tools/options', async (req, res) => {
@@ -349,7 +349,7 @@ api.get('/tools/options', async (req, res) => {
     verticals: VERTICALS, languages: LANGUAGES,
     packages: s.packages.map((p) => ({ id: p.id, name: p.name, price: p.price })),
     services: s.brochure.services.map((x) => ({ id: x.id, name: x.name })),
-    leads: await all(`SELECT id, company, contact_name, city FROM leads WHERE crm_removed_at IS NULL ORDER BY updated_at DESC LIMIT 200`),
+    leads: await all(`SELECT id, company, contact_name, city FROM leads WHERE crm_removed_at IS NULL AND external_id LIKE 'atomic:%' ORDER BY updated_at DESC LIMIT 500`), // CRM leads only
     templates: kind === 'script' ? [] : await templates.listTemplates(kind),
     ai: await aiStatus(),
   });

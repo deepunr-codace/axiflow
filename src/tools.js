@@ -131,6 +131,9 @@ export function defaultItems(input) {
 
 export async function createDoc(kind, raw, { wait = false } = {}) {
   if (!KINDS.includes(kind)) throw new Error('Unknown document type');
+  // Every document belongs to a lead from the CRM (owner, 2026-11-05: only CRM data is stored).
+  const crmLead = Number(raw?.lead_id) ? await get(`SELECT id FROM leads WHERE id = :id AND external_id LIKE 'atomic:%' AND crm_removed_at IS NULL`, { id: Number(raw.lead_id) }) : null;
+  if (!crmLead) throw new Error('Pick a lead from the CRM first');
   const s = getSettings();
   const input = cleanInput(raw);
   if (kind === 'script') {

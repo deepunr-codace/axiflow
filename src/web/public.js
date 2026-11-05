@@ -22,6 +22,8 @@ const leadByToken = async (t) => await get(`SELECT * FROM leads WHERE token = :t
 const notFound = (res) => res.status(404).send(messagePage(getSettings(), 'Link not found', 'This link is invalid or has expired.', false));
 
 // ------------------------------------------------- lead intake (API + public form)
+// Switched off (owner, 2026-11-05): leads come only from the team CRM.
+pub.all(['/api/intake', '/f'], (_req, res) => res.status(410).json({ error: 'Leads come from the team CRM. Add the lead there.' }));
 
 /** POST /api/intake  (header X-API-Key). For website forms, ad platforms, n8n/Zapier, the CRM, etc. */
 pub.post('/api/intake', limiter, async (req, res) => {

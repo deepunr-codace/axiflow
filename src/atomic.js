@@ -355,6 +355,12 @@ async function pollOnce({ force = false } = {}) {
     // Call logs: read before the leads so the contact's "latest outcome" is not counted a second time.
     let callLogs = null;
     if (s.call_logs !== false) callLogs = await readAll(`call_logs?select=*&id=gt.${Number(st.call_log_cursor) || 0}&order=id.asc`).catch(() => null);
+    // Only CRM data is kept (owner, 2026-11-05): leads deleted in the CRM go from the database after a short wait.
+    if (units.length && (s.purge_removed_days ?? 7) >= 0) {
+      const { purgeLeads, removedLeadIds } = await import('./purge.js');
+      const old = await removedLeadIds(s.purge_removed_days ?? 7);
+      if (old.length) { await purgeLeads(old); out.purged = old.length; }
+    }
     const budget = { left: s.import_per_poll || 20 };
     for (const u of units) {
       const ref = u.co ? `company #${u.co.id}` : `contact #${u.ct.id}`;

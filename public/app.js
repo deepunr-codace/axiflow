@@ -151,8 +151,8 @@ async function fillBell() {
 
 // ---------------------------------------------------------------- search palette
 const PAL_PAGES = [
-  ['#/today', 'home', 'Today'], ['#/plans', 'track_changes', 'Targets'], ['#/crm', 'contacts', 'Leads'], ['#/leads', 'view_kanban', 'Pipeline'], ['#/board', 'view_week', 'Pipeline board'],
-  ['#/customers', 'group', 'Customers'], ['#/inbox', 'chat', 'Messages'], ['#/brochure', 'menu_book', 'Brochures'], ['#/proposal', 'request_quote', 'Proposals'], ['#/script', 'record_voice_over', 'Pitch scripts'],
+  ['#/today', 'home', 'Today'], ['#/crm', 'contacts', 'Leads'], ['#/leads', 'view_kanban', 'Pipeline'], ['#/board', 'view_week', 'Pipeline board'],
+  ['#/brochure', 'menu_book', 'Brochures'], ['#/proposal', 'request_quote', 'Proposals'], ['#/script', 'record_voice_over', 'Pitch scripts'],
   ['#/designs', 'grid_view', 'Templates'], ['#/approvals', 'edit_note', 'Pitch approvals'], ['#/tasks', 'checklist', 'All tasks'], ['#/dashboard', 'monitoring', 'Reports'],
   ['#/automation', 'receipt_long', 'Automation log'], ['#/templates', 'mail', 'Message templates'], ['#/settings', 'settings', 'Settings'],
 ];
@@ -395,7 +395,8 @@ async function homeTools() {
 }
 
 async function renderManager() {
-  const [m, planCard, toolsHtml] = await Promise.all([api('/manager'), homePlanCard(), homeTools()]);
+  const [m, toolsHtml] = await Promise.all([api('/manager'), homeTools()]);
+  const planCard = ''; // Targets is hidden (AxiFlow = the tools on CRM data)
   const todo = m.approvals.length + m.drafts.length + m.hot.length + (m.proposals_check?.length || 0);
   const hour = new Date().getHours();
   view.innerHTML = `
@@ -987,12 +988,12 @@ async function renderSettings() {
     <tr><td>From the CRM to us (update)</td><td class="mono">PATCH ${esc(env.webhooks.crm_update)}<br>header X-API-Key</td></tr>
     <tr><td>From us to the CRM (sync)</td><td>${env.crm_webhook ? '<span class="ok">CRM_WEBHOOK_URL set</span>' : '<span class="bad">CRM_WEBHOOK_URL not set</span>'}</td></tr>
     <tr><td>AI</td><td>OpenRouter: ${env.ai.keys?.openrouter ? '<span class="ok">OPENROUTER_API_KEY set</span>' : '<span class="muted">not set</span>'} · Claude API: ${env.ai.keys?.anthropic ? '<span class="ok">ANTHROPIC_API_KEY set</span>' : '<span class="muted">not set</span>'}</td></tr></table>
-    <h3>Demo</h3><button class="btn sm" id="seedBtn">Load 8 demo leads</button></div>
+</div>
   </div>
   </details>
   <div class="row save-bar"><span class="spacer"></span><button class="btn primary" id="saveSettings">Save settings</button></div>`;
 
-  $('#seedBtn').onclick = (e) => busy(e.target, async () => { const r = await api('/demo/seed', { body: {} }); toast(`Created ${r.created} demo leads`); });
+
   // Team CRM card
   const ACTION_LABEL = { script: 'Call script only (new lead)', interested: 'Interested: pitch, script, brochure', proposal: 'Make the proposal', won: 'Won', lost: 'Lost', nurture: 'Undecided (nurture)', not_interested: 'Not interested (re-engage)', ignore: 'Do nothing' };
   const fillCrm = (st) => {
@@ -1063,7 +1064,7 @@ async function renderTool(kind, id) {
     <form class="card" id="toolForm">
       <h2>New ${TOOL[kind].noun}</h2>
       <label>Template<div class="row" style="margin-top:5px"><select name="template_id" class="grow">${opts.templates.map((t) => `<option value="${t.id}" data-mode="${t.mode}" ${t.id === chosen?.id ? 'selected' : ''}>${esc(t.name)}${t.is_default ? ' (default)' : ''}</option>`).join('')}</select><a class="btn sm" href="#/designs/${kind}">Templates</a></div></label>
-      <label style="margin-top:14px">Start from a lead (optional)<select id="fromLead"><option value="">Type the details below</option>${opts.leads.map((l) => `<option value="${l.id}">${esc(l.company)}${l.city ? ` · ${esc(l.city)}` : ''}</option>`).join('')}</select></label>
+      <label style="margin-top:14px">CRM lead *<select id="fromLead" required><option value="">${opts.leads.length ? 'Pick a lead from the CRM' : 'No CRM leads yet'}</option>${opts.leads.map((l) => `<option value="${l.id}">${esc(l.company)}${l.city ? ` · ${esc(l.city)}` : ''}</option>`).join('')}</select></label>
       <div class="form-grid" style="margin-top:14px">
         <label class="full">Business name *<input name="company" required maxlength="120"></label>
         <label>Contact person<input name="contact_name" maxlength="120"></label>

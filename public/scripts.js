@@ -20,7 +20,7 @@ export async function renderScripts(id) {
   <div class="grid g2">
     <form class="card" id="scriptForm">
       <h2>New script</h2>
-      <label>Start from a lead (optional)<select id="fromLead"><option value="">Type the details below</option>${opts.leads.map((l) => `<option value="${l.id}">${H.esc(l.company)}${l.city ? `, ${H.esc(l.city)}` : ''}</option>`).join('')}</select></label>
+      <label>CRM lead *<select id="fromLead" required><option value="">${opts.leads.length ? 'Pick a lead from the CRM' : 'No CRM leads yet'}</option>${opts.leads.map((l) => `<option value="${l.id}">${H.esc(l.company)}${l.city ? `, ${H.esc(l.city)}` : ''}</option>`).join('')}</select></label>
       <div class="form-grid" style="margin-top:14px">
         <label class="full">Business name *<input name="company" required maxlength="120"></label>
         <label>Contact person<input name="contact_name" maxlength="120"></label>
