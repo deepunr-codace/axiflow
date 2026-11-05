@@ -212,7 +212,7 @@ export const DEFAULT_SETTINGS = {
    * Claude mode (owner, 2026-11-05): the three tools write their documents with Claude Code on GitHub
    * (src/claude-worker.js, .github/workflows/claude-generate.yml). Switched with the Claude button in the sidebar.
    */
-  claude: { mode: false, github_repo: 'deepunr-codace/axiflow', timeout_minutes: 20, max_attempts: 3 },
+  claude: { mode: false, github_repo: 'deepunr-codace/axiflow', timeout_minutes: 20, max_attempts: 3, web_research: true },
   brochure_ai: {
     enabled: true,
     pipeline: 'staged',

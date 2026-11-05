@@ -230,21 +230,61 @@ export async function createDoc(kind, raw, { wait = false, auto = false } = {}) 
  * Claude mode: the same job the in-app AI would run (prompt, schema, lead data) goes to Claude Code on GitHub.
  * Returns false for documents Claude does not write (templates imported from a PDF stay in-app).
  */
+/**
+ * Everything known about the lead, for Claude: the CRM record read live (company, contacts and their call results,
+ * deals, notes and open tasks; AxiFlow's own notes left out) plus AxiFlow's research and website check.
+ * Owner, 2026-11-05: "same result in all generations … based on the leads data, build the brochure from scratch".
+ */
+async function leadDossier(doc) {
+  if (!doc.lead_id) return '';
+  const l = await get(`SELECT external_id, pitch_json, website, industry, city, notes FROM leads WHERE id = :id`, { id: doc.lead_id });
+  const out = [];
+  const m = /^atomic:(co|ct):(\d+)$/.exec(l?.external_id || '');
+  if (m) {
+    try {
+      const { crmLead } = await import('./crm-leads.js');
+      const c = await crmLead(`${m[1]}-${m[2]}`);
+      const co = c.company;
+      if (co) out.push(`Company in the CRM: ${co.name}${co.sector ? ` · sector: ${co.sector}` : ''}${co.size ? ` · size: ${co.size}` : ''}${co.address ? ` · address: ${co.address}` : ''}${co.website ? ` · website: ${co.website}` : ''}${co.linkedin_url ? ` · LinkedIn: ${co.linkedin_url}` : ''}${co.description ? `\nDescription: ${co.description}` : ''}`);
+      for (const ct of c.contacts || []) out.push(`Contact: ${ct.name}${ct.title ? ` (${ct.title})` : ''}${ct.lead_stage ? ` · call stage: ${ct.lead_stage}` : ''}${ct.last_outcome ? ` · last call: ${ct.last_outcome}` : ''}${ct.do_not_contact ? ' · do not contact' : ''}`);
+      for (const d of c.deals || []) out.push(`Deal: ${d.name || 'deal'} · stage: ${d.stage}${d.amount ? ` · amount: ${d.amount}` : ''}`);
+      const notes = (c.notes || []).filter((n) => n.text && !/AxiFlow|Call script from|Pitch point:/i.test(n.text)).slice(0, 8);
+      for (const n of notes) out.push(`Note from the team (${String(n.date || '').slice(0, 10)}${n.by ? `, ${n.by}` : ''}): ${String(n.text).slice(0, 500)}`);
+      for (const t of (c.tasks || []).filter((x) => !x.done_date).slice(0, 5)) out.push(`Open task: ${t.type ? `${t.type}: ` : ''}${String(t.text || '').slice(0, 200)}`);
+    } catch (e) { out.push(`(The CRM record could not be read: ${e.message})`); }
+  }
+  const r = (() => { try { return typeof l?.pitch_json === 'string' ? JSON.parse(l.pitch_json) : l?.pitch_json; } catch { return null; } })()?.research;
+  if (r) out.push(`Earlier research: ${JSON.stringify({ summary: r.business_summary, sells: r.what_they_sell, customers: r.target_customers, online: r.online_presence, pain_points: r.pain_points })}`);
+  if (l?.notes) out.push(`AxiFlow notes: ${String(l.notes).slice(0, 800)}`);
+  return out.join('\n').slice(0, 6000);
+}
+
 async function sendToClaude(doc, s) {
   const research = await researchFor(doc).catch(() => null);
+  const dossier = await leadDossier(doc).catch(() => '');
+  const input = { ...doc.input, notes: [doc.input.notes, dossier && `What the CRM and AxiFlow know about this lead:\n${dossier}`].filter(Boolean).join('\n\n') };
   let job, ctx = {};
   if (doc.kind === 'script') {
-    const audit = await auditWebsite(normalizeUrl(doc.input.website)).catch(() => null);
-    job = scriptJob(doc.input, research, audit);
+    const audit = await auditWebsite(normalizeUrl(input.website)).catch(() => null);
+    job = scriptJob(input, research, audit);
     ctx = { audit };
   } else {
     const tpl = await getTemplate(doc.template_id) || await defaultTemplate(doc.kind);
     if (!tpl || tpl.mode !== 'smart') return false;
-    if (doc.kind === 'proposal') job = proposalJob(doc.input, doc.items || [], research);
-    else if (deckOf(tpl)) { const brief = buildBrief(doc.input, { design: deckOf(tpl), research, settings: s }); job = deckJob(brief); ctx = { brief, design: deckOf(tpl) }; }
-    else job = brochureJob(doc.input, doc.input.services, research);
+    if (doc.kind === 'proposal') job = proposalJob(input, doc.items || [], research);
+    else {
+      // Brochures are built from scratch by Claude: concept, copy, palette, images and layout (the deck job).
+      // A Growth Deck / Editorial template fixes the design; with the classic template Claude chooses it.
+      const audit = await auditWebsite(normalizeUrl(input.website)).catch(() => null);
+      if (audit?.findings?.length) input.notes += `\n\nWebsite check: ${audit.findings.map((f) => f.text).join('; ')}`;
+      const design = deckOf(tpl) || '';
+      const brief = buildBrief(input, { design, research, settings: s });
+      job = deckJob(brief);
+      ctx = { brief, design };
+    }
   }
-  job.web = !!doc.input.research; // Claude Code may search the web itself when the form asked for research
+  // Claude Code researches the business itself (website, Google listing, social pages) unless switched off.
+  job.web = s.claude?.web_research !== false || !!doc.input.research;
   await dispatchJob(doc, job, ctx);
   return true;
 }

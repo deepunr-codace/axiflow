@@ -91,7 +91,7 @@ async function postProcess(doc, output) {
   if (kind === 'brochure') return { content: (await import('./ai/brochure.js')).postBrochure(output, doc.input, doc.input.services || []), source: 'claude' };
   if (kind === 'deck') {
     const r = (await import('./ai/brochure-deck.js')).postDeck(output, ctx.brief);
-    return { content: { deck: { design: ctx.design, data: r.data, concept: r.concept, issues: r.issues, removed: r.removed, engine: 'claude_code' } }, source: 'claude' };
+    return { content: { deck: { design: ctx.design || r.design, data: r.data, concept: r.concept, issues: r.issues, removed: r.removed, engine: 'claude_code' } }, source: 'claude' };
   }
   throw new Error(`unknown job kind ${kind}`);
 }
