@@ -137,6 +137,7 @@ pub.post('/webhooks/atomic', async (req, res) => {
   const given = req.get('x-webhook-secret') || (req.get('authorization') || '').replace(/^Bearer\s+/i, '') || req.query.key || '';
   if (!process.env.WEBHOOK_SECRET || !checkSecret(given, process.env.WEBHOOK_SECRET)) return res.status(401).json({ error: 'Invalid secret' });
   // A Supabase trigger in the CRM calls this on every change (see crm/axiflow-webhooks.sql).
+  (await import('../integrations.js')).seen('crm_webhook');
   background(async () => {
     await pollCrm({ force: true });
     await (await import('../crm-sync.js')).flushOutbox().catch(() => {});
@@ -153,6 +154,7 @@ pub.post('/webhooks/claude-result', async (req, res) => {
   if (!process.env.CLAUDE_WORKER_SECRET || !checkSecret(req.get('x-webhook-secret') || '', process.env.CLAUDE_WORKER_SECRET)) return res.status(401).json({ error: 'Invalid secret' });
   try {
     const r = await (await import('../claude-worker.js')).acceptResult(req.body || {});
+    (await import('../integrations.js')).seen('claude_result', `doc ${req.body?.doc_id}: ${r.error ? r.error : 'ready'} (${r.status})`);
     res.status(r.status).json(r.error ? { error: r.error } : { ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

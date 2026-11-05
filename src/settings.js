@@ -34,6 +34,7 @@ export const DEFAULT_SETTINGS = {
     auto_proposal_after_meeting: true,
     // Tools that run by themselves in the pipeline (designed documents from the default templates)
     auto_tools: { script: true, brochure: true, proposal: true },
+    auto_template: { brochure: 0, proposal: 0 }, // template id for automatic documents, 0 = the default (never "Claude designs")
     proposal_needs_ok: true, // an automatic proposal waits on Today until someone presses Send
     min_score: 25,
     daily_digest: true,

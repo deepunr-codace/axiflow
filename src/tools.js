@@ -22,7 +22,7 @@ import { claudeScriptJob, claudeProposalJob } from './ai/claude-jobs.js';
  * Built-in brochure layouts by template source: 'builtin-deck' = Codeace Growth Deck (classic design),
  * 'builtin-editorial' = Codeace Editorial (owner's template package, 2026-11-05), else the classic 12-page layout.
  */
-const DECK_DESIGNS = { 'builtin-deck': 'classic', 'builtin-editorial': 'editorial' };
+const DECK_DESIGNS = { 'builtin-deck': 'classic', 'builtin-editorial': 'editorial', 'builtin-claude': 'editorial' }; // "Claude designs" without Claude = Editorial
 const deckOf = (tpl) => DECK_DESIGNS[tpl?.source] || null;
 const drawDeck = (design, data) => (design === 'editorial' ? editorialDesign(data) : classicDesign(data));
 const brochureLayout = (tpl, content, s, company) => {
@@ -171,6 +171,20 @@ export function defaultItems(input) {
   });
 }
 
+/**
+ * The template for documents the automation makes (owner, 2026-11-05: "let auto creation use template and manual show
+ * options"): Tool settings → automation.auto_template.<kind> (a template id, 0 = the default). "Claude designs (no
+ * template)" is only for documents made by hand, so the automation then falls back to the first real template.
+ */
+export async function autoTemplate(kind) {
+  const isReal = (t) => t && t.kind === kind && t.source !== 'builtin-claude';
+  const pick = Number(getSettings().automation?.auto_template?.[kind]) || 0;
+  const chosen = pick ? await getTemplate(pick) : await defaultTemplate(kind);
+  if (isReal(chosen)) return chosen;
+  const row = await get(`SELECT id FROM design_templates WHERE kind = :kind AND COALESCE(source, '') <> 'builtin-claude' ORDER BY is_default DESC, (COALESCE(source, '') = 'builtin-editorial') DESC, id LIMIT 1`, { kind });
+  return row ? getTemplate(row.id) : null;
+}
+
 export async function createDoc(kind, raw, { wait = false, auto = false } = {}) {
   if (!KINDS.includes(kind)) throw new Error('Unknown document type');
   // Every document belongs to a lead from the CRM (owner, 2026-11-05: only CRM data is stored).
@@ -187,7 +201,7 @@ export async function createDoc(kind, raw, { wait = false, auto = false } = {}) 
     await generate(id, { wait });
     return id;
   }
-  const tpl = (raw.template_id && await getTemplate(Number(raw.template_id))) || await defaultTemplate(kind);
+  const tpl = auto ? await autoTemplate(kind) : (raw.template_id && await getTemplate(Number(raw.template_id))) || await defaultTemplate(kind);
   if (!tpl || tpl.kind !== kind) throw new Error('Template not found');
   if (kind === 'brochure') {
     const ids = s.brochure.services.map((x) => x.id);

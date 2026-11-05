@@ -13,7 +13,23 @@ The team's main CRM is **Twenty**, set up by a co-worker and run by the **teleca
 
 Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATABASE_URL` and `pg`; embedded PGlite in `data/pg` when `DATABASE_URL` is empty), Vercel Blob for uploads (`data/uploads` locally), nodemailer, `@anthropic-ai/sdk` (Claude, `claude-opus-5-5`), and a vanilla-JS admin SPA in `public/`. There is no build step. Code map: see README. The old SQLite file `data/crm.db` is kept only as a backup/migration source.
 
-## Status (2026-11-05, latest): editable headings and stickers; "Claude designs (no template)"
+## Status (2026-11-05, latest): automatic = template, by hand = choice; Integrations page
+- **Automatic vs by hand** (owner: "let auto creation use template and manual show options"):
+  - `tools.autoTemplate(kind)`: documents made by the automation (`createDoc(..., { auto: true })`) use `automation.auto_template.<kind>` (a template id; 0 = the default). They never use "Claude designs"; if that is the default, the first real template is taken (Editorial first).
+  - The New form (`renderTool`) offers two choices: "Use a template" (picker without the Claude template) or "Claude designs it". The second is disabled without Claude mode; `/api/tools/options` returns `claude_mode`.
+  - "Claude designs" without Claude falls back to the Editorial layout (`DECK_DESIGNS['builtin-claude']`).
+- **Integrations** (owner: "provide detailed integration settings in sidebar and settings"): `#/integrations` (rail icon `hub` with an amber dot when something is wrong, panel Options, account menu), `renderIntegrations` in app.js, styles `.int-*` and `.how-*`.
+  - API: `GET /api/integrations` (`src/integrations.js` `integrationsStatus`; secrets reported only as set or not set) and `POST /api/integrations/test/crm|github` (a CRM read; the repo, its visibility, the workflow file and the token's push right).
+  - Last seen (state `integrations` via `seen()`): `crm_webhook` (/webhooks/atomic), `claude_result` (callback, with doc and outcome), `cron_tick`.
+  - Cards:
+    - Claude Code: missing setup, env keys, the repo secrets list, callback URL, settings, and the last 8 jobs with GitHub run links;
+    - templates for automatic documents;
+    - Team CRM: test, read now, all `atomic.*` options incl. buckets, tables and status values;
+    - live sync: webhook URL, last change, SQL steps;
+    - scheduler; files and database; editor AI; email and WhatsApp; login.
+  - Tool settings' Claude card links to it. Checked in headless Edge (local server, no console errors).
+
+## Status (2026-11-05): editable headings and stickers; "Claude designs (no template)"
 - **Editing fix** (owner: "some texts or items editing not working properly"):
   - highlighted headings are now one text box: the words in the highlight colour are marked with `**…**` and the element has `hl` (colour);
   - stickers are one text box with `arc` (radius), drawn around the circle;

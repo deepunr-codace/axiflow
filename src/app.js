@@ -51,6 +51,7 @@ app.get('/api/cron/tick', async (req, res) => {
   const secret = process.env.CRON_SECRET;
   const given = (req.get('authorization') || '').replace(/^Bearer\s+/i, '') || req.query.key || '';
   if (!secret || !safeEqual(given, secret)) return res.status(401).json({ error: 'Unauthorized' });
+  (await import('./integrations.js')).seen('cron_tick');
   res.json(await cronTick());
 });
 

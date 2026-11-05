@@ -39,6 +39,7 @@
         <a class="rail-btn" href="#/designs" data-nav="designs" data-tip="Templates" aria-label="Templates"><span class="mi">grid_view</span></a>
         <div class="p-grow"></div>
         <button class="rail-btn claude-btn" id="claudeBtn" data-tip="Claude mode: off" aria-label="Claude mode" aria-pressed="false"><svg class="claude-mark" viewBox="0 0 24 24" aria-hidden="true"><g stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M12 2.6v6"/><path d="M12 15.4v6"/><path d="M2.6 12h6"/><path d="M15.4 12h6"/><path d="M5.4 5.4l4.1 4.1"/><path d="M14.5 14.5l4.1 4.1"/><path d="M18.6 5.4l-4.1 4.1"/><path d="M9.5 14.5l-4.1 4.1"/><path d="M8.3 3.4l1.6 4.2" stroke-width="1.7"/><path d="M14.1 16.4l1.6 4.2" stroke-width="1.7"/><path d="M20.6 8.3l-4.2 1.6" stroke-width="1.7"/><path d="M7.6 14.1l-4.2 1.6" stroke-width="1.7"/></g></svg></button>
+        <a class="rail-btn" href="#/integrations" data-nav="integrations" data-tip="Integrations" aria-label="Integrations"><span class="mi">hub</span><i class="rail-dot" id="intDot" hidden></i></a>
         <a class="rail-btn" href="#/settings" data-nav="settings" data-tip="Settings" aria-label="Settings"><span class="mi">settings</span></a>
         <div class="rail-av" id="whoAv">A</div>
       </div>
@@ -58,6 +59,7 @@
         <div class="p-group">
           <div class="p-item"><a href="#/designs" data-nav="designs"><span class="mi">grid_view</span><span class="grow">Templates</span></a></div>
           <div class="p-item"><a href="#/settings" data-nav="settings"><span class="mi">tune</span><span class="grow">Tool settings</span></a></div>
+          <div class="p-item"><a href="#/integrations" data-nav="integrations"><span class="mi">hub</span><span class="grow">Integrations</span><span class="count" id="cntInt"></span></a></div>
         </div>
         <div class="p-group">
           <div class="p-item"><button class="claude-row" id="claudeRow" aria-pressed="false"><svg class="claude-mark" viewBox="0 0 24 24" aria-hidden="true"><g stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M12 2.6v6"/><path d="M12 15.4v6"/><path d="M2.6 12h6"/><path d="M15.4 12h6"/><path d="M5.4 5.4l4.1 4.1"/><path d="M14.5 14.5l4.1 4.1"/><path d="M18.6 5.4l-4.1 4.1"/><path d="M9.5 14.5l-4.1 4.1"/><path d="M8.3 3.4l1.6 4.2" stroke-width="1.7"/><path d="M14.1 16.4l1.6 4.2" stroke-width="1.7"/><path d="M20.6 8.3l-4.2 1.6" stroke-width="1.7"/><path d="M7.6 14.1l-4.2 1.6" stroke-width="1.7"/></g></svg><span class="grow">Claude mode</span><span class="claude-pill" id="claudePill">Off</span></button></div>
@@ -85,6 +87,7 @@
               <div class="pop" id="avPop">
                 <div class="pop-h"><b id="avName">Codeace</b><small>Admin</small></div>
                 <a href="#/settings"><span class="mi">tune</span><span class="grow">Tool settings</span></a>
+                <a href="#/integrations"><span class="mi">hub</span><span class="grow">Integrations</span></a>
                 <button class="pi" data-act="theme"><span class="mi" id="avThemeIcon">light_mode</span><span class="grow" id="avThemeLabel">Light mode</span></button>
                 <button class="pi" data-act="search"><span class="mi">search</span><span class="grow">Search</span><kbd>Ctrl K</kbd></button>
                 <hr>

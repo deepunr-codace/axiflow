@@ -340,6 +340,10 @@ api.put('/settings', async (req, res) => {
   res.json(await saveSettings(req.body || {}));
 });
 
+// Integrations page: every connection's status (secrets only as set / not set) and live tests
+api.get('/integrations', async (_req, res) => res.json(await (await import('../integrations.js')).integrationsStatus()));
+api.post('/integrations/test/:name', async (req, res) => res.json(await (await import('../integrations.js')).testIntegration(req.params.name)));
+
 // Team CRM (Atomic CRM): status and a read right now
 api.get('/atomic', async (_req, res) => res.json(await atomic.atomicStatus()));
 api.post('/atomic/sync', async (_req, res) => res.json({ result: await atomic.pollCrm({ force: true }), status: await atomic.atomicStatus() }));
@@ -359,6 +363,7 @@ api.get('/tools/options', async (req, res) => {
     leads: await all(`SELECT id, company, contact_name, city FROM leads WHERE crm_removed_at IS NULL AND external_id LIKE 'atomic:%' ORDER BY updated_at DESC LIMIT 500`), // CRM leads only
     templates: kind === 'script' ? [] : await templates.listTemplates(kind),
     ai: await aiStatus(),
+    claude_mode: (await import('../claude-worker.js')).claudeOn(s) || (!!s.claude?.mode && /^https:/.test(process.env.BASE_URL || '')),
   });
 });
 api.get('/tools/prefill/:leadId', async (req, res) => res.json(await tools.leadPrefill(Number(req.params.leadId)) || {}));
