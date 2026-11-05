@@ -236,48 +236,78 @@ export async function createDoc(kind, raw, { wait = false, auto = false } = {}) 
  * deals, notes and open tasks; AxiFlow's own notes left out) plus AxiFlow's research and website check.
  * Owner, 2026-11-05: "same result in all generations … based on the leads data, build the brochure from scratch".
  */
+// AxiFlow's own notes in the CRM (script note, brochure / proposal notes): not the team's notes.
+const OWN_NOTE = /AxiFlow|Call script from|Pitch point:|^Brochure ready for|^Proposal ready for|^Proposal sent|from the link below/i;
+/** Stored research that belongs to this lead: not the no-AI fallback, and about this business (CRM ids get reused). */
+export function usableResearch(r, company) {
+  if (!r || r.source === 'fallback') return null;
+  const words = String(company || '').toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) || [];
+  const text = JSON.stringify([r.business_summary, r.what_they_sell, r.location_and_reach]).toLowerCase();
+  return !words.length || words.some((w) => text.includes(w)) ? r : null;
+}
+/** Returns { text, crm } where crm is the live CRM record (null when it could not be read). */
 async function leadDossier(doc) {
-  if (!doc.lead_id) return '';
-  const l = await get(`SELECT external_id, pitch_json, website, industry, city, notes FROM leads WHERE id = :id`, { id: doc.lead_id });
+  if (!doc.lead_id) return { text: '', crm: null };
+  const l = await get(`SELECT external_id, pitch_json, website, industry, city, notes, company FROM leads WHERE id = :id`, { id: doc.lead_id });
   const out = [];
+  let crm = null;
   const m = /^atomic:(co|ct):(\d+)$/.exec(l?.external_id || '');
   if (m) {
     try {
       const { crmLead } = await import('./crm-leads.js');
       const c = await crmLead(`${m[1]}-${m[2]}`);
+      crm = c;
       const co = c.company;
       if (co) out.push(`Company in the CRM: ${co.name}${co.sector ? ` · sector: ${co.sector}` : ''}${co.size ? ` · size: ${co.size}` : ''}${co.address ? ` · address: ${co.address}` : ''}${co.website ? ` · website: ${co.website}` : ''}${co.linkedin_url ? ` · LinkedIn: ${co.linkedin_url}` : ''}${co.description ? `\nDescription: ${co.description}` : ''}`);
       for (const ct of c.contacts || []) out.push(`Contact: ${ct.name}${ct.title ? ` (${ct.title})` : ''}${ct.lead_stage ? ` · call stage: ${ct.lead_stage}` : ''}${ct.last_outcome ? ` · last call: ${ct.last_outcome}` : ''}${ct.do_not_contact ? ' · do not contact' : ''}`);
       for (const d of c.deals || []) out.push(`Deal: ${d.name || 'deal'} · stage: ${d.stage}${d.amount ? ` · amount: ${d.amount}` : ''}`);
-      const notes = (c.notes || []).filter((n) => n.text && !/AxiFlow|Call script from|Pitch point:/i.test(n.text)).slice(0, 8);
+      const seen = new Set();
+      const notes = (c.notes || []).filter((n) => {
+        const t = String(n.text || '').trim();
+        if (t.length < 4 || OWN_NOTE.test(t) || seen.has(t)) return false; // skip empty test notes ("h")
+        seen.add(t);
+        return true;
+      }).slice(0, 8);
       for (const n of notes) out.push(`Note from the team (${String(n.date || '').slice(0, 10)}${n.by ? `, ${n.by}` : ''}): ${String(n.text).slice(0, 500)}`);
       for (const t of (c.tasks || []).filter((x) => !x.done_date).slice(0, 5)) out.push(`Open task: ${t.type ? `${t.type}: ` : ''}${String(t.text || '').slice(0, 200)}`);
+      if (!notes.length) out.push('The team has written no notes on this lead yet.');
     } catch (e) { out.push(`(The CRM record could not be read: ${e.message})`); }
   }
-  const r = (() => { try { return typeof l?.pitch_json === 'string' ? JSON.parse(l.pitch_json) : l?.pitch_json; } catch { return null; } })()?.research;
+  const r = usableResearch((() => { try { return typeof l?.pitch_json === 'string' ? JSON.parse(l.pitch_json) : l?.pitch_json; } catch { return null; } })()?.research, crm?.company?.name || l?.company);
   if (r) out.push(`Earlier research: ${JSON.stringify({ summary: r.business_summary, sells: r.what_they_sell, customers: r.target_customers, online: r.online_presence, pain_points: r.pain_points })}`);
   if (l?.notes) out.push(`AxiFlow notes: ${String(l.notes).slice(0, 800)}`);
-  return out.join('\n').slice(0, 6000);
+  return { text: out.join('\n').slice(0, 6000), crm };
 }
 
 async function sendToClaude(doc, s) {
-  const research = await researchFor(doc).catch(() => null);
-  const dossier = await leadDossier(doc).catch(() => '');
-  const input = { ...doc.input, notes: [doc.input.notes, dossier && `What the CRM and AxiFlow know about this lead:\n${dossier}`].filter(Boolean).join('\n\n') };
+  const built = await buildClaudeJob(doc, s);
+  if (!built) return false;
+  await dispatchJob(doc, built.job, built.ctx);
+  return true;
+}
+
+/** The exact job Claude Code gets for a document (also used to show the prompt without sending it). */
+export async function buildClaudeJob(doc, s = getSettings()) {
+  const { text: dossier, crm } = await leadDossier(doc).catch(() => ({ text: '', crm: null }));
+  // The CRM is the source of truth: its website (even when empty) wins over AxiFlow's older copy of the lead
+  // (found 2026-11-05: lead 10 kept "amazon.com" and another business's research after a CRM id was reused).
+  const base = crm?.company ? { ...doc.input, website: crm.company.website || '' } : doc.input;
+  const research = usableResearch(await researchFor({ ...doc, input: base }).catch(() => null), crm?.company?.name || doc.input.company);
+  const input = { ...base, notes: [base.notes, dossier && `What the CRM and AxiFlow know about this lead:\n${dossier}`].filter(Boolean).join('\n\n') };
   let job, ctx = {};
   if (doc.kind === 'script') {
     // Built from scratch by Claude around the lead (research first, CRM call history, one angle).
-    const audit = await auditWebsite(normalizeUrl(doc.input.website)).catch(() => null);
-    job = claudeScriptJob(doc.input, research, audit, dossier);
+    const audit = base.website ? await auditWebsite(normalizeUrl(base.website)).catch(() => null) : null;
+    job = claudeScriptJob(base, research, audit, dossier);
     ctx = { audit };
   } else {
     const tpl = await getTemplate(doc.template_id) || await defaultTemplate(doc.kind);
-    if (!tpl || tpl.mode !== 'smart') return false;
-    if (doc.kind === 'proposal') job = claudeProposalJob(doc.input, doc.items || [], research, dossier); // their own site structure; prices stay ours
+    if (!tpl || tpl.mode !== 'smart') return null;
+    if (doc.kind === 'proposal') job = claudeProposalJob(base, doc.items || [], research, dossier); // their own site structure; prices stay ours
     else {
       // Brochures are built from scratch by Claude: concept, copy, palette, images and layout (the deck job).
       // A Growth Deck / Editorial template fixes the design; with the classic template Claude chooses it.
-      const audit = await auditWebsite(normalizeUrl(input.website)).catch(() => null);
+      const audit = input.website ? await auditWebsite(normalizeUrl(input.website)).catch(() => null) : null;
       if (audit?.findings?.length) input.notes += `\n\nWebsite check: ${audit.findings.map((f) => f.text).join('; ')}`;
       const design = deckOf(tpl) || '';
       const brief = buildBrief(input, { design, research, settings: s });
@@ -287,8 +317,7 @@ async function sendToClaude(doc, s) {
   }
   // Claude Code researches the business itself (website, Google listing, social pages) unless switched off.
   job.web = s.claude?.web_research !== false || !!doc.input.research;
-  await dispatchJob(doc, job, ctx);
-  return true;
+  return { job, ctx };
 }
 
 /** True while a document is with Claude Code (Claude mode). */
