@@ -12,3 +12,6 @@ Thumbs.db
 .vercel
 
 claude-worker/work/
+
+# filled copies of the CRM trigger SQL (contain WEBHOOK_SECRET)
+crm/*.READY.sql
