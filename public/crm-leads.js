@@ -37,7 +37,6 @@ function keepFresh(hashPrefix, fn) {
 const FILTERS = [
   ['all', 'All', () => true],
   ['open', 'Open deal', (l) => l.deal && !l.deal.closed],
-  ['nodeal', 'No deal yet', (l) => !l.deal],
   ['hot', 'Hot', (l) => l.contact?.status === 'hot'],
   ['closed', 'Won or lost', (l) => l.deal?.closed],
 ];
@@ -52,7 +51,7 @@ export async function renderCrmLeads(key) {
     return;
   }
   H.view.innerHTML = `
-  <div class="hello"><h2>Leads</h2><p>Every lead in the team CRM, as the telecaller sees it. Add, edit and call leads in the CRM; this list follows it.</p></div>
+  <div class="hello"><h2>Leads</h2><p>Every lead in the team CRM (a company with a deal), as the telecaller sees it. Add, edit and call leads in the CRM; this list follows it.</p></div>
   <div class="toolbar"><div class="seg" id="crmSeg"></div><span class="spacer"></span>
     <input id="crmQ" placeholder="Search name, phone, city" value="${H.esc(sessionStorage.getItem('crmQ') || '')}" style="min-width:220px">
     <button class="btn sm icon-only" id="crmReload" title="Refresh now" aria-label="Refresh now">${I('refresh')}</button></div>
@@ -72,7 +71,7 @@ export async function renderCrmLeads(key) {
       ${l.contact?.last_outcome ? `<span class="small muted" title="Last call result">${I('call')} ${H.esc(words(l.contact.last_outcome))}</span>` : ''}
       ${heatTag(l.contact?.status)}${dealTag(l.deal)}
       ${l.axiflow ? `<span title="Being worked on in AxiFlow">${H.simplePill(l.axiflow.stage)}</span>` : ''}</a>`).join('')
-      : `<div class="card empty">${data.leads.length ? 'No leads match.' : 'The CRM has no leads yet. Leads the telecaller adds there show up here.'}</div>`;
+      : `<div class="card empty">${data.leads.length ? 'No leads match.' : 'The CRM has no leads yet. A company shows up here once it has a deal in the CRM.'}</div>`;
     H.groupItems?.(H.view);
   };
   H.$('#crmQ').oninput = draw;

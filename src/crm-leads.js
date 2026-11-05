@@ -1,5 +1,6 @@
 import { all } from './db.js';
 import { nowISO } from './util.js';
+import { getSettings } from './settings.js';
 import { rest, inList, firstOf, atomicKeys, crmHost, readOnly } from './atomic.js';
 
 /*
@@ -89,8 +90,10 @@ export async function crmLeads() {
       axiflow: linked.get(co ? `co-${co.id}` : `ct-${main.id}`) || null,
     };
   };
-  const leads = companies.map((co) => row(co, byCo.get(co.id) || []));
+  let leads = companies.map((co) => row(co, byCo.get(co.id) || []));
   for (const [k, cts] of byCo) if (typeof k === 'string') leads.push(row(null, cts));
+  // Same rule as the sync: a lead is a CRM company with a deal (atomic.lead_rule).
+  if ((getSettings().atomic?.lead_rule || 'deal') === 'deal') leads = leads.filter((l) => l.deal && !l.deal.archived);
   return { connected: true, read_only: readOnly(), host: crmHost(), at: nowISO(), leads };
 }
 

@@ -333,10 +333,12 @@ async function pollOnce({ force = false } = {}) {
       if (!byCo.has(c.company_id)) byCo.set(c.company_id, []);
       byCo.get(c.company_id).push(c);
     }
-    const units = [
+    let units = [
       ...companies.map((co) => ({ co, ct: mainContact(byCo.get(co.id) || []), deals: deals.filter((d) => d.company_id === co.id) })),
       ...loose.map((ct) => ({ co: null, ct, deals: deals.filter((d) => d.company_id == null && (d.contact_ids || []).includes(ct.id)) })),
     ];
+    // A lead is a CRM company with a deal (owner, 2026-11-05; archived deals do not count). Others are not leads yet.
+    if ((s.lead_rule || 'deal') === 'deal') units = units.filter((u) => u.deals.some((d) => !d.archived_at));
     out.leads = units.length;
     // Leads deleted in the CRM: stop writing for them and take open ones out of the pipeline.
     if (units.length) {
@@ -344,7 +346,7 @@ async function pollOnce({ force = false } = {}) {
       for (const l of await all(`SELECT * FROM leads WHERE external_id LIKE 'atomic:%' AND crm_removed_at IS NULL`)) {
         if (keys.has(l.external_id) || !/^atomic:(co|ct):\d+$/.test(l.external_id)) continue;
         await update('leads', l.id, { crm_removed_at: nowISO() });
-        await logEvent(l.id, 'atomic', 'lead', 'ok', `${l.external_id} is no longer in the CRM (deleted there)`);
+        await logEvent(l.id, 'atomic', 'lead', 'ok', `${l.external_id} is no longer a lead in the CRM (deleted, or it has no deal)`);
         if (!TERMINAL.has(l.stage) && !['won', 'onboarding', 'in_development', 'delivered'].includes(l.stage)) {
           await engine.setStage(l, 'lost', 'removed from the CRM', { lost_reason: 'deleted in the CRM', next_action_at: null, next_action_type: null });
         } else await addActivity(l.id, 'system', 'This lead was deleted in the CRM; AxiFlow no longer writes to the CRM for it');
