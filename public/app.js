@@ -73,7 +73,7 @@ function modal(title, body, actions = '') {
 }
 
 setupPlans({ $, $$, api, esc, money, toast, busy, modal, get view() { return view; } });
-setupScripts({ $, $, api, esc, toast, busy, modal, docList: (...a) => docList(...a), get view() { return view; } });
+setupScripts({ $, $$, api, esc, toast, busy, modal, docList: (...a) => docList(...a), get view() { return view; } });
 setupCrmLeads({ $, $$, api, esc, toast, busy, fmtDate, fmtDay, money, simplePill, groupItems: (el) => groupItems(el), get view() { return view; } });
 
 function formData(form) {
