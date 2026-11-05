@@ -3,6 +3,7 @@ import PDFDocument from 'pdfkit';
 import { registerFonts, toBuffer, clean } from '../pdf/brand.js';
 import { ICONS } from './icons.js';
 import { srcPath, loadImage } from './model.js';
+import { EXTRA_FONTS } from './fonts.js';
 
 /*
  * Renders a design to PDF. Text metrics follow CSS so the PDF matches the editor:
@@ -13,7 +14,20 @@ const CONTENT = 1.4, PDFKIT_LH = 1.5; // Poppins (the pricing table)
 // Per font code: [content area, pdfkit line height] in em (from pdfkit's own font metrics, hhea).
 const METRICS = { UM: [1.24, 1.24], US: [1.24, 1.24], HR: [1.303, 1.303], HM: [1.303, 1.303], HS: [1.303, 1.303],
   LR: [1.28, 1.28], LM: [1.28, 1.28], LS: [1.28, 1.28], IR: [1.21, 1.21], IM: [1.21, 1.21], IS: [1.21, 1.21] };
-const fm = (font) => METRICS[font] || [CONTENT, PDFKIT_LH];
+// The classic typefaces (src/design/fonts.js): measured once from the font file (hhea ascent − descent, + line gap).
+let mdoc = null;
+function measuredMetrics(font) {
+  try {
+    mdoc ??= scratchDoc();
+    mdoc.font(font);
+    const f = mdoc._font;
+    const content = (f.ascender - f.descender) / 1000;
+    return (METRICS[font] = [content, content + (f.lineGap || 0) / 1000]);
+  } catch { return (METRICS[font] = [CONTENT, PDFKIT_LH]); }
+}
+const fm = (font) => METRICS[font] || (EXTRA_FONTS[font] ? measuredMetrics(font) : [CONTENT, PDFKIT_LH]);
+/** CSS line-height "normal" (content area) of a font code, in em. */
+export const fontNormal = (font) => fm(font)[0];
 
 export const textOpts = (e) => ({ width: e.w, align: e.align, lineGap: (e.lh - fm(e.font)[1]) * e.size, characterSpacing: e.ls });
 /*

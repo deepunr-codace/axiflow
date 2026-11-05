@@ -1,5 +1,6 @@
 import { W, H, WHITE, NORMAL, mix, T, R, I, ICON, page, pad2, stack, block, Builder } from './deck-kit.js';
 import { resolveTheme, normalizeData, serviceVisual, serviceSlideTitle, contentToData, LOGO } from './brochure-data.js';
+import { withFonts } from './fonts.js';
 
 /*
  * "Codeace Editorial": the editorial design from the owner's template package (Downloads/files (1),
@@ -38,7 +39,7 @@ class EditorialBuilder extends Builder {
   statValue({ value, x, y, size, ls, color, w }) {
     const v = String(value);
     if (!v.startsWith('₹')) return [T({ text: v, x, y, w, h: Math.ceil(size), font: 'LM', size, lh: 1, ls, color })];
-    const r = T({ text: '₹', font: 'IM', size: size * 0.86, lh: 1, color });
+    const r = Object.assign(T({ text: '₹', size: size * 0.86, lh: 1, color }), { font: 'IM' }); // Inter has the rupee sign; not swapped by a font pairing
     const rw = this.width(r, '₹');
     return [Object.assign(r, { x, y: y + size * 0.08, w: Math.ceil(rw) + 6, h: Math.ceil(size) }), T({ text: v.slice(1), x: x + rw + size * 0.04, y, w: w - rw, h: Math.ceil(size), font: 'LM', size, lh: 1, ls, color })];
   }
@@ -49,7 +50,11 @@ const stickerText = (a, b) => `${clip(a)}  ✦  ${clip(b)}  ✦  `;
 const logoOf = (d) => d.brand.logo || { src: LOGO.src };
 
 /** BrochureData → editable pages (editorial design). */
+/** theme.fonts = a font pairing id (src/design/fonts.js); without one the deck keeps Lora + Inter. */
 export function editorialDesign(input) {
+  return withFonts(input?.theme?.fonts, () => buildEditorial(input));
+}
+function buildEditorial(input) {
   const d = normalizeData(input);
   const b = new EditorialBuilder();
   const t = resolveTheme('editorial', d.theme), tone = tones(t);

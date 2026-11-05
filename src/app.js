@@ -31,6 +31,11 @@ app.use((_req, res, next) => {
   next();
 });
 app.get('/health', (_req, res) => res.json({ ok: true }));
+// @font-face for the classic typefaces (src/design/fonts.js); the template fonts are in styles.css
+app.get('/fonts.css', async (_req, res) => {
+  const { EXTRA_FONTS } = await import('./design/fonts.js');
+  res.type('text/css').set('cache-control', 'public, max-age=86400').send(Object.values(EXTRA_FONTS).map((f) => `@font-face { font-family: "${f.family}"; font-weight: ${f.weight}; src: url(/fonts/${f.file}) format('truetype'); font-display: block; }`).join('\n'));
+});
 app.use('/fonts', express.static(path.join(ROOT, 'assets', 'fonts'), { maxAge: '7d' }));
 app.use(express.static(path.join(ROOT, 'public')));
 

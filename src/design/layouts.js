@@ -1,6 +1,7 @@
 import { newId } from './model.js';
 import { measureText, scratchDoc, pricingRows, PRICING } from './render-pdf.js';
 import { poss } from '../pdf/brand.js';
+import { withFonts, mapText, resolvePairing } from './fonts.js';
 
 /*
  * Built-in "Codeace Default" templates: turn structured copy (written by the AI or the
@@ -8,7 +9,7 @@ import { poss } from '../pdf/brand.js';
  */
 const BLUE = '#2d4bd8', WHITE = '#ffffff', INK = '#141413', GREY = '#4b4f5c', RULE = '#d7dcf3';
 
-const T = (o) => ({ id: newId(), type: 'text', font: 'PR', color: WHITE, align: 'left', lh: 1.4, ls: 0, list: '', gap: 8, h: 40, opacity: 1, ...o });
+const T = (o) => mapText({ id: newId(), type: 'text', font: 'PR', color: WHITE, align: 'left', lh: 1.4, ls: 0, list: '', gap: 8, h: 40, opacity: 1, ...o });
 const R = (o) => ({ id: newId(), type: 'shape', shape: 'rect', fill: WHITE, stroke: 'none', sw: 1, radius: 0, gradient: null, opacity: 1, ...o });
 const I = (o) => ({ id: newId(), type: 'image', fit: 'cover', radius: 0, opacity: 1, ...o });
 const ICON = (o) => ({ id: newId(), type: 'icon', color: WHITE, opacity: 1, ...o });
@@ -25,7 +26,11 @@ const body = (doc, paras, x, y, w, size = 21) => fit(doc, T({ text: (paras || []
 const bullets = (doc, items, x, y, w, size = 21) => fit(doc, T({ text: (items || []).filter(Boolean).join('\n'), x, y, w, size, lh: 1.42, list: 'icon', gap: Math.round(size * 0.95) }));
 const arrow = (x, y) => ICON({ name: 'arrow-circle', x, y, w: 60, h: 60 });
 
-export function brochureDesign(content, settings, { cover = '' } = {}) {
+/** Fonts: Tool settings → fonts.brochure (a pairing, "auto" = content.font_pairing, "template" = Poppins). */
+export function brochureDesign(content, settings, opts = {}) {
+  return withFonts(resolvePairing(settings.fonts?.brochure, content?.font_pairing), () => buildBrochure(content, settings, opts));
+}
+function buildBrochure(content, settings, { cover = '' } = {}) {
   const doc = scratchDoc();
   const a = settings.agency;
   const pages = [];
@@ -167,7 +172,11 @@ class Flow {
   gap(h) { this.endList(0); this.y += h; }
 }
 
-export function proposalDesign(content, items, settings, { preparedFor }) {
+/** Fonts: Tool settings → fonts.proposal (a pairing, "auto" = the one Claude chose in content.font_pairing, "template" = Poppins). */
+export function proposalDesign(content, items, settings, opts) {
+  return withFonts(resolvePairing(settings.fonts?.proposal, content?.font_pairing), () => buildProposal(content, items, settings, opts));
+}
+function buildProposal(content, items, settings, { preparedFor }) {
   const doc = scratchDoc();
   const a = settings.agency, p = settings.proposal;
   const brand = (a.name || '').split(' ')[0] || a.name;

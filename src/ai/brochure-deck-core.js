@@ -1,4 +1,5 @@
 import { LIMITS, CLOSING_BG, LOGO, validateData, normalizeData } from '../design/brochure-data.js';
+import { PAIRING_IDS, pairingGuide } from '../design/fonts.js';
 
 /*
  * The dependency-free part of the deck AI (no settings, database or network): prompt layers, JSON schemas,
@@ -55,7 +56,8 @@ export function craftLayer() {
 
 export function artDirectionLayer() {
   return section('art_direction', `- design: "editorial" (serif, colour fields, capsule frames — beauty, hospitality, health, professional services, premium brands) or "classic" (bold geometric type, high energy — tech, retail, fitness, youth brands). If the brief sets a design, use it.
-- theme: four 6-digit hex colours.
+- theme: four 6-digit hex colours, and theme.fonts = one font pairing id. Typography: choose the font pairing that fits this business's world and the concept, from the list. Avoid the look every AI deck has (one geometric sans everywhere); a classic serif or a strong display face usually makes a local business feel established. Do not choose by habit: the pairing must follow from the business.
+${pairingGuide().split('\n').map((l) => '  · ' + l).join('\n')}
   · Build from the client’s brand colours when given: keep the hue, adjust lightness for contrast.
   · primary and ink: dark enough for white text (≥ 4.5:1). paper: a very light tint. accent: bright, a clearly different hue from primary, with dark ink text readable on it.
   · Avoid stock pairings (cream + terracotta, black + acid green) unless the brand already uses them. Explain the palette in concept.paletteRationale.
@@ -174,7 +176,7 @@ const strs = { type: 'array', items: str };
 export const BROCHURE_SCHEMA = obj({
   concept: obj({ bigIdea: str, voice: str, paletteRationale: str }),
   design: { type: 'string', enum: ['editorial', 'classic'] },
-  theme: obj({ primary: str, ink: str, paper: str, accent: str }),
+  theme: obj({ primary: str, ink: str, paper: str, accent: str, fonts: { type: 'string', enum: PAIRING_IDS } }),
   cover: obj({ tag: nstr, title: str, highlight: nstr, subtitle: str, heroImage: image, badge: nstr, chips: strs }),
   about: nullable(obj({ heading: str, highlight: nstr, body: str, image, credential: nullable(obj({ title: str, text: str })), tags: strs })),
   insight: nullable(obj({ eyebrow: nstr, heading: str, highlight: nstr, stats: { type: 'array', items: stat }, statement: nstr, image })),

@@ -1,4 +1,5 @@
 import express from 'express';
+import { EXTRA_FONTS, PAIRINGS } from '../design/fonts.js';
 import * as atomic from '../atomic.js';
 import { crmLeads, crmLead } from '../crm-leads.js';
 import { background } from '../background.js';
@@ -413,7 +414,7 @@ api.get('/tools/docs/:id/pdf', async (req, res) => {
 // --------------------------------------------------------- design templates
 api.get('/design/meta', (_req, res) => {
   const s = getSettings();
-  res.json({ icons: ICONS, pricing: PRICING, currency: s.billing.currency, tax_label: s.billing.tax_label });
+  res.json({ icons: ICONS, pricing: PRICING, currency: s.billing.currency, tax_label: s.billing.tax_label, fonts: EXTRA_FONTS, pairings: PAIRINGS });
 });
 api.get('/design/templates', async (req, res) => res.json(await templates.listTemplates(req.query.kind === 'proposal' ? 'proposal' : 'brochure')));
 api.get('/design/templates/:id/preview', async (req, res) => {

@@ -2,6 +2,7 @@ import { getSettings } from '../settings.js';
 import { scriptJob } from './script.js';
 import { proposalJob } from './proposal-doc.js';
 import { BANNED } from './brochure-deck-core.js';
+import { PAIRING_IDS, pairingGuide } from '../design/fonts.js';
 
 /*
  * Claude mode jobs for the pitch script and the proposal (owner, 2026-11-05: "do the same system for proposals and
@@ -67,7 +68,7 @@ export function claudeProposalJob(input, items, research, dossier = '') {
       section('identity', `You are the lead strategist at ${s.agency.name}, a digital agency in Kerala. You write the proposal document for one client's website project: what we will build for them and why, page by page and feature by feature. Success: the client recognises their own business in every section and sees exactly what they will get.`),
       guardrails('- Never mention prices, costs, discounts or payment amounts anywhere: the price table is added separately from our own line items.\n- Only promise what the package and line items cover; anything extra is "available on request".'),
       craft(),
-      section('output_contract', 'Return the proposal as JSON matching the schema: title (2–4 words), executive_summary (exactly 3 paragraphs), scope_intro, scope (8–10 work items in delivery order), structure_intro, structure (12–18 pages or sections in menu order), features (5–8 sections, each with 2–3 groups of 4–7 short bullets), deliverables (5–7), closing_title (two lines separated by \\n).'),
+      section('output_contract', 'Return the proposal as JSON matching the schema: title (2–4 words), executive_summary (exactly 3 paragraphs), scope_intro, scope (8–10 work items in delivery order), structure_intro, structure (12–18 pages or sections in menu order), features (5–8 sections, each with 2–3 groups of 4–7 short bullets), deliverables (5–7), closing_title (two lines separated by \\n), font_pairing (the document\'s typefaces: one id from the list below).\n\nTypography: choose the pairing that fits this business and the proposal\'s voice. Avoid the look every AI document has (one geometric sans everywhere); a classic serif heading with a readable body face usually makes a proposal feel established. A proposal is read closely, so the body face must be easy to read.\n' + pairingGuide()),
     ].join('\n\n'),
     prompt: [
       `Write the proposal document for this client.
@@ -86,6 +87,7 @@ Agency facts you may use: ${(s.brochure_ai?.facts || []).join('; ')}`,
 4. Write the summary, scope and deliverables around that design, within the package. No prices.
 5. Check every line against <craft> and <guardrails>; rewrite what fails.`),
     ].filter(Boolean).join('\n\n'),
+    schema: { ...base.schema, properties: { ...base.schema.properties, font_pairing: { type: 'string', enum: PAIRING_IDS } }, required: [...(base.schema.required || []), 'font_pairing'] },
     kind: 'proposal',
   };
 }

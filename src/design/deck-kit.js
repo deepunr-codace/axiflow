@@ -1,5 +1,6 @@
 import { newId } from './model.js';
-import { measureText, lineWidth, scratchDoc } from './render-pdf.js';
+import { measureText, lineWidth, scratchDoc, fontNormal } from './render-pdf.js';
+import { mapFont, mapText } from './fonts.js';
 
 /*
  * Shared pieces for the 1920×1080 brochure decks (classic = deck.js, editorial = editorial.js):
@@ -9,7 +10,9 @@ import { measureText, lineWidth, scratchDoc } from './render-pdf.js';
 export const W = 1920, H = 1080;
 export const WHITE = '#ffffff';
 /** CSS line-height: normal per font code (hhea ascent + descent). */
-export const NORMAL = { HR: 1.303, HM: 1.303, HS: 1.303, UM: 1.24, US: 1.24, LR: 1.28, LM: 1.28, LS: 1.28, IR: 1.21, IM: 1.21, IS: 1.21 };
+const NORMAL_BASE = { HR: 1.303, HM: 1.303, HS: 1.303, UM: 1.24, US: 1.24, LR: 1.28, LM: 1.28, LS: 1.28, IR: 1.21, IM: 1.21, IS: 1.21 };
+// Looked up through the active font pairing (fonts.js), so NORMAL.IS is the face that replaces Inter SemiBold.
+export const NORMAL = new Proxy(NORMAL_BASE, { get: (t, k) => { const c = mapFont(k); return t[c] ?? fontNormal(c); } });
 const ASCENT = { IR: 0.9688, IM: 0.9688, IS: 0.9688 };
 
 /** color-mix(in srgb, a pct%, b) */
@@ -18,7 +21,7 @@ export function mix(a, pct, b) {
   const [x, y] = [p(a), p(b)];
   return '#' + x.map((v, i) => Math.round(v * pct / 100 + y[i] * (1 - pct / 100)).toString(16).padStart(2, '0')).join('');
 }
-export const T = (o) => ({ id: newId(), type: 'text', font: 'HR', color: WHITE, align: 'left', lh: NORMAL[o.font || 'HR'], ls: 0, list: '', gap: 8, h: 40, opacity: 1, outline: 0, rot: 0, ...o });
+export const T = (o) => mapText({ id: newId(), type: 'text', font: 'HR', color: WHITE, align: 'left', lh: NORMAL[o.font || 'HR'], ls: 0, list: '', gap: 8, h: 40, opacity: 1, outline: 0, rot: 0, ...o });
 export const R = (o) => ({ id: newId(), type: 'shape', shape: 'rect', fill: WHITE, stroke: 'none', sw: 1, radius: 0, gradient: null, opacity: 1, dash: '', ...o });
 export const I = (o) => ({ id: newId(), type: 'image', fit: 'contain', radius: 0, opacity: 1, ha: 'center', va: 'center', ...o });
 export const ICON = (o) => ({ id: newId(), type: 'icon', color: WHITE, opacity: 1, ...o });

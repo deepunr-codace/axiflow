@@ -1,5 +1,6 @@
 import { W, H, WHITE, NORMAL, mix, T, R, I, ICON, page, pad2, ring, stack, block, Builder } from './deck-kit.js';
 import { resolveTheme, normalizeData, serviceVisual, serviceSlideTitle, contentToData, LOGO } from './brochure-data.js';
+import { withFonts } from './fonts.js';
 
 /*
  * "Codeace Growth Deck" (classic design): the owner's brochure template (Downloads/files/brochure-template,
@@ -32,7 +33,11 @@ class ClassicBuilder extends Builder {
 const logoOf = (d) => d.brand.logo || { src: LOGO.src };
 
 /** BrochureData → editable pages (classic design). */
+/** theme.fonts = a font pairing id (src/design/fonts.js); without one the deck keeps Unbounded + Hanken Grotesk. */
 export function classicDesign(input) {
+  return withFonts(input?.theme?.fonts, () => buildClassic(input));
+}
+function buildClassic(input) {
   const d = normalizeData(input);
   const b = new ClassicBuilder();
   const t = resolveTheme('classic', d.theme), tone = tones(t);

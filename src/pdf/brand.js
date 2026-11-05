@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { EXTRA_FONTS } from '../design/fonts.js';
 
 /*
  * Shared brand bits for the brochure and proposal PDFs: Poppins fonts, colours taken
@@ -26,13 +27,15 @@ export const FONT_FILES = {
   HR: 'HankenGrotesk-Regular.ttf', HM: 'HankenGrotesk-Medium.ttf', HS: 'HankenGrotesk-SemiBold.ttf',
   LR: 'Lora-Regular.ttf', LM: 'Lora-Medium.ttf', LS: 'Lora-SemiBold.ttf', // Editorial deck: Lora + Inter
   IR: 'Inter-Regular.ttf', IM: 'Inter-Medium.ttf', IS: 'Inter-SemiBold.ttf',
+  ...Object.fromEntries(Object.entries(EXTRA_FONTS).map(([k, f]) => [k, f.file])), // classic typefaces (src/design/fonts.js)
 };
 export const fontPath = (code) => path.join(FONTS, FONT_FILES[code] || FONT_FILES.PR);
 
 export function registerFonts(doc) {
   const have = (f) => fs.existsSync(path.join(FONTS, f));
   const map = FONT_FILES;
-  const fb = { PB: 'Helvetica-Bold', PS: 'Helvetica-Bold', PM: 'Helvetica', PR: 'Helvetica', UM: 'Helvetica-Bold', US: 'Helvetica-Bold', HR: 'Helvetica', HM: 'Helvetica', HS: 'Helvetica-Bold', LR: 'Times-Roman', LM: 'Times-Roman', LS: 'Times-Bold', IR: 'Helvetica', IM: 'Helvetica', IS: 'Helvetica-Bold' };
+  const fb = { PB: 'Helvetica-Bold', PS: 'Helvetica-Bold', PM: 'Helvetica', PR: 'Helvetica', UM: 'Helvetica-Bold', US: 'Helvetica-Bold', HR: 'Helvetica', HM: 'Helvetica', HS: 'Helvetica-Bold', LR: 'Times-Roman', LM: 'Times-Roman', LS: 'Times-Bold', IR: 'Helvetica', IM: 'Helvetica', IS: 'Helvetica-Bold',
+    ...Object.fromEntries(Object.entries(EXTRA_FONTS).map(([k, f]) => [k, f.fallback])) };
   for (const [k, f] of Object.entries(map)) {
     if (have(f)) doc.registerFont(k, path.join(FONTS, f));
     else doc.registerFont(k, fb[k]);

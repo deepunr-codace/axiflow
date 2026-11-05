@@ -13,7 +13,29 @@ The team's main CRM is **Twenty**, set up by a co-worker and run by the **teleca
 
 Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATABASE_URL` and `pg`; embedded PGlite in `data/pg` when `DATABASE_URL` is empty), Vercel Blob for uploads (`data/uploads` locally), nodemailer, `@anthropic-ai/sdk` (Claude, `claude-opus-5-5`), and a vanilla-JS admin SPA in `public/`. There is no build step. Code map: see README. The old SQLite file `data/crm.db` is kept only as a backup/migration source.
 
-## Status (2026-11-05, latest): BYOK keys + Claude engines (GitHub / Claude API / OpenRouter)
+## Status (2026-11-05, latest): classic typefaces + font pairings for brochures and proposals
+- Owner: "use standard fonts too. not generic ai feel fonts", "in brochure, proposal".
+- **Typefaces:** 16 OFL families as static TTFs from the Google Fonts CSS API, in `assets/fonts` with their OFL files (about 7 MB): EB Garamond, Libre Baskerville, Bodoni Moda, Playfair Display, DM Serif Display, Libre Caslon Text, Source Serif 4, Libre Franklin, IBM Plex Sans, Work Sans, Jost, Archivo, Oswald, Bebas Neue, Anton, Abril Fatface.
+- **`src/design/fonts.js`** (no dependencies):
+  - `EXTRA_FONTS`: codes like EG5/EG7, BK4/BK7, LF4/5/7, PX4/5/6, BB4…;
+  - `PAIRINGS`: 13 heading + body pairings, each with a mood;
+  - `withFonts(pairing, fn)` + `mapText` / `mapFont`: a layout built inside swaps its template codes by role (UM/LM/LR heading, US/LS/PB heading bold, H*/I*/P* body) and scales the heading letter spacing (`hLs`), so text is measured and wrapped in the new faces;
+  - `resolvePairing(setting, chosen)`.
+- **Where they are used:**
+  - `classicDesign` / `editorialDesign` read `data.theme.fonts`; `brochureDesign` / `proposalDesign` read `content.font_pairing`;
+  - the setting `fonts.brochure` / `fonts.proposal` is `auto` (Claude's choice; the default), `template`, or a fixed pairing (Tool settings, brochure and proposal cards);
+  - `tools.withPairing` applies the setting to decks;
+  - Editorial's ₹ stays in Inter.
+- **PDF:** brand.js registers all faces. render-pdf measures their metrics from the font file (`measuredMetrics`, `fontNormal`). deck-kit `NORMAL` is a Proxy through the active pairing.
+- **Editor:** `/fonts.css` is generated (linked in index.html); `/api/design/meta` returns `fonts` and `pairings`; the font menu has two groups, "Classic typefaces" and "Template fonts".
+- **Claude:**
+  - the deck schema has `theme.fonts` (an enum of pairings, with a typography rule plus the pairing list in the art direction);
+  - the proposal job has `font_pairing`, and `postProposal` keeps it;
+  - "Claude designs" gets every code and the pairings in its font guide;
+  - a missing or invalid font field is a soft warning in post.mjs, so the template fonts are used.
+- **Checked** in headless Edge, editor vs PDF: Editorial with Garamond + Franklin, classic with Bebas + Plex, proposal (A4) with Garamond + Franklin all match. The GitHub-engine and OpenRouter-engine e2e both pass. Known: the proposal price table stays Poppins.
+
+## Status (2026-11-05): BYOK keys + Claude engines (GitHub / Claude API / OpenRouter)
 - **Keys** (owner: "add options to add keys. BYOK + this claude integration", then "add open router too"):
   - **Store:** `src/keys.js`, table `app_keys`; AES-256-GCM, key from `KEYS_SECRET`, else `SESSION_SECRET`.
     - Changing SESSION_SECRET makes saved keys unreadable (shown as such; save them again).

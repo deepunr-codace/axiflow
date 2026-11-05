@@ -2,6 +2,7 @@ import { getSettings } from '../settings.js';
 import { BANNED } from './brochure-deck-core.js';
 import { cleanDesign, FONTS } from '../design/model.js';
 import { ICONS } from '../design/icons.js';
+import { EXTRA_FONTS, PAIRINGS } from '../design/fonts.js';
 import { ASSETS, LOGO } from '../design/brochure-data.js';
 import { Builder, W, H } from '../design/deck-kit.js';
 
@@ -14,7 +15,11 @@ import { Builder, W, H } from '../design/deck-kit.js';
  */
 const section = (tag, body) => `<${tag}>\n${String(body).trim()}\n</${tag}>`;
 
-const FONT_GUIDE = 'PR/PM/PS/PB = Poppins regular/medium/semibold/bold; UM/US = Unbounded medium/semibold (display); HR/HM/HS = Hanken Grotesk regular/medium/semibold; LR/LM/LS = Lora regular/medium/semibold (serif); IR/IM/IS = Inter regular/medium/semibold';
+// every face by code, then the curated pairings (classic typefaces first; Poppins / Inter only when nothing else fits)
+const FONT_GUIDE = [
+  ...Object.entries(EXTRA_FONTS).map(([c, f]) => `${c} = ${f.name}`),
+  'UM/US = Unbounded medium/semibold', 'HR/HM/HS = Hanken Grotesk', 'LR/LM/LS = Lora', 'IR/IM/IS = Inter', 'PR/PM/PS/PB = Poppins',
+].join('; ') + `. Good pairings (heading → body): ${Object.values(PAIRINGS).map((p) => `${p.name} (${p.h[1]} / ${p.b[0]}): ${p.mood}`).join('; ')}. Choose typefaces that fit this business; avoid the look every AI deck has (one geometric sans everywhere): a classic serif or a strong display face usually makes a local business feel established`;
 const IMAGES = () => [{ id: 'logo', description: 'Codeace logo (white background tile, width:height = 2.3:1)' }, ...ASSETS.map(({ id, kind, orientation, description }) => ({ id, kind, orientation, description }))];
 const srcOf = (id) => (id === 'logo' ? LOGO.src : ASSETS.find((a) => a.id === id)?.src || null);
 

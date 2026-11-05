@@ -14,6 +14,9 @@ const uid = () => 'e' + Math.random().toString(16).slice(2, 12);
 
 export async function loadMeta(api) {
   META ??= await api('/design/meta');
+  for (const [code, f] of Object.entries(META.fonts || {})) { // classic typefaces (src/design/fonts.js)
+    FONT_W[code] = f.weight; FONT_FAMILY[code] = `"${f.family}"`; FONT_NAMES[code] = f.name;
+  }
   return META;
 }
 
@@ -278,7 +281,7 @@ export async function openEditor(root, { doc, api, toast, busy, modal, onChange 
     let html = '';
     if (e.type === 'text') {
       html = `<h3>Text</h3>
-        <div class="ed-grid"><label>Font<select data-k="font">${Object.entries(FONT_NAMES).map(([k, n]) => `<option value="${k}" ${k === e.font ? 'selected' : ''}>${n}</option>`).join('')}</select></label>${num('Size', 'size', e.size, 0.5)}</div>
+        <div class="ed-grid"><label>Font<select data-k="font">${[['Classic typefaces', (k) => !!META?.fonts?.[k]], ['Template fonts', (k) => !META?.fonts?.[k]]].map(([g, f]) => `<optgroup label="${g}">${Object.entries(FONT_NAMES).filter(([k]) => f(k)).map(([k, n]) => `<option value="${k}" ${k === e.font ? 'selected' : ''}>${n}</option>`).join('')}</optgroup>`).join('')}</select></label>${num('Size', 'size', e.size, 0.5)}</div>
         ${colorField('Colour', 'color', e.color)}
         ${e.hl ? colorField('Highlight colour', 'hl', e.hl) + '<p class="small muted">Words between ** and ** use the highlight colour.</p>' : ''}
         ${e.arc ? `<div class="ed-grid">${num('Circle size', 'arc', e.arc)}${num('Turn', 'rot', e.rot)}</div>` : ''}

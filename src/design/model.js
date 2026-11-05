@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { ASSETS } from '../pdf/brand.js';
 import { ICONS } from './icons.js';
+import { EXTRA_CODES } from './fonts.js';
 import { saveUpload, readUpload, UPLOADS } from '../storage.js';
 
 /*
@@ -18,7 +19,7 @@ import { saveUpload, readUpload, UPLOADS } from '../storage.js';
  * Image sources: "asset:<path under assets/>" or "upload:<key in storage.js (Supabase Storage, Vercel Blob or data/uploads)>" or a data: URL.
  */
 export { UPLOADS };
-export const FONTS = ['PR', 'PM', 'PS', 'PB', 'UM', 'US', 'HR', 'HM', 'HS', 'LR', 'LM', 'LS', 'IR', 'IM', 'IS'];
+export const FONTS = ['PR', 'PM', 'PS', 'PB', 'UM', 'US', 'HR', 'HM', 'HS', 'LR', 'LM', 'LS', 'IR', 'IM', 'IS', ...EXTRA_CODES];
 
 export const newId = () => 'e' + crypto.randomBytes(5).toString('hex');
 

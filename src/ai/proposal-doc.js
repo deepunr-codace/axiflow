@@ -1,4 +1,5 @@
 import { getSettings } from '../settings.js';
+import { PAIRINGS } from '../design/fonts.js';
 import { runJson, aiEnabled, obj, str, arr } from './claude.js';
 import { managerSystem } from './playbook.js';
 import { poss } from '../pdf/brand.js';
@@ -91,7 +92,8 @@ Follow this structure and tone (a real example from our agency): ${JSON.stringif
 export function postProposal(content, input, items) {
   const base = templateProposal(input, items);
   const keep = Object.fromEntries(Object.entries(content || {}).filter(([k, v]) => k in base && v != null && v !== ''));
-  return { ...base, ...keep };
+  const fonts = PAIRINGS[content?.font_pairing] ? { font_pairing: content.font_pairing } : {}; // the typefaces Claude chose
+  return { ...base, ...keep, ...fonts };
 }
 
 /** Without Claude: the standard proposal for the package (the in-app AI writer was removed, owner 2026-11-05). */

@@ -1014,7 +1014,9 @@ async function renderTemplates() {
 
 // -------------------------------------------------------------- settings
 async function renderSettings(section) {
-  const { settings: s, env } = await api('/settings');
+  const [{ settings: s, env }, dmeta] = await Promise.all([api('/settings'), api('/design/meta')]);
+  // Typefaces (src/design/fonts.js): auto = Claude picks a pairing for each lead, template = the template's own fonts, or one fixed pairing
+  const fontPick = (kind) => `<label class="wide">Fonts<select data-path="fonts.${kind}">${[['auto', 'Claude picks a classic pairing for each lead (Claude mode)'], ['template', "The template's own fonts"], ...Object.entries(dmeta.pairings || {}).map(([id, p]) => [id, `${p.name}: ${p.mood}`])].map(([v, n]) => `<option value="${v}" ${(s.fonts?.[kind] || 'auto') === v ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>`;
   const inp = (path, label, type = 'text') => {
     const v = path.split('.').reduce((o, k) => o?.[k], s);
     if (type === 'bool') return `<label class="check"><input type="checkbox" data-path="${path}" data-type="bool" ${v ? 'checked' : ''}> ${label}</label>`;
@@ -1033,10 +1035,10 @@ async function renderSettings(section) {
   <div class="card" id="t-business"><h2><span class="mi">badge</span>On every document</h2><p class="small muted">Shown in scripts ("this is Arjun from Codeace"), on brochure and proposal pages and in the contact details.</p>
     <div class="form-grid">${inp('agency.name', 'Agency name')}${inp('agency.sender_name', 'Caller / sender name')}${inp('agency.email', 'Email')}${inp('agency.phone', 'Phone')}${inp('agency.website', 'Website')}${inp('agency.address', 'Address')}</div></div>
   <div class="card" id="t-brochure"><h2><span class="mi">menu_book</span>Brochure wording</h2><p class="small muted">The AI tailors this copy to each client. {{company}} and {{industry}} are filled in. The design comes from the <a href="#/designs">default template</a>.</p>
-    <div class="form-grid">${inp('brochure.cover_title', 'Cover title', 'wtext')}${inp('brochure.cover_subtitle', 'Cover subtitle', 'area')}${inp('brochure.about', 'About us (one paragraph per line)', 'lines')}${inp('brochure.help_intro', 'How we help (intro)', 'area')}</div>
+    <div class="form-grid">${fontPick('brochure')}${inp('brochure.cover_title', 'Cover title', 'wtext')}${inp('brochure.cover_subtitle', 'Cover subtitle', 'area')}${inp('brochure.about', 'About us (one paragraph per line)', 'lines')}${inp('brochure.help_intro', 'How we help (intro)', 'area')}</div>
     <label>Portfolio (shown in brochures, JSON)<textarea id="portJson" class="code" style="min-height:120px">${esc(JSON.stringify(s.agency.portfolio, null, 2))}</textarea></label></div>
   <div class="card" id="t-proposal"><h2><span class="mi">request_quote</span>Proposal prices and terms</h2><p class="small muted">Prices always come from here (the AI writes the words only). The package total is split over the modules by their share.</p>
-    <div class="form-grid">${inp('billing.currency', 'Currency')}${inp('billing.tax_label', 'Tax label')}${inp('billing.tax_pct', 'Tax %', 'number')}${inp('proposal.support_days', 'Free support (days)', 'number')}
+    <div class="form-grid">${fontPick('proposal')}${inp('billing.currency', 'Currency')}${inp('billing.tax_label', 'Tax label')}${inp('billing.tax_pct', 'Tax %', 'number')}${inp('proposal.support_days', 'Free support (days)', 'number')}
     ${inp('proposal.payment_terms', 'Payment terms', 'area')}${inp('proposal.investment_note', 'Note under the prices', 'area')}${inp('proposal.deliverables_note', 'Deliverables note', 'area')}${inp('proposal.terms', 'Terms (one per line)', 'lines')}</div>
     <label>Packages (JSON)<textarea id="pkgJson" class="code">${esc(JSON.stringify(s.packages, null, 2))}</textarea></label><br>
     <label>Module split (JSON: name and share in %)<textarea id="modJson" class="code" style="min-height:120px">${esc(JSON.stringify(s.proposal?.modules || [], null, 2))}</textarea></label></div>

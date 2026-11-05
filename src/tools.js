@@ -25,11 +25,13 @@ import { claudeScriptJob, claudeProposalJob } from './ai/claude-jobs.js';
 const DECK_DESIGNS = { 'builtin-deck': 'classic', 'builtin-editorial': 'editorial', 'builtin-claude': 'editorial' }; // "Claude designs" without Claude = Editorial
 const deckOf = (tpl) => DECK_DESIGNS[tpl?.source] || null;
 const drawDeck = (design, data) => (design === 'editorial' ? editorialDesign(data) : classicDesign(data));
+// fonts.brochure: a fixed pairing wins, "template" keeps the design's fonts, "auto" uses the one Claude chose (theme.fonts)
+const withPairing = (data, s) => ({ ...data, theme: { ...(data.theme || {}), fonts: resolvePairing(s.fonts?.brochure, data.theme?.fonts) } });
 const brochureLayout = (tpl, content, s, company) => {
   if (content?.free?.design) return content.free.design; // "Claude designs": Claude drew the pages itself
-  if (content?.deck?.data) return drawDeck(content.deck.design, content.deck.data);
+  if (content?.deck?.data) return drawDeck(content.deck.design, withPairing(content.deck.data, s));
   const design = deckOf(tpl);
-  return design ? drawDeck(design, contentToData(content, s, { company, design })) : brochureDesign(content, s);
+  return design ? drawDeck(design, withPairing(contentToData(content, s, { company, design }), s)) : brochureDesign(content, s);
 };
 /** Deck brochures without Claude: the agency copy mapped onto the deck data contract (no AI). */
 async function writeDeck(doc, design, research, s) {
@@ -40,6 +42,7 @@ import { renderDesignPdf } from './design/render-pdf.js';
 import { cleanDesign, cloneDesign, fillTokens } from './design/model.js';
 import { getTemplate, defaultTemplate } from './design/templates.js';
 import { freeformJob } from './ai/claude-freeform.js';
+import { resolvePairing } from './design/fonts.js';
 
 /*
  * AI Brochure Generator and AI Proposal Generator.
