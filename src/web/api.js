@@ -51,12 +51,12 @@ api.get('/meta', async (_req, res) => {
 // ------------------------------------------------------------------ dashboard
 api.get('/dashboard', async (_req, res) => {
   const one = async (sql, p) => await get(sql, p);
-  const byStage = Object.fromEntries((await all(`SELECT stage, COUNT(*) n FROM leads GROUP BY stage`)).map((r) => [r.stage, r.n]));
-  const total = (await one(`SELECT COUNT(*) n FROM leads`)).n;
+  const byStage = Object.fromEntries((await all(`SELECT stage, COUNT(*) n FROM leads WHERE crm_removed_at IS NULL GROUP BY stage`)).map((r) => [r.stage, r.n]));
+  const total = (await one(`SELECT COUNT(*) n FROM leads WHERE crm_removed_at IS NULL`)).n;
   const contacted = (await one(`SELECT COUNT(DISTINCT lead_id) n FROM messages WHERE direction='out' AND template_key='intro' AND status IN ('sent','mock')`)).n;
   const replied = (await one(`SELECT COUNT(DISTINCT lead_id) n FROM messages WHERE direction='in'`)).n;
   const meetings = (await one(`SELECT COUNT(DISTINCT lead_id) n FROM meetings`)).n;
-  const won = (await one(`SELECT COUNT(*) n FROM leads WHERE stage IN ('won','onboarding','in_development','delivered','completed')`)).n;
+  const won = (await one(`SELECT COUNT(*) n FROM leads WHERE crm_removed_at IS NULL AND stage IN ('won','onboarding','in_development','delivered','completed')`)).n;
   const money = {
     open_proposals: (await one(`SELECT COALESCE(SUM(total),0) v FROM proposals WHERE status='sent'`)).v,
     contracted: (await one(`SELECT COALESCE(SUM(total),0) v FROM proposals WHERE status='accepted'`)).v,
@@ -64,7 +64,7 @@ api.get('/dashboard', async (_req, res) => {
     outstanding: (await one(`SELECT COALESCE(SUM(amount),0) v FROM invoices WHERE status='pending'`)).v,
   };
   const since = addDays(nowISO(), -13).slice(0, 10);
-  const daily = await all(`SELECT substr(created_at,1,10) d, COUNT(*) n FROM leads WHERE substr(created_at,1,10) >= :since GROUP BY d`, { since });
+  const daily = await all(`SELECT substr(created_at,1,10) d, COUNT(*) n FROM leads WHERE crm_removed_at IS NULL AND substr(created_at,1,10) >= :since GROUP BY d`, { since });
   const dailyMsgs = await all(`SELECT substr(created_at,1,10) d, COUNT(*) n FROM messages WHERE direction='out' AND substr(created_at,1,10) >= :since GROUP BY d`, { since });
   const days = [];
   for (let i = 13; i >= 0; i--) {
@@ -76,13 +76,13 @@ api.get('/dashboard', async (_req, res) => {
     reply_rate: contacted ? Math.round((replied / contacted) * 100) : 0,
     win_rate: total ? Math.round((won / total) * 100) : 0,
     channels: await all(`SELECT channel, status, COUNT(*) n FROM messages WHERE direction='out' GROUP BY channel, status`),
-    sources: await all(`SELECT COALESCE(source,'?') source, COUNT(*) n, SUM(CASE WHEN stage IN ('won','onboarding','in_development','delivered','completed') THEN 1 ELSE 0 END) won FROM leads GROUP BY source ORDER BY n DESC`),
+    sources: await all(`SELECT COALESCE(source,'?') source, COUNT(*) n, SUM(CASE WHEN stage IN ('won','onboarding','in_development','delivered','completed') THEN 1 ELSE 0 END) won FROM leads WHERE crm_removed_at IS NULL GROUP BY source ORDER BY n DESC`),
     approvals: byStage.brochure_ready || 0,
     open_tasks: (await one(`SELECT COUNT(*) n FROM tasks WHERE done=0`)).n,
-    upcoming_meetings: await all(`SELECT m.*, l.company FROM meetings m JOIN leads l ON l.id=m.lead_id WHERE m.status='scheduled' ORDER BY m.start_at LIMIT 5`),
+    upcoming_meetings: await all(`SELECT m.*, l.company FROM meetings m JOIN leads l ON l.id=m.lead_id WHERE l.crm_removed_at IS NULL AND m.status='scheduled' ORDER BY m.start_at LIMIT 5`),
     recent: await all(`SELECT e.*, l.company FROM events e LEFT JOIN leads l ON l.id=e.lead_id ORDER BY e.id DESC LIMIT 12`),
     last_run: await get(`SELECT * FROM runs ORDER BY id DESC LIMIT 1`),
-    pipes: Object.fromEntries((await all(`SELECT COALESCE(pipe,'conversion') pipe, COUNT(*) n FROM leads WHERE stage NOT IN ('completed','closed_no_reply','not_interested','lost','do_not_contact') GROUP BY pipe`)).map((r) => [r.pipe, r.n])),
+    pipes: Object.fromEntries((await all(`SELECT COALESCE(pipe,'conversion') pipe, COUNT(*) n FROM leads WHERE crm_removed_at IS NULL AND stage NOT IN ('completed','closed_no_reply','not_interested','lost','do_not_contact') GROUP BY pipe`)).map((r) => [r.pipe, r.n])),
     calls_due: (await one(`SELECT COUNT(*) n FROM tasks WHERE kind='call' AND done=0`)).n,
     drafts: (await one(`SELECT COUNT(*) n FROM tasks WHERE kind='reply_draft' AND done=0`)).n,
     briefing: await get(`SELECT * FROM briefings ORDER BY id DESC LIMIT 1`),
@@ -93,7 +93,7 @@ api.get('/dashboard', async (_req, res) => {
 
 // ---------------------------------------------------------------------- leads
 api.get('/leads', async (req, res) => {
-  const where = [];
+  const where = ['crm_removed_at IS NULL']; // leads deleted in the CRM are hidden
   const p = {};
   if (req.query.stage) { where.push('stage = :stage'); p.stage = req.query.stage; }
   if (req.query.source) { where.push('source = :source'); p.source = req.query.source; }
@@ -111,7 +111,7 @@ api.post('/leads', async (req, res) => {
 });
 
 api.get('/leads/export.csv', async (_req, res) => {
-  const rows = await all(`SELECT ${LIST_COLS} FROM leads ORDER BY id`);
+  const rows = await all(`SELECT ${LIST_COLS} FROM leads WHERE crm_removed_at IS NULL ORDER BY id`);
   res.type('text/csv').attachment('leads.csv').send(toCSV(rows, LIST_COLS.split(',').map((c) => c.trim())));
 });
 
@@ -274,7 +274,7 @@ api.get('/runs', async (_req, res) => res.json(await all(`SELECT * FROM runs ORD
 api.post('/run', async (_req, res) => res.json(await engine.runPipeline('manual')));
 
 api.get('/projects', async (_req, res) => {
-  const projects = await all(`SELECT p.*, l.company, l.stage, l.token FROM projects p JOIN leads l ON l.id = p.lead_id ORDER BY p.id DESC`);
+  const projects = await all(`SELECT p.*, l.company, l.stage, l.token FROM projects p JOIN leads l ON l.id = p.lead_id WHERE l.crm_removed_at IS NULL ORDER BY p.id DESC`);
   for (const p of projects) p.milestones = await all(`SELECT * FROM milestones WHERE project_id = :id ORDER BY position`, { id: p.id });
   res.json(projects);
 });
@@ -283,7 +283,7 @@ api.patch('/milestones/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
-api.get('/invoices', async (_req, res) => res.json(await all(`SELECT i.*, l.company FROM invoices i JOIN leads l ON l.id = i.lead_id ORDER BY i.id DESC`)));
+api.get('/invoices', async (_req, res) => res.json(await all(`SELECT i.*, l.company FROM invoices i JOIN leads l ON l.id = i.lead_id WHERE l.crm_removed_at IS NULL ORDER BY i.id DESC`)));
 
 api.get('/slots', async (_req, res) => res.json(await engine.availableSlots()));
 
@@ -292,13 +292,13 @@ api.get('/manager', async (_req, res) => {
   const now = nowISO();
   res.json({
     briefing: await get(`SELECT * FROM briefings ORDER BY id DESC LIMIT 1`),
-    calls: await all(`SELECT t.*, l.company, l.phone, l.contact_name, l.stage FROM tasks t JOIN leads l ON l.id = t.lead_id WHERE t.kind = 'call' AND t.done = 0 ORDER BY COALESCE(t.due_at, t.created_at)`),
-    drafts: await all(`SELECT t.*, l.company, l.last_inbound_channel FROM tasks t JOIN leads l ON l.id = t.lead_id WHERE t.kind = 'reply_draft' AND t.done = 0 ORDER BY t.id DESC`),
-    approvals: await all(`SELECT id, company, contact_name, score, pitch_source FROM leads WHERE stage = 'brochure_ready' ORDER BY score DESC`),
-    replies: await all(`SELECT m.lead_id, m.channel, m.body, m.created_at, l.company, l.stage FROM messages m JOIN leads l ON l.id = m.lead_id WHERE m.direction = 'in' ORDER BY m.id DESC LIMIT 10`),
-    upcoming: await all(`SELECT id, company, stage, pipe, next_action_type, next_action_at, next_action_note FROM leads WHERE next_action_at IS NOT NULL AND stage NOT IN ('completed','closed_no_reply','not_interested','lost','do_not_contact') ORDER BY next_action_at LIMIT 25`),
-    researching: await all(`SELECT id, company FROM leads WHERE stage = 'researching'`),
-    hot: await all(`SELECT id, company, contact_name, stage FROM leads WHERE stage IN ('replied','meeting_booked','proposal_sent','won') ORDER BY CASE stage WHEN 'replied' THEN 0 WHEN 'proposal_sent' THEN 1 WHEN 'meeting_booked' THEN 2 ELSE 3 END, updated_at DESC`),
+    calls: await all(`SELECT t.*, l.company, l.phone, l.contact_name, l.stage FROM tasks t JOIN leads l ON l.id = t.lead_id WHERE l.crm_removed_at IS NULL AND t.kind = 'call' AND t.done = 0 ORDER BY COALESCE(t.due_at, t.created_at)`),
+    drafts: await all(`SELECT t.*, l.company, l.last_inbound_channel FROM tasks t JOIN leads l ON l.id = t.lead_id WHERE l.crm_removed_at IS NULL AND t.kind = 'reply_draft' AND t.done = 0 ORDER BY t.id DESC`),
+    approvals: await all(`SELECT id, company, contact_name, score, pitch_source FROM leads WHERE crm_removed_at IS NULL AND stage = 'brochure_ready' ORDER BY score DESC`),
+    replies: await all(`SELECT m.lead_id, m.channel, m.body, m.created_at, l.company, l.stage FROM messages m JOIN leads l ON l.id = m.lead_id WHERE l.crm_removed_at IS NULL AND m.direction = 'in' ORDER BY m.id DESC LIMIT 10`),
+    upcoming: await all(`SELECT id, company, stage, pipe, next_action_type, next_action_at, next_action_note FROM leads WHERE crm_removed_at IS NULL AND next_action_at IS NOT NULL AND stage NOT IN ('completed','closed_no_reply','not_interested','lost','do_not_contact') ORDER BY next_action_at LIMIT 25`),
+    researching: await all(`SELECT id, company FROM leads WHERE crm_removed_at IS NULL AND stage = 'researching'`),
+    hot: await all(`SELECT id, company, contact_name, stage FROM leads WHERE crm_removed_at IS NULL AND stage IN ('replied','meeting_booked','proposal_sent','won') ORDER BY CASE stage WHEN 'replied' THEN 0 WHEN 'proposal_sent' THEN 1 WHEN 'meeting_booked' THEN 2 ELSE 3 END, updated_at DESC`),
     proposals_check: (await tools.proposalsToCheck()).map((p) => ({ ...p, total: JSON.parse(p.items_json || '[]').reduce((a, i) => a + (i.price || 0), 0), items_json: undefined })),
     ai: await aiStatus(),
     now,
@@ -349,7 +349,7 @@ api.get('/tools/options', async (req, res) => {
     verticals: VERTICALS, languages: LANGUAGES,
     packages: s.packages.map((p) => ({ id: p.id, name: p.name, price: p.price })),
     services: s.brochure.services.map((x) => ({ id: x.id, name: x.name })),
-    leads: await all(`SELECT id, company, contact_name, city FROM leads ORDER BY updated_at DESC LIMIT 200`),
+    leads: await all(`SELECT id, company, contact_name, city FROM leads WHERE crm_removed_at IS NULL ORDER BY updated_at DESC LIMIT 200`),
     templates: kind === 'script' ? [] : await templates.listTemplates(kind),
     ai: await aiStatus(),
   });

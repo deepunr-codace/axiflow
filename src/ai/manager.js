@@ -144,11 +144,11 @@ Rules: at most 3 follow-ups after the intro in total; space touches 1-7 days apa
 // -------------------------------------------------------------- daily briefing
 
 export async function pipelineSnapshot() {
-  const by = Object.fromEntries((await all(`SELECT stage, COUNT(*) n FROM leads GROUP BY stage`)).map((r) => [r.stage, r.n]));
-  const pipes = Object.fromEntries((await all(`SELECT COALESCE(pipe,'conversion') pipe, COUNT(*) n FROM leads WHERE stage NOT IN ('completed','closed_no_reply','not_interested','lost','do_not_contact') GROUP BY pipe`)).map((r) => [r.pipe, r.n]));
-  const callsDue = await all(`SELECT t.title, t.due_at, l.company FROM tasks t JOIN leads l ON l.id = t.lead_id WHERE t.kind = 'call' AND t.done = 0 ORDER BY COALESCE(t.due_at, t.created_at) LIMIT 15`);
-  const replies = await all(`SELECT l.id, l.company, m.body FROM messages m JOIN leads l ON l.id = m.lead_id WHERE m.direction = 'in' AND m.created_at >= :since ORDER BY m.id DESC LIMIT 10`, { since: addDays(nowISO(), -2) });
-  const hot = await all(`SELECT company, stage, score FROM leads WHERE stage IN ('replied','meeting_booked','proposal_sent') ORDER BY score DESC LIMIT 10`);
+  const by = Object.fromEntries((await all(`SELECT stage, COUNT(*) n FROM leads WHERE crm_removed_at IS NULL GROUP BY stage`)).map((r) => [r.stage, r.n]));
+  const pipes = Object.fromEntries((await all(`SELECT COALESCE(pipe,'conversion') pipe, COUNT(*) n FROM leads WHERE crm_removed_at IS NULL AND stage NOT IN ('completed','closed_no_reply','not_interested','lost','do_not_contact') GROUP BY pipe`)).map((r) => [r.pipe, r.n]));
+  const callsDue = await all(`SELECT t.title, t.due_at, l.company FROM tasks t JOIN leads l ON l.id = t.lead_id WHERE l.crm_removed_at IS NULL AND t.kind = 'call' AND t.done = 0 ORDER BY COALESCE(t.due_at, t.created_at) LIMIT 15`);
+  const replies = await all(`SELECT l.id, l.company, m.body FROM messages m JOIN leads l ON l.id = m.lead_id WHERE l.crm_removed_at IS NULL AND m.direction = 'in' AND m.created_at >= :since ORDER BY m.id DESC LIMIT 10`, { since: addDays(nowISO(), -2) });
+  const hot = await all(`SELECT company, stage, score FROM leads WHERE crm_removed_at IS NULL AND stage IN ('replied','meeting_booked','proposal_sent') ORDER BY score DESC LIMIT 10`);
   const money = await get(`SELECT (SELECT COALESCE(SUM(total),0) FROM proposals WHERE status='sent') open_value, (SELECT COALESCE(SUM(amount),0) FROM invoices WHERE status='pending') outstanding`);
   return { by_stage: by, pipes, calls_due: callsDue, recent_replies: replies, hot_deals: hot, money };
 }

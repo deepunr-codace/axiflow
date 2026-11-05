@@ -342,7 +342,7 @@ export async function createDocForLead(kind, leadId) {
 /** Unsent proposal documents waiting for an OK (the newest per lead, not yet turned into a sent proposal). */
 export async function proposalsToCheck() {
   return all(`SELECT d.id, d.lead_id, d.title, d.items_json, d.updated_at, l.company, l.stage FROM docs d JOIN leads l ON l.id = d.lead_id
-    WHERE d.kind = 'proposal' AND d.status = 'ready' AND d.lead_id IS NOT NULL
+    WHERE l.crm_removed_at IS NULL AND d.kind = 'proposal' AND d.status = 'ready' AND d.lead_id IS NOT NULL
       AND d.id = (SELECT MAX(id) FROM docs d2 WHERE d2.kind = 'proposal' AND d2.lead_id = d.lead_id AND d2.status = 'ready')
       AND NOT EXISTS (SELECT 1 FROM proposals p WHERE p.doc_id = d.id)
       AND l.stage IN ('replied', 'meeting_booked', 'needs_manual', 'contacted', 'follow_up_1', 'follow_up_2')

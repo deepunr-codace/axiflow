@@ -6,7 +6,7 @@ import { nowISO } from './util.js';
 /** Daily summary to the agency inbox: the manager's briefing plus run stats. */
 export async function sendDigest(stats, briefing) {
   const s = getSettings();
-  const approvals = (await get(`SELECT COUNT(*) n FROM leads WHERE stage = 'brochure_ready'`)).n;
+  const approvals = (await get(`SELECT COUNT(*) n FROM leads WHERE crm_removed_at IS NULL AND stage = 'brochure_ready'`)).n;
   const calls = (await get(`SELECT COUNT(*) n FROM tasks WHERE kind = 'call' AND done = 0`)).n;
   const drafts = (await get(`SELECT COUNT(*) n FROM tasks WHERE kind = 'reply_draft' AND done = 0`)).n;
   const text = `Good morning from your AxiFlow manager.

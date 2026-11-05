@@ -831,7 +831,7 @@ export async function runPipeline(trigger = 'manual') {
   const runId = await insert('runs', { trigger, started_at: nowISO() });
   const stats = { processed: 0, moved: 0, errors: 0, sent_before: await countOut() };
   try {
-    const leads = await all(`SELECT id, stage FROM leads WHERE stage IN ('new','qualified','researching','brochure_approved','contacted','follow_up_1','follow_up_2','nurture','reengage','meeting_booked','proposal_sent','won','delivered') ORDER BY score DESC, id`);
+    const leads = await all(`SELECT id, stage FROM leads WHERE crm_removed_at IS NULL AND stage IN ('new','qualified','researching','brochure_approved','contacted','follow_up_1','follow_up_2','nurture','reengage','meeting_booked','proposal_sent','won','delivered') ORDER BY score DESC, id`);
     for (const { id, stage } of leads) {
       try {
         const after = await advance(id);
