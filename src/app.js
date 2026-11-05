@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { ready } from './db.js';
 import { seedDefaults, loadSettings } from './settings.js';
+import { loadKeys } from './keys.js';
 import { api } from './web/api.js';
 import { pub } from './web/public.js';
 import { cronTick } from './scheduler.js';
@@ -34,7 +35,7 @@ app.use('/fonts', express.static(path.join(ROOT, 'assets', 'fonts'), { maxAge: '
 app.use(express.static(path.join(ROOT, 'public')));
 
 app.use(async (req, res, next) => {
-  try { await boot(); await loadSettings(); next(); } catch (e) {
+  try { await boot(); await loadSettings(); await loadKeys(); next(); } catch (e) {
     console.error('[boot]', e.message);
     const msg = /DATABASE_URL/.test(e.message) ? e.message : `Cannot reach the database: ${e.message}`;
     if (req.path.startsWith('/api/')) return res.status(503).json({ error: msg });

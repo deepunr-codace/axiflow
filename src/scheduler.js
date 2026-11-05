@@ -1,4 +1,5 @@
 import { getSettings, loadSettings, getState, setState } from './settings.js';
+import { loadKeys } from './keys.js';
 import { pollCrm } from './atomic.js';
 import { resumeDocs } from './tools.js';
 import { tzParts, nowISO, addMinutes } from './util.js';
@@ -25,6 +26,7 @@ export async function refreshBriefing() {
 export async function cronTick() {
   const out = { at: nowISO(), ran: 'nothing' };
   await loadSettings();
+  await loadKeys();
   await flushOutbox().catch((e) => { out.crm_error = e.message; });
   await resumeDocs({ staleMinutes: 6 }).catch((e) => { out.docs_error = e.message; });
   out.claude_retried = await (await import('./claude-worker.js')).retryStale({ force: true }).catch((e) => { out.claude_error = e.message; return 0; });

@@ -340,6 +340,14 @@ api.put('/settings', async (req, res) => {
   res.json(await saveSettings(req.body || {}));
 });
 
+// Keys (bring your own): saved encrypted, never sent back (only the last 4 characters)
+api.get('/keys', async (_req, res) => { const k = await import('../keys.js'); res.json({ keys: await k.keysStatus(), github_secrets: await k.githubSecretsSeen() }); });
+api.put('/keys/:name', async (req, res) => res.json(await (await import('../keys.js')).saveKey(req.params.name, req.body?.value)));
+api.delete('/keys/:name', async (req, res) => res.json(await (await import('../keys.js')).removeKey(req.params.name)));
+api.post('/keys/:name/generate', async (req, res) => res.json(await (await import('../keys.js')).generateKey(req.params.name)));
+api.post('/keys-test/:provider', async (req, res) => res.json(await (await import('../keys.js')).testAiKey(req.params.provider)));
+api.post('/github-secret', async (req, res) => res.json(await (await import('../keys.js')).saveGithubSecret(req.body || {})));
+
 // Integrations page: every connection's status (secrets only as set / not set) and live tests
 api.get('/integrations', async (_req, res) => res.json(await (await import('../integrations.js')).integrationsStatus()));
 api.post('/integrations/test/:name', async (req, res) => res.json(await (await import('../integrations.js')).testIntegration(req.params.name)));

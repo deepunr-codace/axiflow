@@ -45,6 +45,9 @@ export async function integrationsStatus() {
       settings: s.atomic,
     },
     claude: {
+      engine: cw.engineOf(s),
+      engines: cw.ENGINES,
+      model: cw.engineModel(s),
       mode: !!s.claude?.mode,
       on: cw.claudeOn(s),
       host: cw.claudeHost(),
@@ -58,7 +61,7 @@ export async function integrationsStatus() {
       recent: claudeDocs.map((d) => {
         let c = {};
         try { c = JSON.parse(d.input_json).claude || {}; } catch { /* old row */ }
-        return { id: d.id, kind: d.kind, title: d.title, status: d.status, error: d.error, attempts: c.attempts || 0, run_url: c.run_url || null, job: c.job?.kind || null, waiting: !!c.waiting, done: !!c.done, dispatched_at: c.dispatched_at || null, updated_at: d.updated_at };
+        return { engine: c.engine || 'github', id: d.id, kind: d.kind, title: d.title, status: d.status, error: d.error, attempts: c.attempts || 0, run_url: c.run_url || null, job: c.job?.kind || null, waiting: !!c.waiting, done: !!c.done, dispatched_at: c.dispatched_at || null, updated_at: d.updated_at };
       }),
     },
     templates: {

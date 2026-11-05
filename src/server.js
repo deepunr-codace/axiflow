@@ -9,6 +9,7 @@ import { usingRemote } from './db.js';
 
 await boot();
 await loadSettings();
+await (await import('./keys.js')).loadKeys({ force: true });
 await resumeDocs();
 
 const port = Number(process.env.PORT || 3000);

@@ -24,6 +24,8 @@ export class AiError extends Error {}
 
 let client = null;
 const api = () => (client ??= new Anthropic());
+/** Keys saved in Integrations (src/keys.js) change process.env: the next call builds a client with the new key. */
+export function resetClient() { client = null; }
 
 const anthropicKey = () => !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
 const openrouterKey = () => !!process.env.OPENROUTER_API_KEY;
@@ -98,8 +100,19 @@ function addUsage(acc, u) {
   acc.ws += u.server_tool_use?.web_search_requests || 0;
 }
 
-async function preflight() {
+/**
+ * force = { provider, model }: the Claude engines of Claude mode (src/claude-worker.js) run on that provider whatever
+ * the editor assistant uses, and do not need "Use AI" switched on; the daily budget still applies.
+ */
+async function preflight(force = null) {
   const s = getSettings();
+  if (force?.provider) {
+    s.ai.provider = force.provider;
+    if (force.model) { if (force.provider === 'openrouter') s.ai.openrouter_model = force.model; else s.ai.model = force.model; }
+    if (!keyFor(force.provider)) throw new AiError(`No API key for ${force.provider} (add it in Integrations)`);
+    if (await spentToday(s) >= s.ai.daily_budget_usd) throw new AiError(`Daily AI budget of $${s.ai.daily_budget_usd} reached`);
+    return s;
+  }
   if (!aiEnabled()) throw new AiError(!s.ai.enabled ? 'AI is turned off in Settings' : `No API key for ${aiProvider(s)} (set ${aiProvider(s) === 'openrouter' ? 'OPENROUTER_API_KEY' : 'ANTHROPIC_API_KEY'})`);
   if (await spentToday(s) >= s.ai.daily_budget_usd) throw new AiError(`Daily AI budget of $${s.ai.daily_budget_usd} reached`);
   return s;
@@ -117,8 +130,8 @@ function describeError(e) {
  * outputs don't hit HTTP timeouts, and resumes `pause_turn` from long server-tool loops.
  * Returns { text, sources }.
  */
-export async function runText({ purpose, leadId, system, prompt, tools, effort = 'medium', maxTokens = 32000 }) {
-  const s = await preflight();
+export async function runText({ purpose, leadId, system, prompt, tools, effort = 'medium', maxTokens = 32000, force = null }) {
+  const s = await preflight(force);
   if (aiProvider(s) === 'openrouter') {
     const web = (tools || []).some((t) => /web_search|web_fetch/.test(t.type || t.name || ''));
     // OpenRouter bills web search separately, so free models (":free") cannot use it on an account without credits:
@@ -171,8 +184,8 @@ export async function runText({ purpose, leadId, system, prompt, tools, effort =
  * messages: a whole conversation after the system prompt ([{ role: 'user'|'assistant', content }]) instead of one prompt.
  * temperature / model (OpenRouter model override) / timeoutMs are optional; temperature is only sent to OpenRouter.
  */
-export async function runJson({ purpose, leadId, system, prompt, messages = null, schema, effort = 'low', maxTokens = 16000, temperature, model, timeoutMs }) {
-  const s = await preflight();
+export async function runJson({ purpose, leadId, system, prompt, messages = null, schema, effort = 'low', maxTokens = 16000, temperature, model, timeoutMs, force = null }) {
+  const s = await preflight(force);
   if (aiProvider(s) === 'openrouter') return limited(async () => (await orRun({ s, purpose, leadId, system, prompt, messages, effort, maxTokens, schema, temperature, modelOverride: model, timeoutMs })).data);
   return limited(async () => {
     const t0 = Date.now();

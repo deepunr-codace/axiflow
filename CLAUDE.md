@@ -13,7 +13,34 @@ The team's main CRM is **Twenty**, set up by a co-worker and run by the **teleca
 
 Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATABASE_URL` and `pg`; embedded PGlite in `data/pg` when `DATABASE_URL` is empty), Vercel Blob for uploads (`data/uploads` locally), nodemailer, `@anthropic-ai/sdk` (Claude, `claude-opus-5-5`), and a vanilla-JS admin SPA in `public/`. There is no build step. Code map: see README. The old SQLite file `data/crm.db` is kept only as a backup/migration source.
 
-## Status (2026-11-05, latest): automatic = template, by hand = choice; Integrations page
+## Status (2026-11-05, latest): BYOK keys + Claude engines (GitHub / Claude API / OpenRouter)
+- **Keys** (owner: "add options to add keys. BYOK + this claude integration", then "add open router too"):
+  - **Store:** `src/keys.js`, table `app_keys`; AES-256-GCM, key from `KEYS_SECRET`, else `SESSION_SECRET`.
+    - Changing SESSION_SECRET makes saved keys unreadable (shown as such; save them again).
+  - **What can be set** (`KEY_DEFS`): Anthropic, OpenRouter, the GitHub token, the callback secret, CRM URL and key, WEBHOOK_SECRET, CRON_SECRET, SMTP_*, WA_*.
+  - **What cannot:** DATABASE_URL, ADMIN_PASSWORD, SESSION_SECRET.
+  - **How they apply:** `loadKeys()` (request middleware, cron, server start; 30 s cache) writes them into `process.env`. A saved key wins over the server value; Remove goes back to the server value. `claude.js` `resetClient()` picks up a new Anthropic key.
+  - **What the browser gets:** only the source (app / server / unreadable) and the last 4 characters.
+  - **API:** `GET /api/keys`, `PUT|DELETE /api/keys/:name`, `POST /api/keys/:name/generate` (random secret, shown once), `POST /api/keys-test/anthropic|openrouter`, `POST /api/github-secret`.
+    - `/api/github-secret` saves the repo secrets AXIFLOW_CALLBACK_SECRET (from CLAUDE_WORKER_SECRET), CRON_SECRET and a pasted CLAUDE_CODE_OAUTH_TOKEN (not stored). It seals them with libsodium (new dependency `libsodium-wrappers`) and needs a token with **Secrets: read and write**.
+- **Engines** (`claude.engine`; `ENGINES`, `engineOf`, `engineModel` in claude-worker.js):
+  - `github`: as before;
+  - `anthropic`: own API key, model `claude.api_model.anthropic`, default claude-opus-5-5;
+  - `openrouter`: own key, model `claude.api_model.openrouter`, default anthropic/claude-opus-5.5.
+  - **How the API engines run:** `runOnApi` in `background()`: web research with runText when `job.web`, then runJson with the job schema. "Claude designs" asks for JSON text, parsed by `parseJsonText`. The result goes through the same `acceptResult`, so retries, CRM writes and follow-ups are unchanged.
+  - **Provider choice:** `runJson` / `runText` take `force: { provider, model }`, independent of the editor assistant's provider and of "Use AI"; the daily budget still applies.
+  - **Setup checks:** `claudeMissing()` depends on the engine (the API engines need only their key, no https).
+  - **Retries:** they run only on the live host; API jobs retry after 7 minutes (the Vercel function limit is 5).
+- **UI** (Integrations):
+  - a Keys tile and card (groups, Save / Generate / Remove / Test, "Save to GitHub" rows for the repo secrets);
+  - the Claude card has a 3-way engine picker (saves at once), the models and the daily spend limit;
+  - the Claude-mode setup dialog links to Integrations.
+- **Tested:**
+  - throwaway DB + stand-in OpenRouter (`byok-e2e.mjs` in the session scratchpad): key saved through the API (not in env), stored encrypted, survives a restart; script, Editorial deck, "Claude designs" (10 slides) and proposal all ready on the openrouter engine; no key in `/api/integrations` or `/api/keys`;
+  - GitHub-engine regression e2e passes; page checked in headless Edge.
+  - **Not tested:** the real Anthropic and OpenRouter APIs, the GitHub secrets API.
+
+## Status (2026-11-05): automatic = template, by hand = choice; Integrations page
 - **Automatic vs by hand** (owner: "let auto creation use template and manual show options"):
   - `tools.autoTemplate(kind)`: documents made by the automation (`createDoc(..., { auto: true })`) use `automation.auto_template.<kind>` (a template id; 0 = the default). They never use "Claude designs"; if that is the default, the first real template is taken (Editorial first).
   - The New form (`renderTool`) offers two choices: "Use a template" (picker without the Claude template) or "Claude designs it". The second is disabled without Claude mode; `/api/tools/options` returns `claude_mode`.

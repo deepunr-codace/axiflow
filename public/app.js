@@ -271,7 +271,7 @@ function setClaude(on) {
 async function toggleClaude(btn) {
   const on = !$('#claudeBtn').classList.contains('on');
   if (on && META.claude_missing?.length) {
-    modal('Claude mode is not set up yet', `<p>Claude mode lets Claude Code write pitch scripts, brochures and proposals on GitHub, then sends them back here. It still needs:</p><ul>${META.claude_missing.map((m) => `<li>${esc(m)}</li>`).join('')}</ul><p class="small muted">The steps are in Tool settings, Claude.</p>`, '<a class="btn primary" href="#/settings/claude" data-close-dialog>Open Tool settings</a>');
+    modal('Claude mode is not set up yet', `<p>Claude mode lets Claude write pitch scripts, brochures and proposals for each CRM lead, on GitHub with your Claude subscription or on your own API key. It still needs:</p><ul>${META.claude_missing.map((m) => `<li>${esc(m)}</li>`).join('')}</ul><p class="small muted">Add keys and choose the engine in Integrations.</p>`, '<a class="btn primary" href="#/integrations/claude" data-close-dialog>Open Integrations</a>');
     document.querySelector('[data-close-dialog]')?.addEventListener('click', (ev) => ev.target.closest('dialog')?.close());
     return;
   }
@@ -1160,8 +1160,31 @@ async function renderSettings(section) {
  * live status, what is set (secrets only as set / not set), tests, and the settings that belong to it.
  */
 async function renderIntegrations(section) {
-  const st = await api('/integrations');
-  const s = (await api('/settings')).settings;
+  const [st, { settings: s }, kk] = await Promise.all([api('/integrations'), api('/settings'), api('/keys')]);
+  const KEY_GROUPS = [
+    ['claude', 'Claude and AI keys', 'Your own keys (BYOK). Claude mode can run on them instead of GitHub, and the editor assistant uses them.'],
+    ['github', 'Claude Code on GitHub', 'The token that starts the GitHub job, and the secret its answer is signed with.'],
+    ['crm', 'Team CRM', 'Where the CRM lives and the key AxiFlow reads it with.'],
+    ['sync', 'Live sync and scheduler', 'Secrets that protect the CRM trigger and the scheduler URL.'],
+    ['email', 'Email (SMTP)', ''], ['whatsapp', 'WhatsApp Cloud API', ''],
+  ];
+  const SRC = { app: ['green', 'Saved here'], server: ['', 'From the server'], unreadable: ['red', 'Cannot be read: save it again'] };
+  const keyRow = (k) => `<div class="key-row" data-key="${k.name}">
+      <div class="key-meta"><b>${esc(k.label)}</b><code class="small">${k.name}</code>${k.source ? `<span class="tag ${SRC[k.source][0]}">${SRC[k.source][1]}${k.last4 ? ` · ••••${esc(k.last4)}` : ''}</span>` : '<span class="tag">Not set</span>'}
+        ${k.hint ? `<span class="small muted key-hint">${esc(k.hint)}</span>` : ''}</div>
+      <div class="key-act"><input type="${k.plain ? 'text' : 'password'}" autocomplete="off" spellcheck="false" placeholder="${k.plain ? '' : k.source ? 'Paste a new value to replace it' : `Paste the key${k.prefix ? ` (${k.prefix}…)` : ''}`}" value="${k.plain ? esc(k.value || '') : ''}">
+        <button class="btn sm primary" data-key-save>Save</button>
+        ${k.gen ? '<button class="btn sm" data-key-gen title="Make a new random secret">Generate</button>' : ''}
+        ${k.source === 'app' || k.source === 'unreadable' ? `<button class="btn sm ghost" data-key-del title="${st.live ? 'Remove the key saved here' : 'Remove'}">Remove</button>` : ''}
+        ${k.name === 'ANTHROPIC_API_KEY' ? '<button class="btn sm" data-key-test="anthropic">Test</button>' : k.name === 'OPENROUTER_API_KEY' ? '<button class="btn sm" data-key-test="openrouter">Test</button>' : ''}</div>
+      <div class="int-test" data-key-res></div></div>`;
+  const ghSeen = kk.github_secrets || {};
+  const ghRow = (name, desc, from) => `<div class="key-row"><div class="key-meta"><b>${name}</b><span class="small muted key-hint">${desc}</span>${ghSeen[name] ? `<span class="tag green">Saved to GitHub ${fmtDate(ghSeen[name])}</span>` : ''}</div>
+      <div class="key-act">${from ? `<span class="small muted grow">Copies ${from} into the repo secret.</span>` : '<input type="password" autocomplete="off" data-gh-value placeholder="Paste the token from claude setup-token (not stored in AxiFlow)">'}<button class="btn sm" data-gh-save="${name}" ${from ? `data-gh-from="${from}"` : ''}><span class="mi">upload</span>Save to GitHub</button></div><div class="int-test" data-gh-res></div></div>`;
+  const keysCard = `<div class="card" id="i-keys"><div class="sec-h"><h2>Keys (bring your own)</h2></div>
+    <p class="small muted">Add API keys and secrets here instead of in .env or Vercel. They are stored encrypted in AxiFlow's database, used at once (no redeploy), and never shown again: only the last 4 characters. A key saved here wins over the same variable on the server; Remove goes back to the server's value. The database URL, login password and session secret stay on the server.</p>
+    ${KEY_GROUPS.map(([g, title, text]) => `<div class="key-group"><h3>${title}</h3>${text ? `<p class="small muted">${text}</p>` : ''}${kk.keys.filter((k) => k.group === g).map(keyRow).join('')}
+      ${g === 'github' ? `<h3 style="margin-top:14px">GitHub repo secrets</h3><p class="small muted">The GitHub job reads these from the repo. AxiFlow can save them for you when the GitHub token also has <b>Secrets: read and write</b> for the repo.</p>${ghRow('CLAUDE_CODE_OAUTH_TOKEN', 'Claude subscription login for Claude Code (run claude setup-token on your computer).', '')}${ghRow('AXIFLOW_CALLBACK_SECRET', 'Must equal the callback secret above.', 'CLAUDE_WORKER_SECRET')}${ghRow('CRON_SECRET', 'Lets the 30-minute GitHub pinger call the scheduler.', 'CRON_SECRET')}` : ''}</div>`).join('')}</div>`;
   const val = (path) => path.split('.').reduce((o, k) => o?.[k], s);
   const field = (path, label, type = 'text', opts) => {
     const v = val(path);
@@ -1178,7 +1201,8 @@ async function renderIntegrations(section) {
   const crmOk = crm.keys && crm.enabled && !crm.error;
   const liveSync = !!crm.last_webhook;
   const tiles = [
-    ['claude', 'Claude Code', c.on, c.mode && !c.on, c.on ? 'Writing the 3 tools' : c.mode ? 'On, setup missing' : 'Off'],
+    ['claude', 'Claude mode', c.on, c.mode && !c.on, c.on ? `On · ${({ github: 'GitHub', anthropic: 'Claude API', openrouter: 'OpenRouter' })[c.engine]}` : c.mode ? 'On, setup missing' : 'Off'],
+    ['keys', 'Keys', kk.keys.some((k) => k.source === 'app'), kk.keys.some((k) => k.source === 'unreadable'), `${kk.keys.filter((k) => k.source).length} of ${kk.keys.length} set · ${kk.keys.filter((k) => k.source === 'app').length} saved here`],
     ['crm', 'Team CRM', crmOk, crm.keys && !crmOk, crmOk ? `${crm.linked_leads} leads · ${crm.read_only ? 'read only' : 'read and write'}` : crm.keys ? 'Switched off' : 'Not connected'],
     ['sync', 'Live sync', liveSync, false, liveSync ? `Last change ${fmtDate(crm.last_webhook.at)}` : 'No CRM trigger yet'],
     ['templates', 'Templates', true, false, 'Automatic and by hand'],
@@ -1190,19 +1214,19 @@ async function renderIntegrations(section) {
   const tplOpts = (kind) => [[0, 'The default template'], ...st.templates.list.filter((t) => t.kind === kind && t.source !== 'builtin-claude').map((t) => [t.id, t.name + (t.is_default ? ' (default)' : '')])];
   const runs = c.recent.length ? `<table class="small int-table"><tr><th>Document</th><th>Job</th><th>Status</th><th>Tries</th><th>Sent</th><th></th></tr>${c.recent.map((d) => `<tr><td><a href="#/${d.kind}/${d.id}">${esc(d.title || '#' + d.id)}</a></td><td>${esc(d.job || d.kind)}</td><td>${d.waiting ? '<span class="tag amber">Writing</span>' : d.status === 'ready' ? '<span class="tag green">Ready</span>' : d.status === 'error' ? `<span class="tag red" title="${esc(d.error || '')}">Failed</span>` : esc(d.status)}</td><td>${d.attempts}</td><td>${fmtDate(d.dispatched_at)}</td><td>${d.run_url ? `<a href="${esc(d.run_url)}" target="_blank" rel="noopener">GitHub run</a>` : ''}</td></tr>`).join('')}</table>` : '<p class="small muted">No Claude jobs yet.</p>';
   view.innerHTML = `
-  <p class="hint">Every connection AxiFlow uses, what is set up and what each one does. Secret values are never shown here, only whether they are set. They live in <b>.env</b> locally and in <b>Vercel → Settings → Environment Variables</b> on the live site${st.live ? '' : ' (this is a local server: it never sends CRM writes or Claude jobs)'}.</p>
+  <p class="hint">Every connection AxiFlow uses, what is set up and what each one does. Add your own keys under <b>Keys</b> (stored encrypted), or keep them on the server (.env locally, Vercel environment variables live). Secret values are never shown, only whether they are set.${st.live ? '' : ' This is a local server: it never sends CRM writes or GitHub jobs.'}</p>
   <div class="int-tiles">${tiles.map(([id, n, on, warn, sub]) => `<a class="int-tile" href="#/integrations/${id}" data-jump="${id}">${dot(on, warn)}<b>${n}</b><span class="small muted">${esc(sub)}</span></a>`).join('')}</div>
+  ${keysCard}
 
-  <div class="card" id="i-claude"><div class="sec-h"><h2>Claude Code on GitHub</h2><span class="spacer"></span><button class="btn sm" data-test="github"><span class="mi">network_check</span>Test GitHub</button><button class="btn sm ${c.mode ? '' : 'primary'}" id="intClaude">${c.mode ? 'Switch Claude mode off' : 'Switch Claude mode on'}</button></div>
-    <p class="small muted">With Claude mode on, the pitch script, brochure and proposal are written by Claude Code in the GitHub repo: AxiFlow sends the job (lead data from the CRM, research, rules), Claude researches the business and writes it, a checker tests the answer, and the result comes back here, is laid out and goes to the CRM. No answer in time = sent again; after the last try the document shows an error.</p>
-    <div class="row" style="margin:8px 0">${dot(c.on, c.mode && !c.on)}<b>${c.on ? 'Working' : c.mode ? 'On, but setup is missing' : 'Off'}</b>${c.host ? '' : '<span class="pill">Local server: jobs are sent only by the live site</span>'}</div>
-    ${c.missing.length ? `<div class="int-warn"><b>Still needed:</b><ul>${c.missing.map((m) => `<li>${esc(m)}</li>`).join('')}</ul></div>` : ''}
+  <div class="card" id="i-claude"><div class="sec-h"><h2>Claude mode</h2><span class="spacer"></span>${c.engine === 'github' ? '<button class="btn sm" data-test="github"><span class="mi">network_check</span>Test GitHub</button>' : ''}<button class="btn sm ${c.mode ? '' : 'primary'}" id="intClaude">${c.mode ? 'Switch Claude mode off' : 'Switch Claude mode on'}</button></div>
+    <p class="small muted">With Claude mode on, Claude writes the pitch script, brochure and proposal for each CRM lead: AxiFlow sends the job (lead data from the CRM, research, rules), Claude researches the business and writes it, and the result is laid out here and goes to the CRM. Choose who runs it: Claude Code on GitHub with your Claude subscription, or your own API key (Anthropic or OpenRouter, paid per use). No answer in time = sent again; after the last try the document shows an error.</p>
+    <div class="engine-pick">${Object.entries(c.engines).map(([k, n]) => `<label class="how-opt"><input type="radio" name="engine" data-ipath="claude.engine" data-type="radio" value="${k}" ${c.engine === k ? 'checked' : ''}><span class="how-body"><b>${esc(n)}</b><span class="small muted">${{ github: 'Runs Claude Code in the GitHub repo. No API cost; uses your Claude plan. Up to 25 minutes for a designed brochure.', anthropic: 'Runs here on your Anthropic key (pay per use, logged in the AI cost log). About 1 to 4 minutes per document.', openrouter: 'Runs here through OpenRouter on your key (pay per use; needs credits for web research).' }[k]}</span></span></label>`).join('')}</div>
+    <div class="row" style="margin:12px 0 8px">${dot(c.on, c.mode && !c.on)}<b>${c.on ? 'Working' : c.mode ? 'On, but setup is missing' : 'Off'}</b><span class="pill">${esc(c.engines[c.engine])} · ${esc(c.model)}</span>${c.host ? '' : '<span class="pill">Local server: retries run only on the live site</span>'}</div>
+    ${c.missing.length ? `<div class="int-warn"><b>Still needed for this engine:</b><ul>${c.missing.map((m) => `<li>${esc(m)}</li>`).join('')}</ul><a href="#/integrations/keys" data-jump="keys">Add keys</a></div>` : ''}
     <div class="int-test" data-result="github"></div>
-    <h3>Server settings</h3>${envRows(c.env)}
-    <h3>GitHub repo secrets</h3><p class="small muted">Set in GitHub → the repo → Settings → Secrets and variables → Actions. They cannot be read from here.</p>
-    <div class="int-env">${[['CLAUDE_CODE_OAUTH_TOKEN', 'Claude subscription login (claude setup-token)'], ['AXIFLOW_CALLBACK_SECRET', 'same value as CLAUDE_WORKER_SECRET'], ['CRON_SECRET', 'for the 30-minute scheduler pinger (same as on Vercel)']].map(([k, d]) => `<span class="int-key"><span class="mi in">key</span>${k}<small class="muted"> · ${d}</small></span>`).join('')}</div>
-    ${copyRow('Result callback', c.callback_url)}${copyRow('Workflow', c.workflow)}
-    <div class="form-grid" style="margin-top:12px">${field('claude.github_repo', 'GitHub repo (owner/name)')}${field('claude.timeout_minutes', 'Wait for an answer (minutes)', 'number')}${field('claude.max_attempts', 'Tries before giving up', 'number')}${field('claude.web_research', 'Claude may search the web for the business', 'bool')}</div>
+    ${c.engine === 'github' ? `${copyRow('Result callback', c.callback_url)}${copyRow('Workflow', c.workflow)}
+    <div class="form-grid" style="margin-top:12px">${field('claude.github_repo', 'GitHub repo (owner/name)')}${field('claude.timeout_minutes', 'Wait for an answer (minutes)', 'number')}</div>` : `<div class="form-grid" style="margin-top:12px">${field('claude.api_model.anthropic', 'Model on the Claude API')}${field('claude.api_model.openrouter', 'Model on OpenRouter')}${field('ai.daily_budget_usd', 'Daily spend limit (USD)', 'number')}</div>`}
+    <div class="form-grid" style="margin-top:12px">${field('claude.max_attempts', 'Tries before giving up', 'number')}${field('claude.web_research', 'Claude may search the web for the business', 'bool')}</div>
     <h3>Last jobs</h3>${runs}
     <p class="small muted">Last result received: ${when(c.last_result)}</p></div>
 
@@ -1256,6 +1280,43 @@ async function renderIntegrations(section) {
   <div class="row save-bar"><span class="spacer"></span><button class="btn primary" id="intSave">Save settings</button></div>`;
 
   $$('[data-copy]').forEach((b) => (b.onclick = () => navigator.clipboard.writeText(b.dataset.copy).then(() => toast('Copied'))));
+  // Keys (BYOK)
+  const keyName = (b) => b.closest('[data-key]').dataset.key;
+  const keyRes = (b, ok, text) => { b.closest('.key-row').querySelector('[data-key-res]').innerHTML = `<div class="int-res ${ok ? 'ok' : 'bad'}"><span class="mi in">${ok ? 'check_circle' : 'error'}</span>${esc(text)}</div>`; };
+  const again = async (sec) => { META = await api('/meta'); setClaude(!!META.claude_mode); renderIntegrations(sec); };
+  $$('[data-key-save]').forEach((b) => (b.onclick = () => busy(b, async () => {
+    const inp = b.closest('.key-act').querySelector('input');
+    await api(`/keys/${keyName(b)}`, { method: 'PUT', body: { value: inp.value } });
+    inp.value = '';
+    toast(`${keyName(b)} saved`);
+    await again('keys');
+  })));
+  $$('[data-key-del]').forEach((b) => (b.onclick = () => busy(b, async () => {
+    if (!confirm(`Remove ${keyName(b)} saved in AxiFlow?${st.live ? ' The server\'s own value (if any) is used again.' : ''}`)) return;
+    await api(`/keys/${keyName(b)}`, { method: 'DELETE' });
+    toast(`${keyName(b)} removed`);
+    await again('keys');
+  })));
+  $$('[data-key-gen]').forEach((b) => (b.onclick = () => busy(b, async () => {
+    const n = keyName(b);
+    if (!confirm(`Make a new ${n}? Anything that uses the old value stops working until it gets the new one.`)) return;
+    const r = await api(`/keys/${n}/generate`, { body: {} });
+    const where = { CLAUDE_WORKER_SECRET: 'Save it to GitHub as AXIFLOW_CALLBACK_SECRET (button below).', WEBHOOK_SECRET: 'Put it in the CRM trigger SQL (the x-webhook-secret value) and run the SQL again.', CRON_SECRET: 'Save it to GitHub as CRON_SECRET (button below) and update any other pinger.' }[n] || '';
+    modal(`New ${n}`, `<p>Copy it now: it is not shown again.</p><div class="int-copy"><code>${esc(r.value)}</code><button class="btn sm icon-only" id="genCopy" title="Copy"><span class="mi">content_copy</span></button></div><p class="small muted">${where}</p>`, '<button class="btn primary" data-close-dialog>Done</button>');
+    $('#genCopy').onclick = () => navigator.clipboard.writeText(r.value).then(() => toast('Copied'));
+    document.querySelector('[data-close-dialog]')?.addEventListener('click', (ev) => { ev.target.closest('dialog')?.close(); again('keys'); });
+  })));
+  $$('[data-key-test]').forEach((b) => (b.onclick = () => busy(b, async () => { const r = await api(`/keys-test/${b.dataset.keyTest}`, { body: {} }); keyRes(b, r.ok, `${r.detail} (${r.ms} ms)`); })));
+  $$('[data-gh-save]').forEach((b) => (b.onclick = () => busy(b, async () => {
+    const row = b.closest('.key-row');
+    const res = row.querySelector('[data-gh-res]');
+    try {
+      await api('/github-secret', { body: { secret: b.dataset.ghSave, from: b.dataset.ghFrom || undefined, value: row.querySelector('[data-gh-value]')?.value } });
+      res.innerHTML = '<div class="int-res ok"><span class="mi in">check_circle</span>Saved in the GitHub repo</div>';
+      const v = row.querySelector('[data-gh-value]'); if (v) v.value = '';
+    } catch (e) { res.innerHTML = `<div class="int-res bad"><span class="mi in">error</span>${esc(e.message)}</div>`; }
+  })));
+  $$('input[name=engine]').forEach((r) => (r.onchange = async () => { await api('/settings', { method: 'PUT', body: { claude: { engine: r.value } } }); toast(`Claude mode runs on: ${c.engines[r.value]}`); await again('claude'); }));
   $$('[data-jump]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); $('#i-' + a.dataset.jump)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
   $$('[data-test]').forEach((b) => (b.onclick = () => busy(b, async () => {
     const r = await api(`/integrations/test/${b.dataset.test}`, { body: {} });
@@ -1268,6 +1329,7 @@ async function renderIntegrations(section) {
     const patch = {};
     for (const el of $$('[data-ipath]')) {
       const keys = el.dataset.ipath.split('.');
+      if (el.dataset.type === 'radio' && !el.checked) continue;
       const v = el.dataset.type === 'bool' ? el.checked : el.dataset.type === 'number' ? Number(el.value) : el.dataset.type === 'list' ? el.value.split(',').map((x) => x.trim()).filter(Boolean) : el.value;
       let o = patch;
       keys.slice(0, -1).forEach((k) => (o = o[k] ??= {}));
