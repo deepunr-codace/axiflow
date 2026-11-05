@@ -1,0 +1,27 @@
+# Safety net for AxiFlow (owner, 2026-11-05: "fully automated at high speed"): every 30 minutes, ask AxiFlow to
+# read the CRM, flush its CRM writes and retry Claude jobs that got no answer. The CRM trigger does this within
+# seconds of every change; this only catches what was missed (Vercel's own cron runs once a day on the free plan).
+# Secret: CRON_SECRET (same value as AxiFlow's CRON_SECRET in .env / Vercel). Every 30 min stays within GitHub's
+# free minutes for a private repo.
+name: AxiFlow check
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Run AxiFlow's check
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then echo "CRON_SECRET is not set; skipping"; exit 0; fi
+          code=$(curl -s -o /dev/null -w "%{http_code}" -m 120 -H "Authorization: Bearer $CRON_SECRET" https://axiflow-v1.vercel.app/api/cron/tick)
+          echo "AxiFlow answered $code"
+          [ "$code" = "200" ]

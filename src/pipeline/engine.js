@@ -212,8 +212,16 @@ async function step(lead, { force }) {
       await setStage(lead, 'researching', 'pitch maker started');
       return true;
     case 'researching': {
-      await runPitchMaker(lead.id);
-      await runLeadTools(lead.id);
+      if ((await import('../claude-worker.js')).claudeOn()) {
+        // Claude mode (owner, 2026-11-05: "fully automated at high speed"): Claude researches and writes, so the brochure
+        // job goes out first; the in-app pitch maker then runs rule-based (no AI calls, no homepage design), only for the
+        // messages; a ready call script is kept instead of writing a second one.
+        await runLeadTools(lead.id, { script: !(await tools.latestLeadDoc('script', lead.id)) });
+        await runPitchMaker(lead.id, { design: false, ai: false });
+      } else {
+        await runPitchMaker(lead.id);
+        await runLeadTools(lead.id);
+      }
       if (auto.auto_approve_brochure) await approveBrochure(lead.id, 'auto');
       else {
         await setStage(await getLead(lead.id), 'brochure_ready', 'pitch, design & brochure ready for approval');
@@ -400,11 +408,11 @@ async function runTouch(lead) {
  * Pitch maker: web research → pitch → homepage design concept → brochure.
  * Uses Claude when available; otherwise rule-based fallbacks so the pipe never stalls.
  */
-export async function runPitchMaker(id, { design = true } = {}) {
+export async function runPitchMaker(id, { design = true, ai = true } = {}) {
   const s = getSettings();
   const lead = await getLead(id);
   const audit = lead.audit_json ? JSON.parse(lead.audit_json) : null;
-  const useAi = aiEnabled();
+  const useAi = ai && aiEnabled();
 
   let research;
   try {
@@ -428,6 +436,8 @@ export async function runPitchMaker(id, { design = true } = {}) {
     await logEvent(id, 'pitch_maker', 'pitch', 'error', e.message);
     pitch = fallbackPitch(await getLead(id), audit);
   }
+  const prev = (() => { try { return lead.pitch_json ? JSON.parse(lead.pitch_json) : null; } catch { return null; } })();
+  if (prev?.telecaller_script && !useAi) pitch.telecaller_script = prev.telecaller_script; // keep the call script the tools made
   await update('leads', id, { pitch_json: pitch, pitch_source: pitch.source, recommended_package: pitch.recommended_package, updated_at: nowISO() });
   await logEvent(id, 'pitch_maker', 'pitch', 'ok', `${pitch.source}: ${pitch.headline}`);
 

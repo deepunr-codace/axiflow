@@ -212,7 +212,7 @@ export const DEFAULT_SETTINGS = {
    * Claude mode (owner, 2026-11-05): the three tools write their documents with Claude Code on GitHub
    * (src/claude-worker.js, .github/workflows/claude-generate.yml). Switched with the Claude button in the sidebar.
    */
-  claude: { mode: false, github_repo: 'deepunr-codace/axiflow', timeout_minutes: 20, max_attempts: 3, web_research: true },
+  claude: { mode: false, github_repo: 'deepunr-codace/axiflow', timeout_minutes: 12, max_attempts: 3, web_research: true },
   brochure_ai: {
     enabled: true,
     pipeline: 'staged',
@@ -526,6 +526,8 @@ export async function seedDefaults() {
   // CRM approval (owner, 2026-11-05): rows wait as pending; the old saved default 'approved' is replaced.
   const approvalFix = s.atomic && (s.atomic.brochure_status === 'approved' || s.atomic.proposal_status === 'approved' || s.atomic.new_lead_action === 'interested')
     ? { brochure_status: 'pending', proposal_status: 'pending', new_lead_action: 'script' } : null; // owner 2026-11-05: new lead = call script only
+  // Claude mode retry wait: the first saved default (20 min) becomes the faster 12 (owner, 2026-11-05: "high speed").
+  if (s.claude?.timeout_minutes === 20) await saveSettings({ claude: { timeout_minutes: 12 } });
   if (Object.keys(renamed).length || s.billing.invoice_prefix === 'WS' || about || writeTables || approvalFix) {
     await saveSettings({ agency: renamed, ...(s.billing.invoice_prefix === 'WS' ? { billing: { invoice_prefix: 'AWS' } } : {}), ...(about ? { brochure: { about } } : {}), ...(writeTables || approvalFix ? { atomic: { ...(writeTables ? { write_tables: writeTables } : {}), ...(approvalFix || {}) } } : {}) });
   }

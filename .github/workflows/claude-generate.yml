@@ -19,13 +19,23 @@ concurrency:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      # Speed: keep the Claude Code package between runs (refreshed weekly).
+      - id: week
+        run: echo "n=$(date +%G-%V)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: claude-code-npm-${{ steps.week.outputs.n }}
+      - name: Install Claude Code
+        run: npm install -g --prefer-offline --no-audit --no-fund @anthropic-ai/claude-code@latest
 
       - name: Write the job (not printed)
         env:
@@ -42,7 +52,7 @@ jobs:
         run: |
           TOOLS="Read,Write,Edit,Bash(node claude-worker/validate.mjs),Bash(node claude-worker/validate.mjs:*)"
           if [ "$(node -p "require('./claude-worker/work/job.json').web ? 1 : 0")" = "1" ]; then TOOLS="$TOOLS,WebSearch,WebFetch"; fi
-          npx -y @anthropic-ai/claude-code@latest -p "$(cat claude-worker/PROMPT.txt)" \
+          claude -p "$(cat claude-worker/PROMPT.txt)" \
             --allowedTools "$TOOLS" --max-turns 45 --output-format json > claude-worker/work/claude.json
 
       - name: Send the result back to AxiFlow
