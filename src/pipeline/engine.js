@@ -125,10 +125,10 @@ export async function applyInterestChange(id, interested, reason = 'interest cha
   }
   await update('leads', id, { interested, updated_at: nowISO() });
   const fresh = await getLead(id);
-  if (interested === 'yes' && ['new', 'nurture', 'reengage', 'closed_no_reply', 'not_interested', 'needs_manual'].includes(lead.stage)) {
+  if (interested === 'yes' && ['new', 'prepared', 'nurture', 'reengage', 'closed_no_reply', 'not_interested', 'needs_manual'].includes(lead.stage)) {
     await setStage(fresh, 'qualified', reason, { pipe: 'conversion', next_action_at: null, next_action_type: null, next_action_note: null });
     queueAdvance(id);
-  } else if (interested === 'no' && (['qualified', 'brochure_ready', 'brochure_approved', 'nurture', 'needs_manual'].includes(lead.stage) || CONVERSION_SEQ.has(lead.stage))) {
+  } else if (interested === 'no' && (['prepared', 'qualified', 'brochure_ready', 'brochure_approved', 'nurture', 'needs_manual'].includes(lead.stage) || CONVERSION_SEQ.has(lead.stage))) {
     await enterMarketing(fresh, 'reengage', { reason });
   }
 }

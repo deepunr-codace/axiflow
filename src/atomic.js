@@ -32,9 +32,10 @@ addColumns('leads', { crm_deal_id: 'INTEGER', crm_company_id: 'INTEGER', crm_con
 addColumns('crm_outbox', { target: "TEXT DEFAULT 'webhook'" });
 addColumns('leads', { crm_script_note_id: 'INTEGER', crm_script_note_on: 'TEXT' }); // the one CRM note that holds this lead's call script
 addColumns('leads', { crm_removed_at: 'TEXT', crm_brochure_folder: 'TEXT' });
-addColumns('leads', { crm_brochure_state: 'TEXT', crm_proposal_state: 'TEXT' }); // last brochure/proposal status seen in or written to the CRM // set when the lead was deleted in the CRM: no more CRM writes for it
+addColumns('leads', { crm_brochure_state: 'TEXT', crm_proposal_state: 'TEXT' });
+addColumns('leads', { crm_lead_stage: 'TEXT' }); // last contacts.lead_stage seen (the telecaller's call stage) // last brochure/proposal status seen in or written to the CRM // set when the lead was deleted in the CRM: no more CRM writes for it
 
-export const ACTIONS = ['interested', 'proposal', 'won', 'lost', 'nurture', 'not_interested', 'ignore'];
+export const ACTIONS = ['script', 'interested', 'proposal', 'won', 'lost', 'nurture', 'not_interested', 'ignore'];
 
 const conf = () => ({ url: (process.env.CRM_SUPABASE_URL || '').replace(/\/+$/, ''), key: process.env.CRM_SUPABASE_SECRET_KEY || process.env.CRM_SUPABASE_SERVICE_KEY || '' });
 export const atomicKeys = () => !!(conf().url && conf().key);
@@ -123,7 +124,7 @@ const actionFor = (stage, s = getSettings().atomic) => (s.stages || {})[stage] |
 const hashOf = (deal, co, ct) => crypto.createHash('sha1').update(JSON.stringify([
   deal && [deal.id, deal.name, deal.stage, deal.amount, deal.description, deal.archived_at],
   co && [co.name, co.website, co.city, co.sector, co.email, co.phone_number, co.whatsapp_number, co.description],
-  ct && [ct.id, ct.first_name, ct.last_name, ct.email_jsonb, ct.phone_jsonb, ct.whatsapp_number, ct.phone_e164, ct.do_not_contact, ct.last_outcome, ct.last_attempt_at],
+  ct && [ct.id, ct.first_name, ct.last_name, ct.email_jsonb, ct.phone_jsonb, ct.whatsapp_number, ct.phone_e164, ct.do_not_contact, ct.last_outcome, ct.last_attempt_at, ct.lead_stage],
 ])).digest('hex').slice(0, 16);
 
 /**
@@ -139,7 +140,8 @@ export async function syncLead(co, ct, deal, { engine, twenty, budget, useCallLo
   const links = { crm_deal_id: deal?.id ?? null, crm_company_id: co?.id ?? null, crm_contact_id: ct?.id ?? null, crm_sales_id: deal?.sales_id ?? co?.sales_id ?? ct?.sales_id ?? null };
   const input = dealInput(deal, co, ct, s);
   const stageKey = deal ? deal.stage : '';
-  const action = deal ? actionFor(deal.stage, s) : s.new_lead_action || 'interested';
+  const leadStageAction = ct?.lead_stage ? (s.lead_stages || {})[ct.lead_stage] || null : null;
+  const action = deal ? actionFor(deal.stage, s) || leadStageAction : leadStageAction || s.new_lead_action || 'script';
   const callKey = ct?.last_outcome ? [ct.last_outcome, ct.last_attempt_at || ''].join('|') : null;
 
   if (!lead) {
@@ -155,9 +157,22 @@ export async function syncLead(co, ct, deal, { engine, twenty, budget, useCallLo
       await logEvent(r.id, 'atomic', 'lead', 'ok', `imported as history from ${ext} (${label})`);
       return 'history';
     }
+    if (action === 'script' || action === 'ignore') {
+      // A new lead: only the call script for the telecaller's first call (pitch point + script note go to the CRM).
+      // The brochure comes when the lead turns interested.
+      const r = await engine.createLead({ ...input, interested: 'unknown' }, { source: 'crm', autoRun: false });
+      await update('leads', r.id, { ...links, crm_stage_key: stageKey, crm_lead_stage: ct?.lead_stage || null, crm_call_key: callKey, crm_sync_hash: hash, ...(r.duplicate ? {} : { stage: 'prepared', stage_changed_at: nowISO() }) });
+      await logEvent(r.id, 'atomic', 'lead', 'ok', `${r.duplicate ? 'linked to existing lead' : 'created'} from ${ext} (${label}): call script only`);
+      if (!r.duplicate) {
+        await addActivity(r.id, 'system', 'New lead from the CRM: writing the call script (the brochure follows when the lead is interested)');
+        const { background } = await import('./background.js');
+        background(() => prepareScript(r.id), 'crm-script');
+      }
+      return r.duplicate ? 'linked' : 'created';
+    }
     const interested = action === 'nurture' ? 'unknown' : action === 'not_interested' ? 'no' : 'yes';
     const r = await engine.createLead({ ...input, interested }, { source: 'crm' });
-    await update('leads', r.id, { ...links, crm_stage_key: stageKey, crm_call_key: callKey, crm_sync_hash: hash });
+    await update('leads', r.id, { ...links, crm_stage_key: stageKey, crm_lead_stage: ct?.lead_stage || null, crm_call_key: callKey, crm_sync_hash: hash });
     await logEvent(r.id, 'atomic', 'lead', 'ok', `${r.duplicate ? 'linked to existing lead' : 'created'} from ${ext} (${label})`);
     if (r.duplicate && interested !== 'unknown') await engine.applyInterestChange(r.id, interested, label);
     if (action === 'proposal') await runAction(r.id, 'proposal', stageKey, engine);
@@ -173,6 +188,13 @@ export async function syncLead(co, ct, deal, { engine, twenty, budget, useCallLo
     if (await get(`SELECT 1 AS one FROM docs WHERE lead_id = :id AND kind = 'brochure' AND status = 'ready'`, { id: lead.id })) await crmEvent(lead.id, 'lead.brochure_ready', { reason: 'contact or deal added in the CRM' });
   }
 
+  if ((ct?.lead_stage || null) !== (lead.crm_lead_stage || null)) {
+    await update('leads', lead.id, { crm_lead_stage: ct?.lead_stage || null });
+    if (ct?.lead_stage) {
+      await logEvent(lead.id, 'atomic', 'lead_stage', 'ok', `CRM call stage is "${ct.lead_stage}"${leadStageAction ? ` → ${leadStageAction}` : ' (no action set)'}`);
+      if (leadStageAction) await runAction(lead.id, leadStageAction, ct.lead_stage, engine);
+    }
+  }
   if (stageKey !== (lead.crm_stage_key || '') || (deal && deal.id !== lead.crm_deal_id)) {
     await update('leads', lead.id, { crm_stage_key: stageKey });
     if (deal) {
@@ -185,10 +207,32 @@ export async function syncLead(co, ct, deal, { engine, twenty, budget, useCallLo
   if (!useCallLogs && callKey && callKey !== lead.crm_call_key) {
     await update('leads', lead.id, { crm_call_key: callKey });
     const outcome = twenty.mapOutcome(ct.last_outcome);
-    if (engine.CALL_OUTCOMES.includes(outcome)) await engine.logCrmCall(lead.id, outcome, { notes: 'From the CRM', callbackAt: ct.next_attempt_at || null });
+    if (engine.CALL_OUTCOMES.includes(outcome)) await crmCall(engine, lead.id, outcome, { notes: 'From the CRM', callbackAt: ct.next_attempt_at || null });
     else await logEvent(lead.id, 'atomic', 'call_outcome', 'skipped', `unknown call result "${ct.last_outcome}"`);
   }
   return 'updated';
+}
+
+/** Writes the call script for a new CRM lead and sends its pitch point + script note to the CRM. */
+export async function prepareScript(leadId) {
+  const tools = await import('./tools.js');
+  try {
+    const d = await tools.createDocForLead('script', leadId);
+    if (d.status !== 'ready') throw new Error(d.error || 'script not ready');
+    await tools.useScriptForLead(d.id); // pitch point + script note → CRM (outbox)
+    await logEvent(leadId, 'atomic', 'script', 'ok', `call script #${d.id} ready for the telecaller`);
+  } catch (e) { await logEvent(leadId, 'atomic', 'script', 'error', e.message); }
+}
+
+/** A telecaller call from the CRM. "Interested" on a lead that only has its call script starts the full pitch. */
+async function crmCall(engine, leadId, outcome, opts) {
+  const lead = await engine.getLead(leadId);
+  if (lead?.stage === 'prepared' && ['interested', 'meeting_booked'].includes(outcome)) {
+    await addActivity(leadId, 'call', `Call from the CRM: ${outcome.replace(/_/g, ' ')}`, opts.notes || null);
+    await engine.applyInterestChange(leadId, 'yes', `${outcome.replace(/_/g, ' ')} on a call (CRM)`);
+    return;
+  }
+  return engine.logCrmCall(leadId, outcome, opts);
 }
 
 async function runAction(leadId, action, stage, engine) {
@@ -196,6 +240,7 @@ async function runAction(leadId, action, stage, engine) {
   const lead = await engine.getLead(leadId);
   if (!lead) return;
   switch (action) {
+    case 'script': return;
     case 'interested': return engine.applyInterestChange(leadId, 'yes', reason);
     case 'nurture': return engine.applyInterestChange(leadId, 'unknown', reason);
     case 'not_interested': return engine.applyInterestChange(leadId, 'no', reason);
@@ -343,7 +388,7 @@ async function applyCallLogs(rows, contacts, { engine, first }) {
     const when = c.created_at ? new Date(c.created_at).toISOString().slice(0, 16).replace('T', ' ') : '';
     if (first) await addActivity(lead.id, 'call', `Call from the CRM (${when}): ${String(c.outcome || '').replace(/_/g, ' ')}`, c.notes || null);
     else if (engine.CALL_OUTCOMES.includes(outcome)) {
-      await engine.logCrmCall(lead.id, outcome, { notes: c.notes || 'From the CRM', callbackAt: c.next_attempt_at || null });
+      await crmCall(engine, lead.id, outcome, { notes: c.notes || 'From the CRM', callbackAt: c.next_attempt_at || null });
       await logEvent(lead.id, 'atomic', 'call_log', 'ok', `CRM call #${c.id}: ${outcome}`);
     } else await logEvent(lead.id, 'atomic', 'call_log', 'skipped', `CRM call #${c.id}: unknown result "${c.outcome}"`);
     cursor = c.id;

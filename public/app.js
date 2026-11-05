@@ -40,7 +40,7 @@ const pipePill = (p) => (p ? `<span class="small pipe-${esc(p)}"><i class="dot-i
 const aiBadge = (src) => (src === 'ai' ? '<span class="ai-badge"><span class="mi">auto_awesome</span>AI</span>' : src ? `<span class="ai-badge off">${esc(src)}</span>` : '');
 /** Plain-language status for each stage (what a non-technical user sees). */
 const SIMPLE = {
-  new: ['New', 'grey'], qualified: ['Preparing pitch', 'blue'], researching: ['Preparing pitch', 'blue'],
+  new: ['New', 'grey'], prepared: ['Call script ready', 'blue'], qualified: ['Preparing pitch', 'blue'], researching: ['Preparing pitch', 'blue'],
   brochure_ready: ['Pitch ready: needs your OK', 'amber'], brochure_approved: ['Sending soon', 'blue'], needs_manual: ['Needs a call', 'amber'],
   contacted: ['Following up', 'blue'], follow_up_1: ['Following up', 'blue'], follow_up_2: ['Following up', 'blue'],
   nurture: ['Warming up', 'purple'], reengage: ['Said no: keeping in touch', 'purple'],
@@ -994,7 +994,7 @@ async function renderSettings() {
 
   $('#seedBtn').onclick = (e) => busy(e.target, async () => { const r = await api('/demo/seed', { body: {} }); toast(`Created ${r.created} demo leads`); });
   // Team CRM card
-  const ACTION_LABEL = { interested: 'Interested: pitch, script, brochure', proposal: 'Make the proposal', won: 'Won', lost: 'Lost', nurture: 'Undecided (nurture)', not_interested: 'Not interested (re-engage)', ignore: 'Do nothing' };
+  const ACTION_LABEL = { script: 'Call script only (new lead)', interested: 'Interested: pitch, script, brochure', proposal: 'Make the proposal', won: 'Won', lost: 'Lost', nurture: 'Undecided (nurture)', not_interested: 'Not interested (re-engage)', ignore: 'Do nothing' };
   const fillCrm = (st) => {
     const r = st.last_result;
     $('#crmStatus').innerHTML = !st.keys ? 'Not connected. Add CRM_SUPABASE_URL and CRM_SUPABASE_SECRET_KEY to the server settings.'

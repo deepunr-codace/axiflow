@@ -1,5 +1,6 @@
 export const STAGES = [
   { id: 'new', label: 'New', group: 'Intake' },
+  { id: 'prepared', label: 'Call script ready: waiting for the call', group: 'Intake' },
   { id: 'qualified', label: 'Qualified (interested)', group: 'Conversion' },
   { id: 'researching', label: 'Pitch maker: researching', group: 'Conversion' },
   { id: 'brochure_ready', label: 'Pitch & design: needs approval', group: 'Conversion' },
@@ -27,7 +28,7 @@ export const STAGES = [
 export const STAGE_IDS = new Set(STAGES.map((s) => s.id));
 export const TERMINAL = new Set(['completed', 'closed_no_reply', 'not_interested', 'lost', 'do_not_contact']);
 /** Stages where a reply from the lead moves them to "replied". */
-export const PRE_REPLY = new Set(['new', 'nurture', 'reengage', 'qualified', 'researching', 'brochure_ready', 'brochure_approved', 'needs_manual', 'contacted', 'follow_up_1', 'follow_up_2', 'closed_no_reply']);
+export const PRE_REPLY = new Set(['new', 'prepared', 'nurture', 'reengage', 'qualified', 'researching', 'brochure_ready', 'brochure_approved', 'needs_manual', 'contacted', 'follow_up_1', 'follow_up_2', 'closed_no_reply']);
 export const PIPES = {
   conversion: 'Conversion (interested → pitch maker)',
   nurture: 'Marketing: Nurture (undecided)',

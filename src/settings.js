@@ -55,7 +55,8 @@ export const DEFAULT_SETTINGS = {
     call_logs: true, // read every telecaller call from the CRM call_logs table
     brochure_bucket: 'brochure', // CRM storage bucket (public) for the brochure PDFs; the brochures row links to the file there
     brochure_status: 'pending', // new brochure rows wait for approval in the CRM (allowed: pending, approved, not_approved)
-    new_lead_action: 'interested', // a CRM lead without a deal: pitch maker, call script and brochure
+    new_lead_action: 'script', // a new CRM lead (no deal): call script only; the brochure comes when it turns interested
+    lead_stages: { interested: 'interested', not_interested: 'not_interested' }, // contacts.lead_stage (telecaller call stage) → action; new, queued, in_progress, recycled: nothing
     import_per_poll: 20, // new CRM leads imported per poll (big imports are spread out)
     poll_seconds: 60,
     deal_means_consent: false, // true = an open deal counts as WhatsApp/email consent for the intro
@@ -494,7 +495,8 @@ export async function seedDefaults() {
   const wt = s.atomic?.write_tables;
   const writeTables = Array.isArray(wt) && ['brochures,companies.pitch_point', 'brochures,companies.pitch_point,contact_notes,deal_notes', 'brochures,companies.pitch_point,contact_notes,deal_notes,storage.brochure'].includes(wt.join()) ? DEFAULT_SETTINGS.atomic.write_tables : null;
   // CRM approval (owner, 2026-11-05): rows wait as pending; the old saved default 'approved' is replaced.
-  const approvalFix = s.atomic && (s.atomic.brochure_status === 'approved' || s.atomic.proposal_status === 'approved') ? { brochure_status: 'pending', proposal_status: 'pending' } : null;
+  const approvalFix = s.atomic && (s.atomic.brochure_status === 'approved' || s.atomic.proposal_status === 'approved' || s.atomic.new_lead_action === 'interested')
+    ? { brochure_status: 'pending', proposal_status: 'pending', new_lead_action: 'script' } : null; // owner 2026-11-05: new lead = call script only
   if (Object.keys(renamed).length || s.billing.invoice_prefix === 'WS' || about || writeTables || approvalFix) {
     await saveSettings({ agency: renamed, ...(s.billing.invoice_prefix === 'WS' ? { billing: { invoice_prefix: 'AWS' } } : {}), ...(about ? { brochure: { about } } : {}), ...(writeTables || approvalFix ? { atomic: { ...(writeTables ? { write_tables: writeTables } : {}), ...(approvalFix || {}) } } : {}) });
   }
