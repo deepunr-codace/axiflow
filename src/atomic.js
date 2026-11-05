@@ -154,7 +154,8 @@ export async function syncLead(co, ct, deal, { engine, twenty, budget, useCallLo
   const input = dealInput(deal, co, ct, s);
   const stageKey = deal ? deal.stage : '';
   const leadStageAction = ct?.lead_stage ? (s.lead_stages || {})[ct.lead_stage] || null : null;
-  const action = deal ? actionFor(deal.stage, s) || leadStageAction : leadStageAction || s.new_lead_action || 'script';
+  // Deal stage first, then the telecaller's call stage; with neither (or no action set for them) a new lead gets its call script only.
+  const action = (deal ? actionFor(deal.stage, s) : null) || leadStageAction || s.new_lead_action || 'script';
   const callKey = ct?.last_outcome ? [ct.last_outcome, ct.last_attempt_at || ''].join('|') : null;
 
   if (!lead) {
@@ -233,7 +234,9 @@ export async function syncLead(co, ct, deal, { engine, twenty, budget, useCallLo
 async function reattach(id, ext) {
   const l = await get(`SELECT id, external_id, crm_removed_at FROM leads WHERE id = :id`, { id });
   if (!l) return false;
-  const free = !l.external_id || l.crm_removed_at || String(l.external_id).startsWith(`${ext}:old:`) || !String(l.external_id).startsWith('atomic:');
+  // Only a lead that is not linked to the CRM at all may be linked here. A lead whose CRM record was deleted
+  // (or whose id was reused) stays apart: the CRM record is a new lead.
+  const free = !l.external_id || !String(l.external_id).startsWith('atomic:');
   if (free) await update('leads', id, { external_id: ext, crm_removed_at: null });
   return !!free; // false: the match belongs to another live CRM record, so this record gets its own lead
 }
