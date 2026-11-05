@@ -13,7 +13,63 @@ The team's main CRM is **Twenty**, set up by a co-worker and run by the **teleca
 
 Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATABASE_URL` and `pg`; embedded PGlite in `data/pg` when `DATABASE_URL` is empty), Vercel Blob for uploads (`data/uploads` locally), nodemailer, `@anthropic-ai/sdk` (Claude, `claude-opus-5-5`), and a vanilla-JS admin SPA in `public/`. There is no build step. Code map: see README. The old SQLite file `data/crm.db` is kept only as a backup/migration source.
 
-## Status (2026-11-05, latest): tool pages list first, "New" for manual
+## Status (2026-11-05, latest): Claude mode (the 3 tools write with Claude Code on GitHub) + Codeace Editorial
+- **Owner's requests:**
+  - "integrate claude through git repo with an invoke function … sends back to axiflow"
+  - "add an icon of claude in sidebar (colored) on click claude mode enable"
+  - "need same setup for 3 tools"
+- **Owner's choices (AskUserQuestion):**
+  - make the axiflow repo private and run the worker in it (the repo is public today, and Actions logs of a public repo are public);
+  - Claude subscription login: `claude setup-token` → repo secret `CLAUDE_CODE_OAUTH_TOKEN`;
+  - Claude returns content and AxiFlow lays it out;
+  - **on failure: retry Claude, no in-app fallback.** This is a deliberate exception to the fallback rule below.
+- **Flow:**
+  1. `tools.generate()`: when `claudeOn()` (`settings.claude.mode` and nothing in `claudeMissing()`), `sendToClaude()` builds the same job the in-app AI would run:
+     - `scriptJob` (src/ai/script.js);
+     - `brochureJob` (classic 12-page, src/ai/brochure.js);
+     - `deckJob` (Growth Deck / Editorial, src/ai/brochure-deck.js: brochure-stage prompt layers plus a concepts → draft → critique → repair process);
+     - `proposalJob` (src/ai/proposal-doc.js).
+     Imported PDF templates stay in-app.
+  2. `claude-worker.dispatchJob` sends a GitHub `repository_dispatch` `axiflow-generate` with `client_payload { doc_id, token, kind, job, callback }` and stores `input.claude` (job, ctx, attempts, run_url). `startJob` sees `'waiting'`, so the doc stays `working`.
+  3. `.github/workflows/claude-generate.yml` runs `claude-worker/prepare.mjs`, then `npx @anthropic-ai/claude-code -p` (PROMPT.txt → INSTRUCTIONS.md; allowed tools Read/Write/Edit/`node claude-worker/validate.mjs`, plus WebSearch/WebFetch when `job.web`), then `post.mjs` → `POST /webhooks/claude-result` (header `x-webhook-secret` = `CLAUDE_WORKER_SECRET`).
+  4. `acceptResult` runs the same post-processing as in-app (`postScript`, `postBrochure`, `postProposal`, `postDeck` = `toBrochureData` truth checks). Then `tools.completeDoc` lays out and calls `announce()` (CRM writes), and `afterReady` runs the automatic follow-ups:
+     - **script:** `useScriptForLead`;
+     - **brochure:** an activity;
+     - **proposal:** `engine.proposalDocReady`, which is split out of `startProposal`.
+     The callers (`runLeadTools`, `prepareScript`, `startProposal`) treat `tools.waitingForClaude(d)` as fine.
+  5. **Retries:** `retryStale()` (cronTick + pollSoon) re-dispatches after `claude.timeout_minutes` (20) or a failed dispatch. After `claude.max_attempts` (3) the doc becomes `error` "Claude did not finish it"; Regenerate tries again.
+- **Webhook responses:** 401 wrong secret, 404 wrong doc or token, 409 doc not waiting.
+- **Shared, dependency-free core:** `src/ai/brochure-deck-core.js` (layers, schemas, parse, `toBrochureData`), used in-app and by `claude-worker/validate.mjs`. The validator is a small JSON-schema check plus, for decks, the layout limits and truth checks. `post.mjs` sends layout warnings on (AxiFlow fits the text) but schema problems as `{ error }` → retry.
+- **UI:**
+  - **Sidebar:** an orange Claude starburst button in the rail above Settings (faded = off, tinted = on) and a "Claude mode Off/On" row in the panel (`setClaude` / `toggleClaude` in app.js, `.claude-*` styles). A click with setup missing opens a dialog listing what is missing.
+  - **Server:** `PUT /settings { claude: { mode: true } }` is refused (400) while setup is missing.
+  - **Tool lists:** "Writing with Claude (try n)" plus a run link, and a "Claude" tag on docs it wrote.
+  - **Tool settings:** a Claude mode card (repo, wait minutes, tries, what is missing).
+  - **`/api/meta`:** `claude_mode`, `claude_missing`.
+- **Env:**
+  - `CLAUDE_WORKER_SECRET`: generated into local `.env` (also needed on Vercel and as the repo secret `AXIFLOW_CALLBACK_SECRET`).
+  - `GITHUB_DISPATCH_TOKEN`: fine-grained, Contents read and write; empty in `.env` until the owner makes it.
+  - `GITHUB_API_URL`: optional override, used for tests.
+- **Tested** on a throwaway DB (`DATA_DIR`) with a stand-in GitHub that runs the real worker scripts on prepared answers:
+  - script, classic brochure, Editorial deck (Claude's own palette; an invented "99%" stat removed) and proposal all came back ready with source `claude`;
+  - 401 / 404 / 409 as above;
+  - no answer → 3 tries → error.
+  - The real GitHub run and the real Claude Code call are **not tested yet** (no token).
+- **Owner to do:**
+  1. Make the repo private (check that Vercel still deploys; Hobby cannot deploy org-owned private repos).
+  2. Add repo secrets `CLAUDE_CODE_OAUTH_TOKEN` and `AXIFLOW_CALLBACK_SECRET` (= `CLAUDE_WORKER_SECRET` from `.env`).
+  3. Create `GITHUB_DISPATCH_TOKEN` and add it plus `CLAUDE_WORKER_SECRET` to Vercel and `.env`.
+  4. Click the Claude button.
+- **Codeace Editorial** (same session): second design from `Downloads/files (1)`, in `src/design/editorial.js`, with shared pieces in `deck-kit.js` and the data contract in `brochure-data.js` (LIMITS, themes, ASSETS catalogue, `validateData`, `contentToData`).
+  - The classic deck (`deck.js`) now also reads BrochureData. The template row `builtin-editorial` was added without changing the default.
+  - In-app deck pipeline: `generateDeckData` (staged concepts → brochure → critique → repair, 240 s budget, falls back to `contentToData`). Settings `brochure_ai` (facts, `market_stats` with sources; the 88/72/60% figures moved here, pipeline, creativity, critic_model).
+  - **Engine additions:** fonts Lora (LR/LM/LS) and Inter (IR/IM/IS, CSS family "InterDeck"); shape `line` with `dash: 'dot'`; `Builder.circleText` (sticker text = one rotated text element per letter); icon `spark`; `runJson` takes `messages`, `temperature`, `model`, `timeoutMs`.
+  - **PDF fix for all templates:** pdfkit counts a line-break character as a glyph (0.5–0.85 em), so lines ending in a hard break wrapped one word early. render-pdf now measures and draws paragraph by paragraph.
+  - Checked editor vs PDF on all 12 editorial slides plus the classic regression.
+- **Gotcha:** the shell eats `$` and backticks in `node -e` patches. Use the Edit tool for code with template strings or regexes.
+- **Machine:** port 3200 is the owner's Presenta Studio app. An old AxiFlow process can keep 3100 after a session ends; check with netstat.
+
+## Status (2026-11-05): tool pages list first, "New" for manual
 - Owner: "in each tool only add new can create manually, else list existing and other data". `#/script`, `#/brochure`, `#/proposal` = list (`docList(kind)` in `public/app.js`, used by scripts.js via `H.docList`): counts (made, leads, this week, being written), filters All / In the CRM / Automatic / By hand (/ Failed), search, table with lead (+ contact if not the same as the business, city), vertical·language / template·services / template·package, proposal total, made (automatic/by hand), CRM (newest ready per lead = "In the CRM", brochures/proposals with the CRM approval state: waiting / approved / sent back; others "Older version"), updated, PDF + Open; row click opens. The form lives at `#/<kind>/new` (back link + Cancel); every "New …" link (panel +, New menu, palette, home cards, lead pages, Templates "Use") points there.
 - Server: `tools.listDocs` returns those fields (lead, template name, current, crm_state, detail, total, made). New docs store `input.auto` (true from `createDocForLead`, false by hand); older docs show "-".
 - Seen 2026-11-05 afternoon: the brochure default template was back on the classic "Codeace Default Brochure" (not changed by code; probably someone clicked Make default) and a brochure was made with it at 15:13. Left as is; told the owner.
@@ -235,7 +291,8 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
 - Startup migrations run against the owner's real `data/crm.db`; test any migration on a copy of it, not only on a fresh database.
 - When patching files through shell heredocs, backslashes in regexes get mangled. Use a script file or the Edit tool.
 - Routing is by `interested` only (yes → conversion/pitch maker; unknown → nurture; no → reengage). Score is for priority only.
-- Every AI step must have a rule-based fallback (see `withFallback` in `src/ai/manager.js`, fallbacks in `pitchmaker.js`). Never let an AI failure stall a lead.
+- Every AI step must have a rule-based fallback (see `withFallback` in `src/ai/manager.js`, fallbacks in `pitchmaker.js`). Never let an AI failure stall a lead. **Exception (owner, 2026-11-05): Claude mode** has no in-app fallback; it retries Claude, then shows an error to retry by hand.
+- The "no Claude/Anthropic marks" UI rule has one owner-requested exception: the orange Claude mode button in the sidebar.
 - AI output that triggers actions is schema-constrained and validated in code (`planNextAction` checks permissions). Lead replies/web content go inside <untrusted> tags.
 - AI designs are sanitized and served from `/d/:token` with a sandbox CSP, never inline in the admin origin.
 - WhatsApp: AI-written text is only sent inside the 24h session or via the touch templates (`ws_nurture`/`ws_reengage`/`ws_custom`, params: first name + text); cold conversion messages use the approved templates.

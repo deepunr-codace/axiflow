@@ -257,8 +257,33 @@ async function boot() {
   $('#avName').textContent = who;
   $('#avBtn').textContent = who.trim().charAt(0).toUpperCase() || 'A';
   $('#whoAv').textContent = who.trim().charAt(0).toUpperCase() || 'A';
+  setClaude(!!META.claude_mode);
   route();
 }
+
+// ------------------------------------------------------------- Claude mode
+/* Owner, 2026-11-05: a coloured Claude button in the sidebar; on = the three tools write with Claude Code on GitHub. */
+function setClaude(on) {
+  for (const el of [$('#claudeBtn'), $('#claudeRow')]) { if (!el) continue; el.classList.toggle('on', on); el.setAttribute('aria-pressed', String(on)); }
+  $('#claudeBtn').dataset.tip = on ? 'Claude mode: on' : 'Claude mode: off';
+  $('#claudePill').textContent = on ? 'On' : 'Off';
+}
+async function toggleClaude(btn) {
+  const on = !$('#claudeBtn').classList.contains('on');
+  if (on && META.claude_missing?.length) {
+    modal('Claude mode is not set up yet', `<p>Claude mode lets Claude Code write pitch scripts, brochures and proposals on GitHub, then sends them back here. It still needs:</p><ul>${META.claude_missing.map((m) => `<li>${esc(m)}</li>`).join('')}</ul><p class="small muted">The steps are in Tool settings, Claude.</p>`, '<a class="btn primary" href="#/settings/claude" data-close-dialog>Open Tool settings</a>');
+    document.querySelector('[data-close-dialog]')?.addEventListener('click', (ev) => ev.target.closest('dialog')?.close());
+    return;
+  }
+  await busy(btn, async () => {
+    await api('/settings', { method: 'PUT', body: { claude: { mode: on } } });
+    META.claude_mode = on;
+    setClaude(on);
+    toast(on ? 'Claude mode on: scripts, brochures and proposals are written by Claude Code' : 'Claude mode off: the tools write with the in-app AI');
+  });
+}
+$('#claudeBtn').onclick = (e) => toggleClaude(e.currentTarget);
+$('#claudeRow').onclick = (e) => toggleClaude(e.currentTarget);
 
 async function refreshBadges() {
   try {
@@ -1015,6 +1040,9 @@ async function renderSettings(section) {
     ${inp('proposal.payment_terms', 'Payment terms', 'area')}${inp('proposal.investment_note', 'Note under the prices', 'area')}${inp('proposal.deliverables_note', 'Deliverables note', 'area')}${inp('proposal.terms', 'Terms (one per line)', 'lines')}</div>
     <label>Packages (JSON)<textarea id="pkgJson" class="code">${esc(JSON.stringify(s.packages, null, 2))}</textarea></label><br>
     <label>Module split (JSON: name and share in %)<textarea id="modJson" class="code" style="min-height:120px">${esc(JSON.stringify(s.proposal?.modules || [], null, 2))}</textarea></label></div>
+  <div class="card" id="t-claude"><h2>Claude mode</h2><p class="small muted">With Claude mode on (the Claude button in the menu), pitch scripts, brochures and proposals are written by Claude Code in the GitHub repo, then come back here and go to the CRM as usual. Templates imported from a PDF are still filled in-app. If Claude does not answer, the job is sent again; after the last try the document shows an error to try again.</p>
+    <div class="form-grid">${inp('claude.github_repo', 'GitHub repo (owner/name)')}${inp('claude.timeout_minutes', 'Wait for an answer (minutes)', 'number')}${inp('claude.max_attempts', 'Tries before giving up', 'number')}</div>
+    <p class="small" style="margin-top:10px">${(META.claude_missing || []).length ? 'Still needed: ' + META.claude_missing.map(esc).join('; ') : '<span class="ok">Ready: GitHub token and callback secret are set.</span>'}</p></div>
   <div class="card"><h2><span class="mi">auto_awesome</span>AI writer</h2>
     <p class="small muted">Status: ${env.ai.enabled ? '<b class="ok">on</b>' : env.ai.key_set ? '<b>disabled</b>' : '<b class="bad">no API key</b>: add OPENROUTER_API_KEY or ANTHROPIC_API_KEY (.env locally, Vercel environment variables live), then restart / redeploy'} · provider <b>${env.ai.provider === 'openrouter' ? 'OpenRouter' : 'Claude API'}</b>, model ${esc(env.ai.model)} · spent today $${env.ai.spent_today_usd}<br>Keys found: OpenRouter ${env.ai.keys?.openrouter ? 'yes' : 'no'}, Anthropic ${env.ai.keys?.anthropic ? 'yes' : 'no'}</p>
     <div class="form-grid">${inp('ai.enabled', 'Use AI to write the documents', 'bool')}${inp('ai.daily_budget_usd', 'AI daily budget (USD)', 'number')}
@@ -1231,7 +1259,7 @@ async function docList(kind, keep = null) {
         <td><div class="row dl-lead"><span class="ini">${initials(d.company || d.title)}</span><div><b>${esc(d.company || d.title)}</b><div class="small muted">${esc([d.contact_name && d.contact_name.trim().toLowerCase() !== String(d.company || '').trim().toLowerCase() ? d.contact_name : '', d.city].filter(Boolean).join(' · '))}</div></div></div></td>
         <td>${esc([kind === 'script' ? '' : d.template_name, d.detail].filter(Boolean).join(' · ')) || '<span class="muted">-</span>'}</td>
         ${kind === 'proposal' ? `<td class="num">${d.total ? money(d.total) : '-'}</td>` : ''}
-        <td>${d.status === 'ready' ? (d.made === 'auto' ? 'Automatic' : d.made === 'hand' ? 'By hand' : '<span class="muted">-</span>') : docTag(d)}</td>
+        <td>${d.claude?.waiting ? `<span class="tag claude">Writing with Claude${d.claude.attempts > 1 ? ` (try ${d.claude.attempts})` : ''}</span>${d.claude.run_url ? ` <a class="small" href="${esc(d.claude.run_url)}" target="_blank" rel="noopener">run</a>` : ''}` : d.status === 'ready' ? (d.made === 'auto' ? 'Automatic' : d.made === 'hand' ? 'By hand' : '<span class="muted">-</span>') + (d.claude?.done ? ' <span class="tag claude">Claude</span>' : '') : docTag(d)}</td>
         <td>${crm(d)}</td>
         <td class="small muted">${fmtDate(d.updated_at)}</td>
         <td class="dl-act">${d.status === 'ready' ? `<a class="btn sm ghost icon-only" href="/pdf/doc/${d.token}.pdf" target="_blank" title="Open the PDF" aria-label="Open the PDF"><span class="mi">picture_as_pdf</span></a>` : ''}<a class="btn sm" href="#/${kind}/${d.id}">Open</a></td>

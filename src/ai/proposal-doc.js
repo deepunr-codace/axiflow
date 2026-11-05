@@ -68,14 +68,13 @@ export function templateProposal(input, items) {
   };
 }
 
-export async function writeProposalDoc(input, items, research = null) {
+/** The AI job for a proposal document (in-app or Claude mode). Prices never come from it. */
+export function proposalJob(input, items, research = null) {
   const base = templateProposal(input, items);
-  if (!aiEnabled()) return { content: base, source: 'template' };
   const s = getSettings();
   const pkg = s.packages.find((p) => p.id === input.package) || s.packages[0];
-  try {
-    const content = await runJson({
-      purpose: 'proposal_doc', effort: s.ai.effort_writing, schema: SCHEMA, maxTokens: 20000,
+  return {
+      kind: 'proposal', purpose: 'proposal_doc', effort: s.ai.effort_writing, schema: SCHEMA, maxTokens: 20000,
       system: managerSystem('write a client proposal document'),
       prompt: `Write the proposal document for this client. Do not mention prices anywhere (the pricing table is added separately).
 
@@ -86,8 +85,21 @@ Our team's notes and the client's requirements: <untrusted>${input.notes || 'non
 Research: <untrusted>${research ? JSON.stringify({ summary: research.business_summary, sells: research.what_they_sell, customers: research.target_customers, online: research.online_presence }) : 'none'}</untrusted>
 
 Follow this structure and tone (a real example from our agency): ${JSON.stringify(base)}. Make the features specific to what this business sells and how its customers behave.`,
-    });
-    return { content: { ...base, ...content }, source: 'ai' };
+  };
+}
+/** The answer merged over the standard proposal, keeping only the schema's fields. */
+export function postProposal(content, input, items) {
+  const base = templateProposal(input, items);
+  const keep = Object.fromEntries(Object.entries(content || {}).filter(([k, v]) => k in base && v != null && v !== ''));
+  return { ...base, ...keep };
+}
+
+export async function writeProposalDoc(input, items, research = null) {
+  const base = templateProposal(input, items);
+  if (!aiEnabled()) return { content: base, source: 'template' };
+  try {
+    const content = await runJson(proposalJob(input, items, research));
+    return { content: postProposal(content, input, items), source: 'ai' };
   } catch (e) {
     return { content: base, source: `template (AI failed: ${e.message})`.slice(0, 200) };
   }

@@ -283,6 +283,12 @@ dialog::backdrop { background: rgba(20, 20, 19, .5); }
 @font-face { font-family: "Hanken Grotesk"; font-weight: 400; src: url(/fonts/HankenGrotesk-Regular.ttf) format('truetype'); font-display: block; }
 @font-face { font-family: "Hanken Grotesk"; font-weight: 500; src: url(/fonts/HankenGrotesk-Medium.ttf) format('truetype'); font-display: block; }
 @font-face { font-family: "Hanken Grotesk"; font-weight: 600; src: url(/fonts/HankenGrotesk-SemiBold.ttf) format('truetype'); font-display: block; }
+@font-face { font-family: Lora; font-weight: 400; src: url(/fonts/Lora-Regular.ttf) format('truetype'); font-display: block; }
+@font-face { font-family: Lora; font-weight: 500; src: url(/fonts/Lora-Medium.ttf) format('truetype'); font-display: block; }
+@font-face { font-family: Lora; font-weight: 600; src: url(/fonts/Lora-SemiBold.ttf) format('truetype'); font-display: block; }
+@font-face { font-family: InterDeck; font-weight: 400; src: url(/fonts/Inter-Regular.ttf) format('truetype'); font-display: block; }
+@font-face { font-family: InterDeck; font-weight: 500; src: url(/fonts/Inter-Medium.ttf) format('truetype'); font-display: block; }
+@font-face { font-family: InterDeck; font-weight: 600; src: url(/fonts/Inter-SemiBold.ttf) format('truetype'); font-display: block; }
 .view:has(#edRoot) { max-width: none; padding: 0 0 0 0; }
 .ed-head { display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-bottom: 1px solid var(--line2); }
 .ed-title { width: auto; min-width: 180px; max-width: 360px; background: transparent; border-color: transparent; font: 500 16px var(--serif); padding: 6px 8px; }
@@ -1152,3 +1158,19 @@ html[data-theme="light"] .te-sw:focus-visible { outline-color: #111113; }
 @media (max-width: 900px) { .dl-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .dl-search { min-width: 0; flex: 1; } }
 html[data-theme="light"] .dl-table tbody tr:hover td { background: #F4F4F5; }
 .dl-table td.small { white-space: nowrap; }
+
+/* Claude mode (owner, 2026-11-05: a coloured Claude icon in the sidebar; on = the tools write with Claude Code) */
+.claude-mark { width: 22px; height: 22px; display: block; }
+.claude-btn { border: 0; background: transparent; cursor: pointer; color: #D97757; opacity: .72; }
+.claude-btn.on { color: #D97757; opacity: 1; background: rgba(217, 119, 87, .16); }
+.claude-btn:hover { opacity: 1; }
+.claude-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 10px; background: transparent; color: var(--ink2); font: inherit; font-size: 13.5px; cursor: pointer; text-align: left; }
+.claude-row .claude-mark { width: 18px; height: 18px; color: #D97757; opacity: .72; }
+.claude-row.on .claude-mark { opacity: 1; }
+.claude-row:hover { background: #18181B; }
+.claude-pill { font-size: 11.5px; padding: 2px 9px; border-radius: 999px; background: #26262A; color: var(--muted); }
+.claude-row.on .claude-pill { background: rgba(217, 119, 87, .18); color: #E89A80; }
+.tag.claude { background: rgba(217, 119, 87, .16); color: #E89A80; }
+html[data-theme="light"] .claude-row:hover { background: #F4F4F5; }
+html[data-theme="light"] .claude-pill { background: #EDEDEF; }
+html[data-theme="light"] .claude-row.on .claude-pill, html[data-theme="light"] .tag.claude { color: #B5563A; }

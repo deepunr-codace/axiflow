@@ -1,9 +1,9 @@
 // Canva-style design editor for brochures and proposals (vanilla JS).
 // Pages are arrays of positioned elements; the server renders the same data to PDF.
 
-const FONT_W = { PR: 400, PM: 500, PS: 600, PB: 700, UM: 500, US: 600, HR: 400, HM: 500, HS: 600 };
-const FONT_FAMILY = { UM: 'Unbounded', US: 'Unbounded', HR: '"Hanken Grotesk"', HM: '"Hanken Grotesk"', HS: '"Hanken Grotesk"' };
-const FONT_NAMES = { PR: 'Poppins Regular', PM: 'Poppins Medium', PS: 'Poppins SemiBold', PB: 'Poppins Bold', UM: 'Unbounded Medium', US: 'Unbounded SemiBold', HR: 'Hanken Regular', HM: 'Hanken Medium', HS: 'Hanken SemiBold' };
+const FONT_W = { PR: 400, PM: 500, PS: 600, PB: 700, UM: 500, US: 600, HR: 400, HM: 500, HS: 600, LR: 400, LM: 500, LS: 600, IR: 400, IM: 500, IS: 600 };
+const FONT_FAMILY = { UM: 'Unbounded', US: 'Unbounded', HR: '"Hanken Grotesk"', HM: '"Hanken Grotesk"', HS: '"Hanken Grotesk"', LR: 'Lora', LM: 'Lora', LS: 'Lora', IR: 'InterDeck', IM: 'InterDeck', IS: 'InterDeck' };
+const FONT_NAMES = { PR: 'Poppins Regular', PM: 'Poppins Medium', PS: 'Poppins SemiBold', PB: 'Poppins Bold', UM: 'Unbounded Medium', US: 'Unbounded SemiBold', HR: 'Hanken Regular', HM: 'Hanken Medium', HS: 'Hanken SemiBold', LR: 'Lora Regular', LM: 'Lora Medium', LS: 'Lora SemiBold', IR: 'Inter Regular', IM: 'Inter Medium', IS: 'Inter SemiBold' };
 const CONTENT = 1.4;
 let META = null;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -86,6 +86,9 @@ function elementNode(e, items) {
   else if (e.type === 'image') {
     Object.assign(el.style, { backgroundImage: e.src ? `url("${fileUrl(e.src)}")` : 'none', backgroundSize: e.fit === 'fill' ? '100% 100%' : e.fit, backgroundPosition: `${e.ha || 'center'} ${e.va || 'center'}`, backgroundRepeat: 'no-repeat', borderRadius: `${e.radius}px` });
     if (!e.src) el.classList.add('empty-img');
+  } else if (e.type === 'shape' && e.shape === 'line') {
+    const c = e.stroke === 'none' ? e.fill : e.stroke;
+    Object.assign(el.style, { borderTop: `${e.sw || 1}px ${e.dash ? 'dotted' : 'solid'} ${c}`, marginTop: `${e.h / 2 - (e.sw || 1) / 2}px`, height: `${e.h / 2 + (e.sw || 1) / 2}px` });
   } else if (e.type === 'shape') {
     const bg = e.gradient ? `linear-gradient(${e.gradient.angle}deg, ${e.gradient.stops.map(([o, c, a]) => `${rgba(c, a)} ${o * 100}%`).join(', ')})` : e.fill === 'none' ? 'transparent' : e.fill;
     Object.assign(el.style, { background: bg, border: e.stroke !== 'none' && e.sw > 0 ? `${e.sw}px solid ${e.stroke}` : 'none', borderRadius: e.shape === 'ellipse' ? '50%' : `${e.radius}px` });
@@ -118,7 +121,7 @@ export function thumb(page, width, items) {
 // ======================================================================= editor
 export async function openEditor(root, { doc, api, toast, busy, modal, onChange }) {
   await loadMeta(api);
-  await Promise.all(['700 20px Poppins', '600 20px Unbounded', '500 20px Unbounded', '400 20px "Hanken Grotesk"', '500 20px "Hanken Grotesk"', '600 20px "Hanken Grotesk"'].map((f) => document.fonts.load(f).catch(() => {})));
+  await Promise.all(['700 20px Poppins', '600 20px Unbounded', '500 20px Unbounded', '400 20px "Hanken Grotesk"', '500 20px "Hanken Grotesk"', '600 20px "Hanken Grotesk"', '400 20px Lora', '500 20px Lora', '600 20px Lora', '400 20px InterDeck', '500 20px InterDeck', '600 20px InterDeck'].map((f) => document.fonts.load(f).catch(() => {})));
   const S = {
     design: doc.design, items: doc.items, page: 0, sel: null, scale: 1, fitMode: true,
     history: [], future: [], saveTimer: null, editing: null, chat: doc.chat || [],
@@ -268,7 +271,10 @@ export async function openEditor(root, { doc, api, toast, busy, modal, onChange 
     } else if (e.type === 'image') {
       html = `<h3>Image</h3><div class="row ed-row"><button class="btn sm primary" data-a="replace-image">Replace image</button></div>
         <div class="ed-grid"><label>Fit<select data-k="fit">${['cover', 'contain', 'fill'].map((f) => `<option ${f === e.fit ? 'selected' : ''}>${f}</option>`).join('')}</select></label>${num('Corner radius', 'radius', e.radius)}</div>`;
-    } else if (e.type === 'shape') {
+    } else if (e.type === 'shape' && e.shape === 'line') {
+    const c = e.stroke === 'none' ? e.fill : e.stroke;
+    Object.assign(el.style, { borderTop: `${e.sw || 1}px ${e.dash ? 'dotted' : 'solid'} ${c}`, marginTop: `${e.h / 2 - (e.sw || 1) / 2}px`, height: `${e.h / 2 + (e.sw || 1) / 2}px` });
+  } else if (e.type === 'shape') {
       html = `<h3>${e.shape === 'ellipse' ? 'Circle' : 'Shape'}</h3>
         ${e.gradient ? `<p class="small muted">Gradient fill <button class="btn sm ghost" data-a="solid">Use a solid colour</button></p>` : colorField('Fill', 'fill', e.fill)}
         ${e.gradient ? '' : `<label class="check"><input type="checkbox" data-a="nofill" ${e.fill === 'none' ? 'checked' : ''}> No fill</label>`}

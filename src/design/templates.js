@@ -34,6 +34,11 @@ export async function seedTemplates() {
     const id = await insert('design_templates', { kind: 'brochure', name: 'Codeace Growth Deck', mode: 'smart', source: 'builtin-deck', is_default: 0, created_at: now, updated_at: now });
     await run(`UPDATE design_templates SET is_default = CASE WHEN id = :id THEN 1 ELSE 0 END WHERE kind = 'brochure'`, { id });
   }
+  // Codeace Editorial (the editorial design of the owner's template package, 2026-11-05): added once, default unchanged.
+  if (!await get(`SELECT 1 FROM design_templates WHERE kind = 'brochure' AND source = 'builtin-editorial'`)) {
+    const now = nowISO();
+    await insert('design_templates', { kind: 'brochure', name: 'Codeace Editorial', mode: 'smart', source: 'builtin-editorial', is_default: 0, created_at: now, updated_at: now });
+  }
   for (const kind of ['brochure', 'proposal']) {
     if (!await get(`SELECT 1 FROM design_templates WHERE kind = :kind AND mode = 'smart' AND source = 'builtin'`, { kind })) {
       const now = nowISO();

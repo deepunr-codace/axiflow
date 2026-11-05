@@ -862,13 +862,14 @@ export async function runLeadTools(leadId, { script = true, brochure = true } = 
     try {
       const d = await tools.createDocForLead('script', leadId);
       if (d.status === 'ready') await tools.useScriptForLead(d.id);
-      await logEvent(leadId, 'tools', 'pitch_script', d.status === 'ready' ? 'ok' : 'error', d.error || `#${d.id} ${d.source}`);
+      if (tools.waitingForClaude(d)) await logEvent(leadId, 'tools', 'pitch_script', 'ok', `#${d.id} sent to Claude Code; used for the calls when it comes back`);
+      else await logEvent(leadId, 'tools', 'pitch_script', d.status === 'ready' ? 'ok' : 'error', d.error || `#${d.id} ${d.source}`);
     } catch (e) { await logEvent(leadId, 'tools', 'pitch_script', 'error', e.message); }
   }
   if (brochure && at.brochure) {
     try {
       const d = await tools.createDocForLead('brochure', leadId);
-      await logEvent(leadId, 'tools', 'brochure', d.status === 'ready' ? 'ok' : 'error', d.error || `#${d.id} ${d.source}`);
+      await logEvent(leadId, 'tools', 'brochure', d.status === 'ready' || tools.waitingForClaude(d) ? 'ok' : 'error', d.error || (tools.waitingForClaude(d) ? `#${d.id} sent to Claude Code` : `#${d.id} ${d.source}`));
       if (d.status === 'ready') {
         await addActivity(leadId, 'system', `Designed brochure ready (${d.source}); the intro will attach it`); // tools.js tells the CRM
       }
@@ -884,10 +885,20 @@ export async function startProposal(leadId, reason = '') {
   const s = getSettings();
   if (!s.automation.auto_tools?.proposal) return { sent: await createAndSendProposal(leadId) };
   const d = await tools.createDocForLead('proposal', leadId);
+  if (tools.waitingForClaude(d)) { // Claude mode: the follow-up below runs when the result comes back (claude-worker.afterReady)
+    await logEvent(leadId, 'tools', 'proposal', 'ok', `#${d.id} sent to Claude Code${reason ? ` (${reason})` : ''}`);
+    return { doc: d, waiting: true };
+  }
   if (d.status !== 'ready') {
     await logEvent(leadId, 'tools', 'proposal', 'error', d.error || 'not ready');
     return { sent: await createAndSendProposal(leadId) }; // never stall the lead
   }
+  return proposalDocReady(leadId, d, reason);
+}
+
+/** A ready proposal doc for a lead: send it, or (by default) wait for an OK on Today. */
+export async function proposalDocReady(leadId, d, reason = '') {
+  const s = getSettings();
   await logEvent(leadId, 'tools', 'proposal', 'ok', `#${d.id} ${d.source}${reason ? ` (${reason})` : ''}`);
   if (!s.automation.proposal_needs_ok) return { sent: await sendProposalDoc(leadId, d.id) };
   await addTask(leadId, `Check & send the proposal for ${d.title}`);

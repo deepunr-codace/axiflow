@@ -202,6 +202,33 @@ export const DEFAULT_SETTINGS = {
     cta_text: 'Whether it’s building your website, automating bookings, or scaling your reach, we’re here to make it happen.',
     cta_button: 'Book a Free Strategy Call',
   },
+  /**
+   * Growth Deck / Editorial brochures (owner's template package, 2026-11-05). The AI pipeline
+   * (src/ai/brochure-deck.js) writes the whole deck from a brief: concepts → brochure → critique → repair.
+   * facts and stats are the only claims it may make about the agency; market_stats the only market figures
+   * (each with a source; none = the "digital shift" slide is left out). pipeline: staged | single.
+   */
+  /**
+   * Claude mode (owner, 2026-11-05): the three tools write their documents with Claude Code on GitHub
+   * (src/claude-worker.js, .github/workflows/claude-generate.yml). Switched with the Claude button in the sidebar.
+   */
+  claude: { mode: false, github_repo: 'deepunr-codace/axiflow', timeout_minutes: 20, max_attempts: 3 },
+  brochure_ai: {
+    enabled: true,
+    pipeline: 'staged',
+    creativity: 'bold',
+    critic_model: '',
+    facts: [
+      'Founded in 2018',
+      'Backed by a multi-million dollar global technology firm',
+      'Builds websites, AI booking agents, ERP systems, SEO and social media campaigns',
+    ],
+    market_stats: [
+      { value: '88%', label: 'of people look online before choosing a service', source: 'Codeace agency brochure' },
+      { value: '72%', label: 'will move on if they can’t find your business or book instantly', source: 'Codeace agency brochure' },
+      { value: '60%', label: 'of customers trust brands active on Instagram & YouTube', source: 'Codeace agency brochure' },
+    ],
+  },
   /** AI Proposal Generator: fixed terms and the module split used to break a package price into line items. */
   proposal: {
     support_days: 90,

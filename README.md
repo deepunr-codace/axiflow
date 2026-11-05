@@ -152,6 +152,30 @@ Events: `lead.created`, `lead.stage_changed`, `lead.next_action` (the scheduled 
 ```
 Shared rules: sales and the CRM own `interested`, opt-ins and DNC; the automation owns `stage`, `pipe` and `next_action`.
 
+## Claude mode (Claude Code on GitHub)
+
+With the Claude button in the sidebar switched on, the three tools (pitch script, brochure, proposal) no longer write with the in-app AI. Instead:
+
+1. AxiFlow sends the same job (prompt, JSON schema and the lead's data) to GitHub as a `repository_dispatch` event, `axiflow-generate`.
+2. `.github/workflows/claude-generate.yml` runs Claude Code headless (`claude -p`) on `claude-worker/INSTRUCTIONS.md`.
+3. Claude writes `claude-worker/work/out/result.json` and checks it with `claude-worker/validate.mjs`.
+4. `post.mjs` sends the result to `POST /webhooks/claude-result`.
+5. AxiFlow lays the document out and writes it to the CRM as usual.
+
+Nothing is committed; the lead data only lives in the run.
+
+**Setup**
+1. Make the repo private.
+2. Add the repo secrets:
+   - `CLAUDE_CODE_OAUTH_TOKEN`: run `claude setup-token` with your Claude subscription.
+   - `AXIFLOW_CALLBACK_SECRET`.
+3. Add AxiFlow's env vars (Vercel and `.env`):
+   - `CLAUDE_WORKER_SECRET`: the same value as `AXIFLOW_CALLBACK_SECRET`.
+   - `GITHUB_DISPATCH_TOKEN`: a fine-grained token for this repo with Contents read and write.
+4. Click the Claude button.
+
+**Failures:** a job without an answer within `claude.timeout_minutes` is sent again, up to `claude.max_attempts` times. After that the document shows an error and can be retried by hand. There is no in-app fallback in Claude mode.
+
 ## Code map
 ```
 src/server.js              Express app, security headers, starts the scheduler

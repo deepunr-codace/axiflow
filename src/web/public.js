@@ -141,6 +141,18 @@ pub.post('/webhooks/atomic', async (req, res) => {
   res.json({ ok: true });
 });
 
+/**
+ * POST /webhooks/claude-result: the Claude Code job on GitHub (.github/workflows/claude-generate.yml) hands back
+ * a document it wrote (Claude mode). Header x-webhook-secret = CLAUDE_WORKER_SECRET; body { doc_id, token, output | error, run_url }.
+ */
+pub.post('/webhooks/claude-result', async (req, res) => {
+  if (!process.env.CLAUDE_WORKER_SECRET || !checkSecret(req.get('x-webhook-secret') || '', process.env.CLAUDE_WORKER_SECRET)) return res.status(401).json({ error: 'Invalid secret' });
+  try {
+    const r = await (await import('../claude-worker.js')).acceptResult(req.body || {});
+    res.status(r.status).json(r.error ? { error: r.error } : { ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 pub.post('/webhooks/twenty', async (req, res) => {
   if (!checkSecret(req.get('x-api-key'), process.env.INTAKE_API_KEY)) return res.status(401).json({ error: 'Invalid API key' });
   if (process.env.TWENTY_WEBHOOK_SECRET) {

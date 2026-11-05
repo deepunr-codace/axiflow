@@ -1,6 +1,6 @@
 import { addColumns, get, all, insert, update, run } from './db.js';
 import { background } from './background.js';
-import { writeScript, VERTICALS, LANGUAGES } from './ai/script.js';
+import { writeScript, scriptJob, VERTICALS, LANGUAGES } from './ai/script.js';
 import { scriptPdf } from './pdf/script.js';
 import { auditWebsite } from './pipeline/enrich.js';
 import { addActivity } from './pipeline/log.js';
@@ -9,14 +9,45 @@ import { getSettings } from './settings.js';
 import { nowISO, token, normalizeUrl, BASE_URL } from './util.js';
 import { aiEnabled } from './ai/claude.js';
 import { researchLead } from './ai/pitchmaker.js';
-import { writeBrochure, brochureVars, templateBrochure } from './ai/brochure.js';
-import { writeProposalDoc, templateProposal } from './ai/proposal-doc.js';
+import { writeBrochure, brochureJob, brochureVars, templateBrochure } from './ai/brochure.js';
+import { writeProposalDoc, proposalJob, templateProposal } from './ai/proposal-doc.js';
 import { fillTemplate, chatEdit } from './ai/design-ai.js';
 import { brochureDesign, proposalDesign } from './design/layouts.js';
-import { deckDesign } from './design/deck.js';
+import { classicDesign } from './design/deck.js';
+import { editorialDesign } from './design/editorial.js';
+import { contentToData } from './design/brochure-data.js';
+import { buildBrief, generateDeckData, deckJob } from './ai/brochure-deck.js';
+import { claudeOn, dispatchJob, claudeState } from './claude-worker.js';
 
-/** Built-in brochure layouts by template source: 'builtin-deck' = Codeace Growth Deck (owner's template, 2026-11-05), else the classic layout. */
-const brochureLayout = (tpl, content, s, company) => (tpl?.source === 'builtin-deck' ? deckDesign(content, s, { company }) : brochureDesign(content, s));
+/**
+ * Built-in brochure layouts by template source: 'builtin-deck' = Codeace Growth Deck (classic design),
+ * 'builtin-editorial' = Codeace Editorial (owner's template package, 2026-11-05), else the classic 12-page layout.
+ */
+const DECK_DESIGNS = { 'builtin-deck': 'classic', 'builtin-editorial': 'editorial' };
+const deckOf = (tpl) => DECK_DESIGNS[tpl?.source] || null;
+const drawDeck = (design, data) => (design === 'editorial' ? editorialDesign(data) : classicDesign(data));
+const brochureLayout = (tpl, content, s, company) => {
+  if (content?.deck?.data) return drawDeck(content.deck.design, content.deck.data);
+  const design = deckOf(tpl);
+  return design ? drawDeck(design, contentToData(content, s, { company, design })) : brochureDesign(content, s);
+};
+/**
+ * Deck brochures: the AI pipeline writes the whole deck (concepts → brochure → critique → repair); without AI,
+ * or when it fails, the brochure copy + agency defaults are mapped onto the same data contract.
+ */
+async function writeDeck(doc, design, research, s) {
+  if (s.brochure_ai?.enabled !== false && aiEnabled()) {
+    try {
+      const r = await generateDeckData(buildBrief(doc.input, { design, research, settings: s }), { leadId: doc.lead_id });
+      return { content: { deck: { design, data: r.data, concept: r.concept, concepts: r.concepts, critique: r.critique, issues: r.issues, removed: r.removed, trace: r.trace } }, source: 'ai' };
+    } catch (e) {
+      const w = await writeBrochure(doc.input, doc.input.services, research);
+      return { content: { ...w.content, deck: { design, data: contentToData(w.content, s, { company: doc.input.company, design }), fallback: e.message } }, source: `${w.source} (deck AI failed: ${e.message})`.slice(0, 200) };
+    }
+  }
+  const w = await writeBrochure(doc.input, doc.input.services, research);
+  return { content: { ...w.content, deck: { design, data: contentToData(w.content, s, { company: doc.input.company, design }) } }, source: w.source };
+}
 import { renderDesignPdf } from './design/render-pdf.js';
 import { cleanDesign, cloneDesign, fillTokens } from './design/model.js';
 import { getTemplate, defaultTemplate } from './design/templates.js';
@@ -68,6 +99,7 @@ export async function listDocs(kind) {
     return {
       ...r, current: !!r.current && r.status === 'ready',
       made: input.auto === true ? 'auto' : input.auto === false ? 'hand' : '',
+      claude: claudeState(input),
       crm_state: kind === 'brochure' ? crm_brochure_state || '' : kind === 'proposal' ? crm_proposal_state || '' : '',
       detail: kind === 'script' ? [input.vertical, input.language].filter(Boolean).join(' · ')
         : kind === 'brochure' ? `${(input.services || []).length} service${(input.services || []).length === 1 ? '' : 's'}`
@@ -102,7 +134,8 @@ async function startJob(id, fn, { wait = false } = {}) {
   await update('docs', id, { status: 'working', error: null, updated_at: nowISO() });
   const job = async () => {
     try {
-      await fn();
+      // 'waiting' = the job went to Claude Code (Claude mode); the doc stays "working" until /webhooks/claude-result.
+      if ((await fn()) === 'waiting') return;
       await update('docs', id, { status: 'ready', updated_at: nowISO() });
       await announce(id);
     } catch (e) {
@@ -117,13 +150,14 @@ async function startJob(id, fn, { wait = false } = {}) {
 /** Restarts generation jobs that never finished. staleMinutes: only jobs idle that long (serverless: the instance may have been stopped). */
 export async function resumeDocs({ staleMinutes = 0 } = {}) {
   const before = new Date(Date.now() - staleMinutes * 60000).toISOString();
-  for (const d of await all(`SELECT id FROM docs WHERE status = 'working' AND updated_at <= :before`, { before })) await generate(d.id);
+  // (docs waiting for Claude Code are left alone: claude-worker.retryStale() handles them)
+  for (const d of await all(`SELECT id FROM docs WHERE status = 'working' AND updated_at <= :before AND (input_json IS NULL OR input_json NOT LIKE '%"waiting":true%')`, { before })) await generate(d.id);
   // Documents made before the editor existed: lay out their saved copy with the built-in template (no AI).
   const s = getSettings();
   for (const { id } of await all(`SELECT id FROM docs WHERE status = 'ready' AND design_json IS NULL AND content_json IS NOT NULL`)) {
     try {
       const d = await getDoc(id);
-      const design = d.kind === 'brochure' ? brochureDesign(d.content, s) : proposalDesign(d.content, d.items, s, { preparedFor: d.input.company });
+      const design = d.kind === 'brochure' ? brochureLayout(null, d.content, s, d.input.company) : proposalDesign(d.content, d.items, s, { preparedFor: d.input.company });
       await update('docs', id, { design_json: cleanDesign(design), template_id: (await defaultTemplate(d.kind))?.id ?? null });
     } catch (e) {
       console.error('[tools] could not migrate doc', id, e.message);
@@ -192,10 +226,51 @@ export async function createDoc(kind, raw, { wait = false, auto = false } = {}) 
 }
 
 /** (Re)builds the document's design from its template. Replaces manual edits. */
+/**
+ * Claude mode: the same job the in-app AI would run (prompt, schema, lead data) goes to Claude Code on GitHub.
+ * Returns false for documents Claude does not write (templates imported from a PDF stay in-app).
+ */
+async function sendToClaude(doc, s) {
+  const research = await researchFor(doc).catch(() => null);
+  let job, ctx = {};
+  if (doc.kind === 'script') {
+    const audit = await auditWebsite(normalizeUrl(doc.input.website)).catch(() => null);
+    job = scriptJob(doc.input, research, audit);
+    ctx = { audit };
+  } else {
+    const tpl = await getTemplate(doc.template_id) || await defaultTemplate(doc.kind);
+    if (!tpl || tpl.mode !== 'smart') return false;
+    if (doc.kind === 'proposal') job = proposalJob(doc.input, doc.items || [], research);
+    else if (deckOf(tpl)) { const brief = buildBrief(doc.input, { design: deckOf(tpl), research, settings: s }); job = deckJob(brief); ctx = { brief, design: deckOf(tpl) }; }
+    else job = brochureJob(doc.input, doc.input.services, research);
+  }
+  job.web = !!doc.input.research; // Claude Code may search the web itself when the form asked for research
+  await dispatchJob(doc, job, ctx);
+  return true;
+}
+
+/** True while a document is with Claude Code (Claude mode). */
+export const waitingForClaude = (d) => d?.status === 'working' && !!d?.input?.claude?.waiting;
+
+/** Finishes a document whose content came from Claude Code: the same layout and CRM writes as the in-app path. */
+export async function completeDoc(id, { content, source }) {
+  const doc = await getDoc(id);
+  const s = getSettings();
+  const patch = { content_json: content, source, status: 'ready', error: null, updated_at: nowISO() };
+  if (doc.kind !== 'script') {
+    const tpl = await getTemplate(doc.template_id) || await defaultTemplate(doc.kind);
+    const design = doc.kind === 'brochure' ? brochureLayout(tpl, content, s, doc.input.company) : proposalDesign(content, doc.items, s, { preparedFor: doc.input.company });
+    patch.design_json = cleanDesign(design);
+  }
+  await update('docs', id, patch);
+  await announce(id);
+}
+
 export async function generate(id, { wait = false } = {}) {
   await startJob(id, async () => {
     const doc = await getDoc(id);
     const s = getSettings();
+    if (claudeOn(s) && await sendToClaude(doc, s)) return 'waiting'; // Claude mode: Claude Code writes it, the callback finishes it
     if (doc.kind === 'script') {
       const [research, audit] = await Promise.all([researchFor(doc), auditWebsite(normalizeUrl(doc.input.website)).catch(() => null)]);
       const r = await writeScript(doc.input, research, audit);
@@ -207,7 +282,7 @@ export async function generate(id, { wait = false } = {}) {
     let design, content = null, source;
     if (tpl.mode === 'smart') {
       const r = doc.kind === 'brochure'
-        ? await writeBrochure(doc.input, doc.input.services, research)
+        ? (deckOf(tpl) ? await writeDeck(doc, deckOf(tpl), research, s) : await writeBrochure(doc.input, doc.input.services, research))
         : await writeProposalDoc(doc.input, doc.items, research);
       content = r.content;
       source = r.source;

@@ -51,21 +51,30 @@ Our packages: ${s.packages.map((p) => `${p.name} ${money(p.price, s.billing.curr
 Payment: ${s.billing.advance_pct}% advance.`;
 }
 
-export async function writeScript(input, research, audit) {
+/**
+ * The AI job for a call script: the same prompt runs in-app (runJson) or in Claude mode (Claude Code on GitHub,
+ * src/claude-worker.js). postScript() cleans the answer either way.
+ */
+export function scriptJob(input, research, audit) {
   const s = getSettings();
-  if (!aiEnabled()) return { content: templateScript(input, audit), source: 'template' };
-  try {
-    const content = await runJson({
-      purpose: 'pitch_script', effort: s.ai.effort_writing, schema: schema(), maxTokens: 12000,
-      system: managerSystem('write a phone call script for our telecaller'),
-      prompt: `Write a call script for our telecaller to pitch a new website (or online store) to this business.
+  return {
+    kind: 'script', purpose: 'pitch_script', effort: s.ai.effort_writing, schema: schema(), maxTokens: 12000,
+    system: managerSystem('write a phone call script for our telecaller'),
+    prompt: `Write a call script for our telecaller to pitch a new website (or online store) to this business.
 
 ${context(input, research, audit)}
 
 Rules: sound like a real person on the phone, not a brochure. Short lines. Be specific to this business and its vertical; no generic claims. Never invent facts about the business: if research is missing, ask instead of asserting. The goal of the call is a 30-minute meeting, not a sale.
 Language: write the script in ${input.language || 'English'}${/letters/.test(input.language || '') ? ' (spoken words in that language written in English letters; keep business terms like website, WhatsApp, Google in English)' : ''}.`,
-    });
-    return { content: repair(content, templateScript(input, audit)), source: 'ai' };
+  };
+}
+export const postScript = (content, input, audit) => repair(content || {}, templateScript(input, audit));
+
+export async function writeScript(input, research, audit) {
+  if (!aiEnabled()) return { content: templateScript(input, audit), source: 'template' };
+  try {
+    const content = await runJson(scriptJob(input, research, audit));
+    return { content: postScript(content, input, audit), source: 'ai' };
   } catch (e) {
     return { content: templateScript(input, audit), source: 'template', error: e.message };
   }

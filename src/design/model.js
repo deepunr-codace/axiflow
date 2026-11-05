@@ -11,13 +11,13 @@ import { saveUpload, readUpload, UPLOADS } from '../storage.js';
  *   text    { text, font: PR|PM|PS|PB (Poppins) | UM|US (Unbounded) | HR|HM|HS (Hanken Grotesk), size, color, align, lh, ls,
  *             list: ''|'dot'|'icon', gap, outline (stroke width, 0 = filled), rot (degrees) }
  *   image   { src, fit: cover|contain|fill, radius, ha: left|center|right, va: top|center|bottom }
- *   shape   { shape: rect|ellipse, fill, stroke, sw, radius, gradient: { angle, stops: [[offset, color, opacity]] } }
+ *   shape   { shape: rect|ellipse|line (horizontal, through the box's middle; dash: '' | 'dot'), fill, stroke, sw, radius, gradient: { angle, stops: [[offset, color, opacity]] } }
  *   icon    { name, color }
  *   pricing { }   → line-item table bound to the document's items
  * Image sources: "asset:<path under assets/>" or "upload:<key in storage.js (Supabase Storage, Vercel Blob or data/uploads)>" or a data: URL.
  */
 export { UPLOADS };
-export const FONTS = ['PR', 'PM', 'PS', 'PB', 'UM', 'US', 'HR', 'HM', 'HS'];
+export const FONTS = ['PR', 'PM', 'PS', 'PB', 'UM', 'US', 'HR', 'HM', 'HS', 'LR', 'LM', 'LS', 'IR', 'IM', 'IS'];
 
 export const newId = () => 'e' + crypto.randomBytes(5).toString('hex');
 
@@ -72,7 +72,7 @@ export function cleanElement(e) {
     case 'image':
       return { ...base, src: SRC_RE.test(e.src || '') ? e.src : '', fit: ['cover', 'contain', 'fill'].includes(e.fit) ? e.fit : 'cover', radius: num(e.radius, 0, 1000, 0), ha: ['left', 'center', 'right'].includes(e.ha) ? e.ha : 'center', va: ['top', 'center', 'bottom'].includes(e.va) ? e.va : 'center' };
     case 'shape':
-      return { ...base, shape: e.shape === 'ellipse' ? 'ellipse' : 'rect', fill: e.fill === 'none' ? 'none' : color(e.fill, '#2d4bd8'), stroke: e.stroke && e.stroke !== 'none' ? color(e.stroke, '#ffffff') : 'none', sw: num(e.sw, 0, 50, 1), radius: num(e.radius, 0, 1000, 0), gradient: cleanGradient(e.gradient) };
+      return { ...base, shape: ['ellipse', 'line'].includes(e.shape) ? e.shape : 'rect', dash: e.dash === 'dot' ? 'dot' : '', fill: e.fill === 'none' ? 'none' : color(e.fill, '#2d4bd8'), stroke: e.stroke && e.stroke !== 'none' ? color(e.stroke, '#ffffff') : 'none', sw: num(e.sw, 0, 50, 1), radius: num(e.radius, 0, 1000, 0), gradient: cleanGradient(e.gradient) };
     case 'icon':
       return { ...base, name: ICONS[e.name] ? e.name : 'star4', color: color(e.color, '#ffffff') };
     case 'pricing':

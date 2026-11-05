@@ -27,6 +27,7 @@ export async function cronTick() {
   await loadSettings();
   await flushOutbox().catch((e) => { out.crm_error = e.message; });
   await resumeDocs({ staleMinutes: 6 }).catch((e) => { out.docs_error = e.message; });
+  out.claude_retried = await (await import('./claude-worker.js')).retryStale({ force: true }).catch((e) => { out.claude_error = e.message; return 0; });
   const crm = await pollCrm().catch((e) => ({ errors: [e.message] }));
   if (!crm.skipped) out.crm = { deals: crm.deals, created: crm.created, updated: crm.updated, errors: crm.errors?.length || 0 };
   const s = getSettings();

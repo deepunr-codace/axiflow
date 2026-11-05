@@ -246,6 +246,7 @@ export async function prepareScript(leadId) {
   const tools = await import('./tools.js');
   try {
     const d = await tools.createDocForLead('script', leadId);
+    if (tools.waitingForClaude(d)) return await logEvent(leadId, 'atomic', 'script', 'ok', `call script #${d.id} sent to Claude Code; it goes to the CRM when it comes back`);
     if (d.status !== 'ready') throw new Error(d.error || 'script not ready');
     await tools.useScriptForLead(d.id); // pitch point + script note → CRM (outbox)
     await logEvent(leadId, 'atomic', 'script', 'ok', `call script #${d.id} ready for the telecaller`);
@@ -724,6 +725,7 @@ export async function atomicStatus() {
 let lastKick = 0;
 /** Reads the CRM in the background when the app is used (throttled by `atomic.poll_seconds`). */
 export function pollSoon(background) {
+  background(async () => { await (await import('./claude-worker.js')).retryStale().catch(() => {}); }, 'claude-retry'); // Claude jobs past their time
   if (!atomicConfigured()) return;
   const every = (getSettings().atomic?.poll_seconds || 60) * 1000;
   if (Date.now() - lastKick < every) return;

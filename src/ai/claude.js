@@ -167,9 +167,13 @@ export async function runText({ purpose, leadId, system, prompt, tools, effort =
 }
 
 /** Schema-constrained JSON call (structured outputs). Returns the parsed object. */
-export async function runJson({ purpose, leadId, system, prompt, schema, effort = 'low', maxTokens = 16000 }) {
+/**
+ * messages: a whole conversation after the system prompt ([{ role: 'user'|'assistant', content }]) instead of one prompt.
+ * temperature / model (OpenRouter model override) / timeoutMs are optional; temperature is only sent to OpenRouter.
+ */
+export async function runJson({ purpose, leadId, system, prompt, messages = null, schema, effort = 'low', maxTokens = 16000, temperature, model, timeoutMs }) {
   const s = await preflight();
-  if (aiProvider(s) === 'openrouter') return limited(async () => (await orRun({ s, purpose, leadId, system, prompt, effort, maxTokens, schema })).data);
+  if (aiProvider(s) === 'openrouter') return limited(async () => (await orRun({ s, purpose, leadId, system, prompt, messages, effort, maxTokens, schema, temperature, modelOverride: model, timeoutMs })).data);
   return limited(async () => {
     const t0 = Date.now();
     const usage = { in: 0, out: 0, ws: 0 };
@@ -179,7 +183,7 @@ export async function runJson({ purpose, leadId, system, prompt, schema, effort 
         model: s.ai.model,
         max_tokens: maxTokens,
         system,
-        messages: [{ role: 'user', content: prompt }],
+        messages: messages || [{ role: 'user', content: prompt }],
         output_config: { effort, format: { type: 'json_schema', schema } },
         betas: [FALLBACK_BETA],
         fallbacks: 'default',
@@ -222,15 +226,16 @@ function parseJson(text) {
  * One OpenRouter chat completion. schema → structured output (strict JSON schema); web → the "web" plugin
  * (search results come back as url_citation annotations). Returns { text, data, sources }.
  */
-async function orRun({ s, purpose, leadId, system, prompt, effort, maxTokens, schema = null, web = false }) {
+async function orRun({ s, purpose, leadId, system, prompt, messages = null, effort, maxTokens, schema = null, web = false, temperature, modelOverride, timeoutMs = 280000 }) {
   const t0 = Date.now();
-  const model = orModel(s);
+  const model = modelOverride || orModel(s);
   const usage = { in: 0, out: 0, ws: 0 };
   try {
     const body = {
       model,
       max_tokens: maxTokens,
-      messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
+      messages: [{ role: 'system', content: system }, ...(messages || [{ role: 'user', content: prompt }])],
+      ...(typeof temperature === 'number' ? { temperature } : {}),
       reasoning: { effort: ['low', 'medium', 'high'].includes(effort) ? effort : 'medium', exclude: true },
       usage: { include: true },
       // require_parameters: only route to providers that honour response_format (some free endpoints ignore it)
@@ -241,7 +246,7 @@ async function orRun({ s, purpose, leadId, system, prompt, effort, maxTokens, sc
       method: 'POST',
       headers: { authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'content-type': 'application/json', 'HTTP-Referer': BASE_URL, 'X-Title': 'AxiFlow' },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(280000),
+      signal: AbortSignal.timeout(Math.max(10000, Math.min(280000, timeoutMs || 280000))),
     });
     const res = await r.json().catch(() => ({}));
     if (!r.ok || res.error) throw new AiError(orError(r.status === 200 ? res.error?.code || 500 : r.status, res));

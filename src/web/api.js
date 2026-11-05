@@ -44,6 +44,7 @@ api.get('/meta', async (_req, res) => {
     call_outcomes: engine.CALL_OUTCOMES,
     channels: channelStatus(s), scheduler: await schedulerInfo(),
     intake_key_set: !!process.env.INTAKE_API_KEY, agency: s.agency.name, currency: s.billing.currency,
+    claude_mode: !!s.claude?.mode, claude_missing: (await import('../claude-worker.js')).claudeMissing(),
     packages: s.packages.map((p) => ({ id: p.id, name: p.name, price: p.price })),
   });
 });
@@ -331,7 +332,13 @@ api.get('/settings', async (_req, res) => res.json({
     channels: channelStatus(getSettings()),
   },
 }));
-api.put('/settings', async (req, res) => res.json(await saveSettings(req.body || {})));
+api.put('/settings', async (req, res) => {
+  if (req.body?.claude?.mode === true) { // Claude mode needs the GitHub link and the callback secret first
+    const missing = (await import('../claude-worker.js')).claudeMissing();
+    if (missing.length) return res.status(400).json({ error: `Claude mode needs: ${missing.join('; ')}`, missing });
+  }
+  res.json(await saveSettings(req.body || {}));
+});
 
 // Team CRM (Atomic CRM): status and a read right now
 api.get('/atomic', async (_req, res) => res.json(await atomic.atomicStatus()));

@@ -1,0 +1,53 @@
+# Claude mode (AxiFlow): Claude Code writes a pitch script, brochure or proposal for a CRM lead.
+# AxiFlow (src/claude-worker.js) sends a repository_dispatch "axiflow-generate" with the job (prompt, schema,
+# lead data) in client_payload. Nothing is committed; the lead data only lives in this run's workspace.
+# Secrets: CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`, Claude subscription), AXIFLOW_CALLBACK_SECRET.
+# Keep this repo private: run logs of a public repo are public.
+name: Claude generate (AxiFlow)
+
+on:
+  repository_dispatch:
+    types: [axiflow-generate]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: claude-doc-${{ github.event.client_payload.doc_id }}
+  cancel-in-progress: true
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Write the job (not printed)
+        env:
+          PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+        run: |
+          mkdir -p claude-worker/work/out
+          printf '%s' "$PAYLOAD" > claude-worker/work/payload.json
+          node claude-worker/prepare.mjs
+
+      - name: Claude Code writes the document
+        continue-on-error: true
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          TOOLS="Read,Write,Edit,Bash(node claude-worker/validate.mjs),Bash(node claude-worker/validate.mjs:*)"
+          if [ "$(node -p "require('./claude-worker/work/job.json').web ? 1 : 0")" = "1" ]; then TOOLS="$TOOLS,WebSearch,WebFetch"; fi
+          npx -y @anthropic-ai/claude-code@latest -p "$(cat claude-worker/PROMPT.txt)" \
+            --allowedTools "$TOOLS" --max-turns 30 --output-format json > claude-worker/work/claude.json
+
+      - name: Send the result back to AxiFlow
+        if: always()
+        env:
+          AXIFLOW_CALLBACK_SECRET: ${{ secrets.AXIFLOW_CALLBACK_SECRET }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node claude-worker/post.mjs

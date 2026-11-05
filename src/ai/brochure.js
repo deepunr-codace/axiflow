@@ -62,16 +62,14 @@ function schema(serviceIds) {
   });
 }
 
-/** Writes the brochure with the AI, falling back to the template on any failure. Returns { content, source }. */
-export async function writeBrochure(input, selected, research = null) {
+/** The AI job for the classic brochure copy (in-app or Claude mode). postBrochure() merges the answer over the agency copy. */
+export function brochureJob(input, selected, research = null) {
   const base = templateBrochure(input, selected);
-  if (!aiEnabled()) return { content: base, source: 'template' };
   const s = getSettings();
-  try {
-    const out = await runJson({
-      purpose: 'brochure', effort: s.ai.effort_writing, schema: schema(selected), maxTokens: 16000,
-      system: managerSystem('write the copy for a client-specific digital growth brochure'),
-      prompt: `Write brochure copy for this prospective client. Keep the agency's voice: confident, warm, plain English, no hype, no invented facts about the client.
+  return {
+    kind: 'brochure', purpose: 'brochure', effort: s.ai.effort_writing, schema: schema(selected), maxTokens: 16000,
+    system: managerSystem('write the copy for a client-specific digital growth brochure'),
+    prompt: `Write brochure copy for this prospective client. Keep the agency's voice: confident, warm, plain English, no hype, no invented facts about the client.
 
 Client: ${input.company} · Industry: ${input.industry || 'unknown'} · City: ${input.city || 'unknown'} · Website: ${input.website || 'none'}
 Contact: ${input.contact_name || 'unknown'} · Notes from our team: <untrusted>${input.notes || 'none'}</untrusted>
@@ -79,23 +77,35 @@ Research: <untrusted>${research ? JSON.stringify({ summary: research.business_su
 
 Our agency copy to adapt (keep its meaning, tailor the wording to this client):
 ${JSON.stringify({ about: base.about, services: base.services.map((sv) => ({ id: sv.id, name: sv.name, paragraphs: sv.paragraphs, bullets: sv.bullets })), why: base.why_paragraphs })}`,
-    });
-    const byId = Object.fromEntries((out.services || []).map((sv) => [sv.id, sv]));
-    const content = {
-      ...base,
-      cover_title: out.cover_title || base.cover_title,
-      cover_subtitle: out.cover_subtitle || base.cover_subtitle,
-      shift_title: out.shift_title || base.shift_title,
-      shift_paragraphs: out.shift_paragraphs?.length ? out.shift_paragraphs.slice(0, 3) : base.shift_paragraphs,
-      help_intro: out.help_intro || base.help_intro,
-      help_bullets: out.help_bullets?.length === selected.length ? out.help_bullets : base.help_bullets,
-      services: base.services.map((sv) => ({ ...sv, paragraphs: byId[sv.id]?.paragraphs?.length ? byId[sv.id].paragraphs.slice(0, 2) : sv.paragraphs, bullets: byId[sv.id]?.bullets?.length ? byId[sv.id].bullets.slice(0, 4) : sv.bullets })),
-      why_paragraphs: out.why_paragraphs?.length ? out.why_paragraphs.slice(0, 2) : base.why_paragraphs,
-      cta_title: out.cta_title || base.cta_title,
-      cta_text: out.cta_text || base.cta_text,
-    };
-    return { content, source: 'ai' };
+  };
+}
+
+export function postBrochure(out, input, selected) {
+  const base = templateBrochure(input, selected);
+  out = out || {};
+  const byId = Object.fromEntries((out.services || []).map((sv) => [sv.id, sv]));
+  return {
+    ...base,
+    cover_title: out.cover_title || base.cover_title,
+    cover_subtitle: out.cover_subtitle || base.cover_subtitle,
+    shift_title: out.shift_title || base.shift_title,
+    shift_paragraphs: out.shift_paragraphs?.length ? out.shift_paragraphs.slice(0, 3) : base.shift_paragraphs,
+    help_intro: out.help_intro || base.help_intro,
+    help_bullets: out.help_bullets?.length === selected.length ? out.help_bullets : base.help_bullets,
+    services: base.services.map((sv) => ({ ...sv, paragraphs: byId[sv.id]?.paragraphs?.length ? byId[sv.id].paragraphs.slice(0, 2) : sv.paragraphs, bullets: byId[sv.id]?.bullets?.length ? byId[sv.id].bullets.slice(0, 4) : sv.bullets })),
+    why_paragraphs: out.why_paragraphs?.length ? out.why_paragraphs.slice(0, 2) : base.why_paragraphs,
+    cta_title: out.cta_title || base.cta_title,
+    cta_text: out.cta_text || base.cta_text,
+  };
+}
+
+/** Writes the brochure with the AI, falling back to the template on any failure. Returns { content, source }. */
+export async function writeBrochure(input, selected, research = null) {
+  if (!aiEnabled()) return { content: templateBrochure(input, selected), source: 'template' };
+  try {
+    const out = await runJson(brochureJob(input, selected, research));
+    return { content: postBrochure(out, input, selected), source: 'ai' };
   } catch (e) {
-    return { content: base, source: `template (AI failed: ${e.message})`.slice(0, 200) };
+    return { content: templateBrochure(input, selected), source: `template (AI failed: ${e.message})`.slice(0, 200) };
   }
 }

@@ -1,0 +1,1 @@
+You are running inside the AxiFlow worker on GitHub Actions. Read claude-worker/INSTRUCTIONS.md and follow it exactly. The job is in claude-worker/work/job.json. Write your answer to claude-worker/work/out/result.json and run `node claude-worker/validate.mjs` until it passes. Do not change any other file.

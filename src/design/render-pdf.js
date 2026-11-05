@@ -11,7 +11,8 @@ import { srcPath, loadImage } from './model.js';
  */
 const CONTENT = 1.4, PDFKIT_LH = 1.5; // Poppins (the pricing table)
 // Per font code: [content area, pdfkit line height] in em (from pdfkit's own font metrics, hhea).
-const METRICS = { UM: [1.24, 1.24], US: [1.24, 1.24], HR: [1.303, 1.303], HM: [1.303, 1.303], HS: [1.303, 1.303] };
+const METRICS = { UM: [1.24, 1.24], US: [1.24, 1.24], HR: [1.303, 1.303], HM: [1.303, 1.303], HS: [1.303, 1.303],
+  LR: [1.28, 1.28], LM: [1.28, 1.28], LS: [1.28, 1.28], IR: [1.21, 1.21], IM: [1.21, 1.21], IS: [1.21, 1.21] };
 const fm = (font) => METRICS[font] || [CONTENT, PDFKIT_LH];
 
 export const textOpts = (e) => ({ width: e.w, align: e.align, lineGap: (e.lh - fm(e.font)[1]) * e.size, characterSpacing: e.ls });
@@ -23,7 +24,16 @@ export const textOpts = (e) => ({ width: e.w, align: e.align, lineGap: (e.lh - f
 const hang = (doc, e) => doc.font(e.font).fontSize(e.size).widthOfString(' ') + (e.ls || 0);
 const wrapOpts = (doc, e, w = e.w) => { const sp = hang(doc, e); return { ...textOpts(e), width: w + sp }; };
 /** Text as pdfkit gets it: every paragraph ends in a space, so its last line wraps by the same rule as the others. */
-const ptext = (t) => clean(t).replace(/\n/g, ' \n') + ' ';
+const ptext = (t) => clean(t) + ' ';
+/*
+ * Paragraphs are measured and drawn one by one: pdfkit counts a line break as a glyph (half a letter
+ * wide or more), so a line ending in a hard break that nearly fills the box would wrap one word early.
+ */
+const paras = (t) => String(t ?? '').split('\n');
+function paraHeights(doc, e, w = e.w) {
+  const o = wrapOpts(doc, e, w);
+  return paras(e.text).map((p) => (clean(p) ? doc.heightOfString(ptext(p), o) : e.lh * e.size));
+}
 const hangX = (doc, e) => (e.align === 'center' ? hang(doc, e) / 2 : e.align === 'right' ? hang(doc, e) : 0);
 const baselineShift = (e) => ((e.lh - fm(e.font)[0]) / 2) * e.size;
 /** Width of one line of text (no wrapping), as the layouts need for inline highlights. */
@@ -32,7 +42,7 @@ export function lineWidth(doc, e, text = e.text) { doc.font(e.font).fontSize(e.s
 /** Height a text element needs (used by layouts and for pagination). */
 export function measureText(doc, e) {
   doc.font(e.font).fontSize(e.size);
-  if (!e.list) return doc.heightOfString(ptext(e.text), wrapOpts(doc, e));
+  if (!e.list) return paraHeights(doc, e).reduce((a, h) => a + h, 0);
   const items = listItems(e.text);
   const ind = listIndent(e);
   return items.reduce((a, it, i) => a + doc.heightOfString(ptext(it), wrapOpts(doc, e, e.w - ind)) + (i ? e.gap : 0), 0);
@@ -70,6 +80,14 @@ function shapePath(doc, e, inset = 0) {
 
 function drawShape(doc, e) {
   doc.save().opacity(e.opacity);
+  if (e.shape === 'line') { // a horizontal rule; 'dot' = round dots like CSS border-style: dotted
+    const y = e.y + e.h / 2, sw = e.sw || 1;
+    doc.moveTo(e.x + (e.dash ? sw / 2 : 0), y).lineTo(e.x + e.w, y).lineWidth(sw).strokeColor(e.stroke === 'none' ? e.fill : e.stroke);
+    if (e.dash) doc.lineCap('round').dash(0.001, { space: sw * 2 }); 
+    doc.stroke().undash();
+    doc.restore();
+    return;
+  }
   if (e.gradient || e.fill !== 'none') {
     shapePath(doc, e);
     doc.fill(e.gradient ? gradientFor(doc, e, e.gradient) : e.fill);
@@ -130,8 +148,13 @@ function drawText(doc, e) {
   if (e.rot) doc.rotate(e.rot, { origin: [e.x + e.w / 2, e.y + (e.h || e.size * e.lh) / 2] });
   const y0 = e.y + baselineShift(e);
   if (!e.list) {
-    if (e.outline) { doc.lineWidth(e.outline).strokeColor(e.color); doc.text(ptext(e.text), e.x - hangX(doc, e), y0, { ...wrapOpts(doc, e), stroke: true, fill: false }); }
-    else doc.text(ptext(e.text), e.x - hangX(doc, e), y0, wrapOpts(doc, e));
+    const hs = paraHeights(doc, e), o = wrapOpts(doc, e), x = e.x - hangX(doc, e);
+    if (e.outline) doc.lineWidth(e.outline).strokeColor(e.color);
+    let y = y0;
+    paras(e.text).forEach((p, i) => {
+      if (clean(p)) doc.font(e.font).fontSize(e.size).text(ptext(p), x, y, e.outline ? { ...o, stroke: true, fill: false } : o);
+      y += hs[i];
+    });
   } else {
     const ind = listIndent(e);
     let y = e.y;
