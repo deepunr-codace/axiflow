@@ -11,15 +11,16 @@ let saveTimer = null;
 
 export async function renderScripts(id) {
   clearTimeout(pollTimer);
-  if (id) return renderScript(Number(id));
-  const [opts, docs] = await Promise.all([H.api('/tools/options?kind=script'), H.api('/tools/docs?kind=script')]);
+  if (id && id !== 'new') return renderScript(Number(id));
+  if (!id) return H.docList('script');
+  const opts = await H.api('/tools/options?kind=script');
   const pre = sessionStorage.getItem('script-lead');
   sessionStorage.removeItem('script-lead');
   H.view.innerHTML = `
-  <div class="hello"><h2>Pitch scripts</h2><p>A call script for the telecaller, written for one business: an introduction, the opportunities we see, three pitching points, questions to ask and how to book the meeting. ${opts.ai.enabled ? 'AI checks their website and the web first (about a minute).' : 'AI is off (no API key), so it uses the standard script for the vertical. You can edit everything.'}</p></div>
-  <div class="grid g2">
+  <p><a class="back-link" href="#/script">${I('arrow_back')}All scripts</a></p>
+  <div class="hello"><h2>New pitch script</h2><p>A call script for the telecaller, written for one business: an introduction, the opportunities we see, three pitching points, questions to ask and how to book the meeting. ${opts.ai.enabled ? 'AI checks their website and the web first (about a minute).' : 'AI is off (no API key), so it uses the standard script for the vertical. You can edit everything.'}</p></div>
+  <div class="tool-new">
     <form class="card" id="scriptForm">
-      <h2>New script</h2>
       <label>CRM lead *<select id="fromLead" required><option value="">${opts.leads.length ? 'Pick a lead from the CRM' : 'No CRM leads yet'}</option>${opts.leads.map((l) => `<option value="${l.id}">${H.esc(l.company)}${l.city ? `, ${H.esc(l.city)}` : ''}</option>`).join('')}</select></label>
       <div class="form-grid" style="margin-top:14px">
         <label class="full">Business name *<input name="company" required maxlength="120"></label>
@@ -33,11 +34,8 @@ export async function renderScripts(id) {
         ${opts.ai.enabled ? '<label class="check full"><input type="checkbox" name="research" checked> Research the business on the web first (better script, about a minute more)</label>' : ''}
       </div>
       <input type="hidden" name="lead_id">
-      <div class="row" style="margin-top:16px"><span class="spacer"></span><button class="btn primary">${I('record_voice_over')}Write script</button></div>
+      <div class="row" style="margin-top:16px"><a class="btn ghost" href="#/script">Cancel</a><span class="spacer"></span><button class="btn primary">${I('record_voice_over')}Write script</button></div>
     </form>
-    <div class="card"><h2>Recent scripts</h2>
-      ${docs.length ? docs.map((d) => `<a class="item row link" href="#/script/${d.id}"><span class="ini">${H.esc((d.title || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase())}</span><div class="grow"><b>${H.esc(d.title)}</b><div class="small muted">${new Date(d.created_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</div></div>${d.status === 'ready' ? '<span class="tag green">Ready</span>' : d.status === 'error' ? '<span class="tag red">Failed</span>' : '<span class="tag">Writing…</span>'}</a>`).join('') : '<p class="muted small">No scripts yet. Fill in the form to write the first one.</p>'}
-    </div>
   </div>`;
   const f = H.$('#scriptForm');
   const fill = async (leadId) => {
@@ -59,7 +57,6 @@ export async function renderScripts(id) {
       location.hash = `#/script/${r.id}`;
     });
   };
-  if (docs.some((d) => d.status === 'working')) pollTimer = setTimeout(() => location.hash === '#/script' && renderScripts(), 3000);
 }
 
 // ---------------------------------------------------------------- script page

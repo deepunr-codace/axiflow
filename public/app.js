@@ -73,7 +73,7 @@ function modal(title, body, actions = '') {
 }
 
 setupPlans({ $, $$, api, esc, money, toast, busy, modal, get view() { return view; } });
-setupScripts({ $, $$, api, esc, toast, busy, modal, get view() { return view; } });
+setupScripts({ $, $, api, esc, toast, busy, modal, docList: (...a) => docList(...a), get view() { return view; } });
 setupCrmLeads({ $, $$, api, esc, toast, busy, fmtDate, fmtDay, money, simplePill, groupItems: (el) => groupItems(el), get view() { return view; } });
 
 function formData(form) {
@@ -156,7 +156,7 @@ const PAL_PAGES = [
   ['#/designs', 'grid_view', 'Brochure templates'], ['#/designs/proposal', 'grid_view', 'Proposal templates'], ['#/settings', 'tune', 'Tool settings'],
 ];
 const PAL_ACTIONS = [
-  ['new-script', 'add', 'New pitch script', () => (location.hash = '#/script')], ['new-brochure', 'add', 'New brochure', () => (location.hash = '#/brochure')], ['new-proposal', 'add', 'New proposal', () => (location.hash = '#/proposal')],
+  ['new-script', 'add', 'New pitch script', () => (location.hash = '#/script/new')], ['new-brochure', 'add', 'New brochure', () => (location.hash = '#/brochure/new')], ['new-proposal', 'add', 'New proposal', () => (location.hash = '#/proposal/new')],
   ['theme', 'contrast', 'Switch light / dark mode', toggleTheme], ['menu', 'left_panel_close', 'Hide or show the menu', () => $('#panelBtn').click()],
   ['logout', 'logout', 'Log out', () => $('#logoutBtn').click()],
 ];
@@ -384,7 +384,7 @@ async function homeTools() {
           <div class="grow"><b>${t.name}</b><div class="small muted">${docs.length} made${recent ? ` · ${recent} this week` : ''}${busyN ? ` · ${busyN} writing` : ''}</div></div></div>
         <p class="ht-text">${t.text}</p>
         <div class="ht-list">${docs.slice(0, 3).map((d) => `<a class="ht-doc" href="#/${t.kind}/${d.id}"><span class="grow">${esc(d.title)}</span><span class="small muted">${fmtDate(d.updated_at)}</span>${d.status === 'ready' ? '' : docTag(d)}</a>`).join('') || `<div class="ht-none small muted">No ${t.noun}s yet.</div>`}</div>
-        <div class="ht-act"><a class="btn primary sm" href="#/${t.kind}"><span class="mi">add</span>New ${t.noun}</a>${docs.length > 3 ? `<a class="btn sm ghost" href="#/${t.kind}">See all ${docs.length}</a>` : ''}</div>
+        <div class="ht-act"><a class="btn primary sm" href="#/${t.kind}/new"><span class="mi">add</span>New ${t.noun}</a>${docs.length > 3 ? `<a class="btn sm ghost" href="#/${t.kind}">See all ${docs.length}</a>` : ''}</div>
       </div>`;
     }).join('')}</div></section>`;
 }
@@ -431,7 +431,7 @@ async function renderToolsHome() {
     return `<section class="card te-card" data-sec="${t.kind}">
       <div class="ht-top"><span class="ht-ic"><span class="mi">${t.icon}</span></span>
         <div class="grow"><b>${t.name}</b><div class="small muted">${docs.length} made${recent ? ` · ${recent} this week` : ''}${busyN ? ` · ${busyN} writing` : ''}</div></div>
-        <a class="btn primary sm" href="#/${t.kind}"><span class="mi">add</span>New</a></div>
+        <a class="btn primary sm" href="#/${t.kind}/new"><span class="mi">add</span>New</a></div>
       <p class="ht-text">${t.text}</p>
       ${t.kind === 'proposal' && waiting.length ? `<div class="te-wait"><b>Waiting for your OK (${waiting.length})</b>${waiting.map((p) => `<div class="te-wrow"><span class="grow">${esc(p.company)} <span class="small muted">${money(p.total)} + tax</span></span><a class="btn sm" href="#/proposal/${p.id}">Open</a><button class="btn sm primary" data-send-proposal="${p.lead_id}" data-doc="${p.id}"><span class="mi">send</span>Send</button></div>`).join('')}</div>` : ''}
       <div class="te-label">Latest</div>
@@ -689,7 +689,7 @@ async function renderLead(id) {
     : ['qualified', 'new', 'researching'].includes(l.stage) ? A('run', 'Run now', 'primary') : '';
   const quick = l.stage === 'do_not_contact' ? '' : A('message', 'Message') + A('book', 'Book meeting');
   const more = [
-    `<a href="#/script" data-script-lead="${l.id}"><span class="mi">record_voice_over</span>Write a call script</a>`,
+    `<a href="#/script/new" data-script-lead="${l.id}"><span class="mi">record_voice_over</span>Write a call script</a>`,
     M('pitch_note', 'Edit personal note in brochure'), M('note', 'Add note'), M('plan_next', '<span class="mi">auto_awesome</span>Ask manager for next step'),
     l.stage !== 'do_not_contact' ? M('repitch', l.pitch_json ? '<span class="mi">auto_awesome</span>Redo research & pitch' : '<span class="mi">auto_awesome</span>Make pitch now') : '',
     l.brochure_version ? `<a target="_blank" href="/pdf/brochure/${l.token}.pdf">Open brochure PDF<span class="mi">open_in_new</span></a>` : '',
@@ -1137,18 +1137,19 @@ let activeEditor = null;
 async function renderTool(kind, id) {
   clearTimeout(toolTimer);
   if (activeEditor) { await activeEditor.flush?.(); activeEditor = null; }
-  $('#pageTitle').textContent = id ? TOOL[kind].title : '';
+  $('#pageTitle').textContent = id && id !== 'new' ? TOOL[kind].title : '';
   $('.main').classList.add('notitle'); // the form has its own heading; the editor has its own header bar
-  if (id) return renderToolDoc(kind, Number(id));
-  const [opts, docs] = await Promise.all([api(`/tools/options?kind=${kind}`), api(`/tools/docs?kind=${kind}`)]);
+  if (id && id !== 'new') return renderToolDoc(kind, Number(id));
+  if (!id) return docList(kind);
+  const opts = await api(`/tools/options?kind=${kind}`);
   const pre = sessionStorage.getItem(`tpl-${kind}`);
   sessionStorage.removeItem(`tpl-${kind}`);
   const chosen = opts.templates.find((t) => String(t.id) === pre) || opts.templates.find((t) => t.is_default) || opts.templates[0];
   view.innerHTML = `
-  <div class="hello" style="padding-top:4px"><h2>${TOOL[kind].title}</h2><p>${TOOL[kind].hint} ${opts.ai.enabled ? 'AI writes it in about a minute; then edit anything on the page, like in Canva, or ask the AI assistant.' : 'AI is off (no API key), so it is filled from your standard copy. You can edit everything on the page.'}</p></div>
-  <div class="grid g2">
+  <p><a class="back-link" href="#/${kind}"><span class="mi">arrow_back</span>All ${TOOL[kind].noun}s</a></p>
+  <div class="hello" style="padding-top:4px"><h2>New ${TOOL[kind].noun}</h2><p>${TOOL[kind].hint} ${opts.ai.enabled ? 'AI writes it in about a minute; then edit anything on the page, like in Canva, or ask the AI assistant.' : 'AI is off (no API key), so it is filled from your standard copy. You can edit everything on the page.'}</p></div>
+  <div class="tool-new">
     <form class="card" id="toolForm">
-      <h2>New ${TOOL[kind].noun}</h2>
       <label>Template<div class="row" style="margin-top:5px"><select name="template_id" class="grow">${opts.templates.map((t) => `<option value="${t.id}" data-mode="${t.mode}" ${t.id === chosen?.id ? 'selected' : ''}>${esc(t.name)}${t.is_default ? ' (default)' : ''}</option>`).join('')}</select><a class="btn sm" href="#/designs/${kind}">Templates</a></div></label>
       <label style="margin-top:14px">CRM lead *<select id="fromLead" required><option value="">${opts.leads.length ? 'Pick a lead from the CRM' : 'No CRM leads yet'}</option>${opts.leads.map((l) => `<option value="${l.id}">${esc(l.company)}${l.city ? ` · ${esc(l.city)}` : ''}</option>`).join('')}</select></label>
       <div class="form-grid" style="margin-top:14px">
@@ -1164,11 +1165,8 @@ async function renderTool(kind, id) {
         ${opts.ai.enabled ? '<label class="check full"><input type="checkbox" name="research" checked> Research the business on the web first (better copy, ~1 minute more)</label>' : ''}
       </div>
       <input type="hidden" name="lead_id">
-      <div class="row" style="margin-top:16px"><span class="spacer"></span><button class="btn primary" id="genBtn">Generate ${TOOL[kind].noun}</button></div>
+      <div class="row" style="margin-top:16px"><a class="btn ghost" href="#/${kind}">Cancel</a><span class="spacer"></span><button class="btn primary" id="genBtn">Generate ${TOOL[kind].noun}</button></div>
     </form>
-    <div class="card"><h2>Recent ${TOOL[kind].noun}s</h2>
-      ${docs.length ? docs.map((d) => `<a class="item row link" href="#/${kind}/${d.id}"><div class="grow"><b>${esc(d.title)}</b><div class="small muted">${fmtDate(d.updated_at)}</div></div>${docTag(d)}</a>`).join('') : '<p class="muted">Nothing yet.</p>'}
-    </div>
   </div>`;
   const f = $('#toolForm');
   const syncSvc = () => { const box = $('#svcBox'); if (box) box.classList.toggle('hidden', f.elements.template_id.selectedOptions[0]?.dataset.mode !== 'smart'); };
@@ -1189,6 +1187,62 @@ async function renderTool(kind, id) {
       location.hash = `#/${kind}/${r.id}`;
     });
   };
+}
+
+/**
+ * A tool's main page: every document it made, with its lead and what happened to it.
+ * New documents are only made by hand through "New" (#/<kind>/new); the automation adds the rest.
+ */
+const LIST = {
+  script: { title: 'Pitch scripts', noun: 'pitch script', icon: 'record_voice_over', text: 'Call scripts for the telecaller. A new CRM lead gets one automatically; the newest ready one per lead is in the CRM as a note, with its pitch point.' },
+  brochure: { title: 'Brochures', noun: 'brochure', icon: 'menu_book', text: 'Brochures for interested CRM leads. The newest ready one per lead is in the CRM brochure bucket, where it is approved or sent back.' },
+  proposal: { title: 'Proposals', noun: 'proposal', icon: 'request_quote', text: 'Proposals for leads at the proposal stage. The newest ready one per lead is in the CRM proposal bucket, where it is approved before it goes out.' },
+};
+const CRM_STATE = { pending: ['amber', 'Waiting for approval'], approved: ['green', 'Approved'], not_approved: ['red', 'Sent back'] };
+let listTimer = null;
+async function docList(kind, keep = null) {
+  clearTimeout(listTimer);
+  const L = LIST[kind];
+  const docs = await api(`/tools/docs?kind=${kind}`);
+  const st = keep || { q: '', f: 'all' };
+  const leads = new Set(docs.map((d) => d.lead_id)).size;
+  const week = Date.now() - 7 * 864e5;
+  const counts = { all: docs.length, current: docs.filter((d) => d.current).length, auto: docs.filter((d) => d.made === 'auto').length, hand: docs.filter((d) => d.made === 'hand').length, problems: docs.filter((d) => d.status === 'error').length };
+  const FILTERS = [['all', 'All'], ['current', 'In the CRM'], ['auto', 'Automatic'], ['hand', 'By hand'], ...(counts.problems ? [['problems', 'Failed']] : [])];
+  const pass = (d) => (st.f === 'all' || (st.f === 'current' && d.current) || (st.f === 'auto' && d.made === 'auto') || (st.f === 'hand' && d.made === 'hand') || (st.f === 'problems' && d.status === 'error'))
+    && (!st.q || [d.title, d.company, d.city, d.contact_name, d.template_name, d.detail].join(' ').toLowerCase().includes(st.q.toLowerCase()));
+  const shown = docs.filter(pass);
+  const crm = (d) => {
+    if (!d.current) return d.status === 'ready' ? '<span class="small muted">Older version</span>' : '';
+    if (kind === 'script') return '<span class="tag green">In the CRM</span>';
+    const [c, l] = CRM_STATE[d.crm_state] || ['blue', 'In the CRM'];
+    return `<span class="tag ${c}">${l}</span>`;
+  };
+  view.innerHTML = `
+  <div class="dl-head"><div class="grow"><h2>${L.title}</h2><p>${L.text}</p></div><a class="btn primary" href="#/${kind}/new"><span class="mi">add</span>New ${L.noun}</a></div>
+  <div class="kpis stat-strip dl-kpis">${[['Made', docs.length], ['Leads', leads], ['This week', docs.filter((d) => new Date(d.created_at).getTime() >= week).length], ['Being written', docs.filter((d) => d.status === 'working').length]]
+    .map(([l, v]) => `<div class="card kpi${v ? '' : ' zero'}"><div class="v">${v}</div><div class="l"><span>${l}</span></div></div>`).join('')}</div>
+  <div class="toolbar dl-bar"><div class="seg">${FILTERS.map(([k, l]) => `<button class="${st.f === k ? 'on' : ''}" data-f="${k}">${l} <span class="muted">${counts[k]}</span></button>`).join('')}</div>
+    <span class="spacer"></span><label class="dl-search"><span class="mi">search</span><input id="dlQ" placeholder="Search by lead, place or template" value="${esc(st.q)}" aria-label="Search"></label></div>
+  ${!docs.length ? `<div class="card empty"><span class="mi">${L.icon}</span><h3>No ${L.noun}s yet</h3><p class="muted">They appear here as CRM leads come in. Make one by hand with New ${L.noun}.</p></div>`
+    : !shown.length ? '<div class="card empty"><p class="muted">Nothing matches. Clear the search or pick another filter.</p></div>'
+    : `<div class="card dl-table"><table><thead><tr><th>Lead</th><th>${kind === 'script' ? 'Vertical · language' : kind === 'brochure' ? 'Template · services' : 'Template · package'}</th>${kind === 'proposal' ? '<th class="num">Total</th>' : ''}<th>Made</th><th>CRM</th><th>Updated</th><th></th></tr></thead><tbody>
+      ${shown.map((d) => `<tr data-href="#/${kind}/${d.id}">
+        <td><div class="row dl-lead"><span class="ini">${initials(d.company || d.title)}</span><div><b>${esc(d.company || d.title)}</b><div class="small muted">${esc([d.contact_name && d.contact_name.trim().toLowerCase() !== String(d.company || '').trim().toLowerCase() ? d.contact_name : '', d.city].filter(Boolean).join(' · '))}</div></div></div></td>
+        <td>${esc([kind === 'script' ? '' : d.template_name, d.detail].filter(Boolean).join(' · ')) || '<span class="muted">-</span>'}</td>
+        ${kind === 'proposal' ? `<td class="num">${d.total ? money(d.total) : '-'}</td>` : ''}
+        <td>${d.status === 'ready' ? (d.made === 'auto' ? 'Automatic' : d.made === 'hand' ? 'By hand' : '<span class="muted">-</span>') : docTag(d)}</td>
+        <td>${crm(d)}</td>
+        <td class="small muted">${fmtDate(d.updated_at)}</td>
+        <td class="dl-act">${d.status === 'ready' ? `<a class="btn sm ghost icon-only" href="/pdf/doc/${d.token}.pdf" target="_blank" title="Open the PDF" aria-label="Open the PDF"><span class="mi">picture_as_pdf</span></a>` : ''}<a class="btn sm" href="#/${kind}/${d.id}">Open</a></td>
+      </tr>`).join('')}</tbody></table></div>`}`;
+  $$('[data-f]', view).forEach((b) => (b.onclick = () => docList(kind, { ...st, f: b.dataset.f })));
+  const q = $('#dlQ');
+  if (q) {
+    q.oninput = () => { clearTimeout(q._t); q._t = setTimeout(() => { docList(kind, { ...st, q: q.value }).then(() => { const n = $('#dlQ'); n?.focus(); n?.setSelectionRange(n.value.length, n.value.length); }); }, 200); };
+  }
+  $$('tr[data-href]', view).forEach((tr) => (tr.onclick = (e) => { if (!e.target.closest('a,button')) location.hash = tr.dataset.href; }));
+  if (docs.some((d) => d.status === 'working')) listTimer = setTimeout(() => { if (location.hash === `#/${kind}`) docList(kind, st); }, 4000);
 }
 
 const docTag = (d) => (d.status === 'ready' ? '<span class="tag green">Ready</span>' : d.status === 'error' ? '<span class="tag red">Failed</span>' : '<span class="tag blue">Writing…</span>');
@@ -1272,7 +1326,7 @@ async function renderDesigns(arg) {
     card.onclick = async (e) => {
       const a = e.target.closest('[data-a]')?.dataset.a;
       const id = card.dataset.id;
-      if (a === 'use') { sessionStorage.setItem(`tpl-${kind}`, id); location.hash = `#/${kind}`; }
+      if (a === 'use') { sessionStorage.setItem(`tpl-${kind}`, id); location.hash = `#/${kind}/new`; }
       if (a === 'default') { await api(`/design/templates/${id}/default`, { body: {} }); toast('Default template changed'); renderDesigns(kind); }
       if (a === 'rename') { const n = prompt('Template name', $('b', card).textContent); if (n) { await api(`/design/templates/${id}`, { method: 'PUT', body: { name: n } }); renderDesigns(kind); } }
       if (a === 'delete') { if (!confirm('Delete this template? Documents already made with it are kept.')) return; await api(`/design/templates/${id}`, { method: 'DELETE' }); renderDesigns(kind); }

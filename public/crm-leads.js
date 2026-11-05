@@ -148,7 +148,7 @@ async function made(key) {
     return `<div class="item row"><span class="mi">${icon}</span><div class="grow"><b>${label}</b><div class="small muted">${x ? (x.status === 'ready' ? `Ready · ${H.fmtDate(x.updated_at)}` : x.status === 'working' ? 'Being made…' : H.esc(x.status)) : 'Not made yet'}</div></div>${x ? `<a class="btn sm" href="#/${k}/${x.id}"><span class="mi">edit</span>Open</a>` : open}</div>`;
   };
   box.innerHTML = `<div class="card" style="margin-bottom:16px"><div class="sec-h"><h2>Made by AxiFlow</h2><span class="spacer"></span>${H.simplePill(l.stage)}</div>
-    ${item('script', 'record_voice_over', 'Call script', `<a class="btn sm" href="#/script" data-script-lead="${l.id}"><span class="mi">add</span>Write one</a>`)}
+    ${item('script', 'record_voice_over', 'Call script', `<a class="btn sm" href="#/script/new" data-script-lead="${l.id}"><span class="mi">add</span>Write one</a>`)}
     ${item('brochure', 'menu_book', 'Brochure', l.brochure_version ? `<a class="btn sm" target="_blank" href="/pdf/brochure/${l.token}.pdf"><span class="mi">open_in_new</span>PDF</a>` : '')}
     ${item('proposal', 'request_quote', 'Proposal', `<button class="btn sm" id="crmMakeProp"><span class="mi">add</span>Make it</button>`)}
     ${l.brochure_version ? `<p class="small muted" style="margin-top:8px">Brochure link for the client: <a target="_blank" href="/pdf/brochure/${l.token}.pdf">/pdf/brochure/${H.esc(l.token)}.pdf</a>${l.interested === 'yes' ? ' · also in the CRM brochures table' : ''}</p>` : ''}</div>`;

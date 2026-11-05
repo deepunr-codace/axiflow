@@ -50,7 +50,33 @@ function cleanInput(raw) {
   return out;
 }
 
-export const listDocs = async (kind) => await all(`SELECT d.id, d.kind, d.token, d.title, d.status, d.source, d.error, d.template_id, d.created_at, d.updated_at FROM docs d JOIN leads l ON l.id = d.lead_id AND l.crm_removed_at IS NULL WHERE d.kind = :kind ORDER BY d.id DESC LIMIT 100 /* only docs of live CRM leads */`, { kind });
+/**
+ * Documents of one tool, newest first, only for live CRM leads. Each row also says which lead it is for,
+ * the template, whether it was made automatically, and whether it is the version the CRM has
+ * (the newest ready one per lead) with the CRM's approval status for brochures and proposals.
+ */
+export async function listDocs(kind) {
+  const rows = await all(`SELECT d.id, d.kind, d.token, d.title, d.status, d.source, d.error, d.template_id, d.created_at, d.updated_at, d.lead_id,
+      d.input_json, d.items_json, l.company, l.city, l.contact_name, l.crm_brochure_state, l.crm_proposal_state, t.name AS template_name,
+      (d.id = (SELECT MAX(d2.id) FROM docs d2 WHERE d2.kind = d.kind AND d2.lead_id = d.lead_id AND d2.status = 'ready')) AS current
+    FROM docs d JOIN leads l ON l.id = d.lead_id AND l.crm_removed_at IS NULL LEFT JOIN design_templates t ON t.id = d.template_id
+    WHERE d.kind = :kind ORDER BY d.id DESC LIMIT 200`, { kind });
+  const s = getSettings();
+  return rows.map(({ input_json, items_json, crm_brochure_state, crm_proposal_state, ...r }) => {
+    const input = parseJson(input_json) || {};
+    const items = parseJson(items_json) || [];
+    return {
+      ...r, current: !!r.current && r.status === 'ready',
+      made: input.auto === true ? 'auto' : input.auto === false ? 'hand' : '',
+      crm_state: kind === 'brochure' ? crm_brochure_state || '' : kind === 'proposal' ? crm_proposal_state || '' : '',
+      detail: kind === 'script' ? [input.vertical, input.language].filter(Boolean).join(' · ')
+        : kind === 'brochure' ? `${(input.services || []).length} service${(input.services || []).length === 1 ? '' : 's'}`
+        : (s.packages.find((p) => p.id === input.package)?.name || ''),
+      total: kind === 'proposal' ? items.reduce((a, i) => a + Number(i.price || 0), 0) : null,
+    };
+  });
+}
+const parseJson = (v) => { if (v && typeof v === 'object') return v; try { return v ? JSON.parse(v) : null; } catch { return null; } };
 
 export async function getDoc(id) {
   const d = await get(`SELECT * FROM docs WHERE id = :id`, { id });
@@ -133,13 +159,14 @@ export function defaultItems(input) {
   });
 }
 
-export async function createDoc(kind, raw, { wait = false } = {}) {
+export async function createDoc(kind, raw, { wait = false, auto = false } = {}) {
   if (!KINDS.includes(kind)) throw new Error('Unknown document type');
   // Every document belongs to a lead from the CRM (owner, 2026-11-05: only CRM data is stored).
   const crmLead = Number(raw?.lead_id) ? await get(`SELECT id FROM leads WHERE id = :id AND external_id LIKE 'atomic:%' AND crm_removed_at IS NULL`, { id: Number(raw.lead_id) }) : null;
   if (!crmLead) throw new Error('Pick a lead from the CRM first');
   const s = getSettings();
   const input = cleanInput(raw);
+  input.auto = !!auto; // made by the automation (true) or by hand in the tool (false)
   if (kind === 'script') {
     if (!VERTICALS.includes(input.vertical)) input.vertical = input.vertical ? 'Other' : '';
     if (!LANGUAGES.includes(input.language)) input.language = LANGUAGES[0];
@@ -342,7 +369,7 @@ export async function createDocForLead(kind, leadId) {
   if (!p) throw new Error('Lead not found');
   const l = await get(`SELECT industry, recommended_package FROM leads WHERE id = :id`, { id: leadId });
   const raw = { ...p, lead_id: leadId, research: false, package: l?.recommended_package || p.package, vertical: verticalFor(l?.industry), language: 'English' };
-  const id = await createDoc(kind, raw, { wait: true });
+  const id = await createDoc(kind, raw, { wait: true, auto: true });
   return getDoc(id);
 }
 
