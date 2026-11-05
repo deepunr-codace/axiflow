@@ -134,7 +134,8 @@ pub.patch('/api/crm/leads/:externalId', limiter, async (req, res) => {
 pub.post('/webhooks/atomic', async (req, res) => {
   const given = req.get('x-webhook-secret') || (req.get('authorization') || '').replace(/^Bearer\s+/i, '') || req.query.key || '';
   if (!process.env.WEBHOOK_SECRET || !checkSecret(given, process.env.WEBHOOK_SECRET)) return res.status(401).json({ error: 'Invalid secret' });
-  background(() => pollCrm({ force: true }), 'crm-poll');
+  // A Supabase trigger in the CRM calls this on every change (see crm/axiflow-webhooks.sql).
+  background(async () => { await pollCrm({ force: true }); await (await import('../crm-sync.js')).flushOutbox().catch(() => {}); }, 'crm-poll');
   res.json({ ok: true });
 });
 

@@ -217,13 +217,20 @@ async function runAction(leadId, action, stage, engine) {
 }
 
 let polling = false;
+let pollAgain = false; // a CRM change came in while a read was running: read once more afterwards
 /** Reads the CRM and applies changes. Throttled by `atomic.poll_seconds` unless forced. */
-export async function pollCrm({ force = false } = {}) {
+export async function pollCrm(opts = {}) {
+  const out = await pollOnce(opts);
+  while (pollAgain) { pollAgain = false; await pollOnce({ force: true }); }
+  return out;
+}
+
+async function pollOnce({ force = false } = {}) {
   if (!atomicConfigured()) return { skipped: 'CRM not connected' };
   const s = getSettings().atomic;
   const st = await getState('atomic', {});
   if (!force && st.last_poll_at && Date.now() - Date.parse(st.last_poll_at) < (s.poll_seconds || 60) * 1000) return { skipped: 'polled recently' };
-  if (polling) return { skipped: 'already running' };
+  if (polling) { if (force) pollAgain = true; return { skipped: 'already running' }; }
   polling = true;
   const [engine, twenty, tools] = await Promise.all([import('./pipeline/engine.js'), import('./twenty.js'), import('./tools.js')]);
   const out = { at: nowISO(), leads: 0, deals: 0, created: 0, linked: 0, history: 0, updated: 0, unchanged: 0, deferred: 0, errors: [] };

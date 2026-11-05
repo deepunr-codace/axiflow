@@ -13,7 +13,12 @@ The team's main CRM is **Twenty**, set up by a co-worker and run by the **teleca
 
 Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATABASE_URL` and `pg`; embedded PGlite in `data/pg` when `DATABASE_URL` is empty), Vercel Blob for uploads (`data/uploads` locally), nodemailer, `@anthropic-ai/sdk` (Claude, `claude-opus-5-5`), and a vanilla-JS admin SPA in `public/`. There is no build step. Code map: see README. The old SQLite file `data/crm.db` is kept only as a backup/migration source.
 
-## Status (2026-11-05, latest): tools first on Today
+## Status (2026-11-05, latest): CRM change triggers (SQL for the CRM, not yet run)
+- Owner: "can u create webhooks in crm db, when anything updated send a reqst to axiflow". AxiFlow only has the CRM REST key (PostgREST cannot create triggers) and no CRM DB password, so it cannot install them itself. **`crm/axiflow-webhooks.sql`** (placeholder `<WEBHOOK_SECRET>`; a filled copy is made locally, never committed): `pg_net` + `public.axiflow_notify()` (security definer, revoked from public/anon/authenticated) + statement-level `AFTER INSERT OR UPDATE OR DELETE` triggers on companies, contacts, deals, brochures, proposal → `net.http_post` to `https://axiflow-v1.vercel.app/webhooks/atomic` with header `x-webhook-secret`. Async (pg_net): CRM saves are never slowed or blocked. Includes check and undo queries. Tested on PGlite with a stand-in `net.http_post`: 5 tables, 500-row insert = 1 call, all operations fire.
+- AxiFlow side: `/webhooks/atomic` (secret checked; live: wrong 401, right 200) now polls and then flushes the outbox; `pollCrm` re-runs once if a change arrives while a read is running (`pollAgain`). Our own CRM writes (brochures, proposal, pitch_point) also fire the trigger: harmless, the next read finds nothing changed.
+- **Owner runs the SQL** in the CRM's Supabase SQL Editor (or adds a CRM DB connection string to .env so AxiFlow can run it).
+
+## Status (2026-11-05): tools first on Today
 - Owner: "focus our tools in the dashboard homepage". Today (`renderManager` in `public/app.js`) now opens with **Your tools** (`homeTools()`, right under the greeting, above the plan card): one card each for Pitch Script Maker, Brochure Generator, Proposal Generator (count made / this week / still writing, the 3 latest docs, "New …" and "See all"), plus a Templates button. Data from `GET /api/tools/docs?kind=` (no new API). Styles `.ht-*` at the end of `styles.css` (3 columns, 1 column under 1100 px; light-mode overrides). Checked in headless Edge with live data, dark 1440 px and light 900 px, no console errors.
 
 ## Status (2026-11-04): proposal PDFs to the CRM bucket + proposal table
