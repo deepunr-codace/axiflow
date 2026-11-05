@@ -13,7 +13,19 @@ The team's main CRM is **Twenty**, set up by a co-worker and run by the **teleca
 
 Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATABASE_URL` and `pg`; embedded PGlite in `data/pg` when `DATABASE_URL` is empty), Vercel Blob for uploads (`data/uploads` locally), nodemailer, `@anthropic-ai/sdk` (Claude, `claude-opus-5-5`), and a vanilla-JS admin SPA in `public/`. There is no build step. Code map: see README. The old SQLite file `data/crm.db` is kept only as a backup/migration source.
 
-## Status (2026-11-05, latest): vertical playbooks, one strategy per lead, quality review, stock photos
+## Status (2026-11-05, latest): classic deck closing slide redesigned
+- Owner (screenshot of the old "THANK YOU." slide: blur photo, orbit rings, caps): "redesign this last. dont generate anymore".
+- **New `closingSlide()`** in `src/design/deck.js` (exported), on the theme ink background (no stock photo):
+  - logo;
+  - "Thank you,\n<client>." in the heading face, with the client name in the accent colour. It shrinks to fit long names.
+  - a one-line lead and the next-step pill (`cta.buttonLabel` + arrow);
+  - a contact card ("Prepared for <client>", then call, visit, write and web rows with icons);
+  - the usual footer rule and folio. It follows the brochure's palette and font pairing.
+- **`tools.refreshClosingSlide(id)`:** lays out the saved content again and swaps **only the last page** of a classic-deck brochure (other edits kept). It then calls announce (edited), which queues one waiting CRM PDF upload.
+- **Applied live without regenerating:** docs #46 and #53 (Wiseup) and #55 (Samsung). Backup of their old designs: `data/backup-closing-2026-11-05T18-25-13-340Z.json`.
+- Not touched: the Editorial decks (their own closing slide), the Claude-drawn decks and the old 1440×810 "Codeace Default" brochures. No documents were generated.
+
+## Status (2026-11-05): vertical playbooks, one strategy per lead, quality review, stock photos
 - **Owner's goal:** "creative brochures with premium quality with correct pitch and contents and relevancy according to the business vertical and their needs. the case of proposals also needs like that". Then "ok do it" for: playbooks, strategy, review, stock photos (Pexels + Unsplash).
 - **`src/ai/verticals.js`:**
   - `PLAYBOOKS` for the owner's 7 verticals plus Other: buyers, buying journey, what the owner cares about, website must-haves, angles, objections with answers, proof, tone, look, font pairings, photo searches;
