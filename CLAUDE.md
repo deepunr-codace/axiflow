@@ -38,6 +38,11 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - **Found:** lead 10 had `website = amazon.com` and Codeace's fallback research (CRM id reuse), and AxiFlow's own "Brochure ready…" deal notes were sent as team notes.
   - **Fixed:** the CRM website wins (empty = no website check); `usableResearch()` drops fallback research or research about another business; `OWN_NOTE` filter, dedupe, and notes under 4 characters skipped.
   - **Still open:** Claude docs #39, #42, #43 were written with the Amazon website findings, so regenerate them (offered to the owner). AxiFlow's own `leads.website` for lead 10 is still amazon.com, which the in-app path still uses.
+- **Speed** (owner: "make it fully automated at high speed"):
+  - an interested lead in Claude mode dispatches the brochure first; `runPitchMaker(id, { design: false, ai: false })` runs rule-based afterwards and keeps the existing `telecaller_script`; no second script when one exists;
+  - the workflow caches the Claude Code npm install (`actions/cache` on `~/.npm`, weekly key) and runs `claude -p`; job timeout 12 min;
+  - Claude retry wait 20 → 12 min (startup upgrade of the saved 20);
+  - new `.github/workflows/axiflow-tick.yml` calls `/api/cron/tick` every 30 min (needs repo secret `CRON_SECRET`; skips when it is missing).
 - **No login needed:** with the trigger installed, the whole flow runs with nobody in AxiFlow. `/webhooks/atomic` now also calls `retryStale()`, so Claude retries no longer wait for the daily cron or a logged-in request.
 - **Live sync:** the filled trigger SQL is `crm/axiflow-webhooks.READY.sql` (git-ignored; the secret matches the live WEBHOOK_SECRET, which answered 200). The owner runs it in the CRM Supabase SQL Editor; not run yet.
 - **Next (offered):** a GitHub scheduled pinger every 30 min on `/api/cron/tick` (needs repo secret `CRON_SECRET`); CRM-side buttons calling a secure AxiFlow endpoint (the owner asked about moving the tools into the CRM; the advice was to keep AxiFlow as the engine and add buttons in the CRM).
