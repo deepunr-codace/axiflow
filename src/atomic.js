@@ -31,7 +31,8 @@ import { TERMINAL } from './stages.js';
 addColumns('leads', { crm_deal_id: 'INTEGER', crm_company_id: 'INTEGER', crm_contact_id: 'INTEGER', crm_sales_id: 'INTEGER', crm_stage_key: 'TEXT', crm_sync_hash: 'TEXT' });
 addColumns('crm_outbox', { target: "TEXT DEFAULT 'webhook'" });
 addColumns('leads', { crm_script_note_id: 'INTEGER', crm_script_note_on: 'TEXT' }); // the one CRM note that holds this lead's call script
-addColumns('leads', { crm_removed_at: 'TEXT', crm_brochure_folder: 'TEXT' }); // set when the lead was deleted in the CRM: no more CRM writes for it
+addColumns('leads', { crm_removed_at: 'TEXT', crm_brochure_folder: 'TEXT' });
+addColumns('leads', { crm_brochure_state: 'TEXT', crm_proposal_state: 'TEXT' }); // last brochure/proposal status seen in or written to the CRM // set when the lead was deleted in the CRM: no more CRM writes for it
 
 export const ACTIONS = ['interested', 'proposal', 'won', 'lost', 'nurture', 'not_interested', 'ignore'];
 
@@ -129,7 +130,7 @@ const hashOf = (deal, co, ct) => crypto.createHash('sha1').update(JSON.stringify
  * Applies one CRM lead (company and/or main contact, with its current deal) to AxiFlow.
  * Returns what happened: created | linked | history | updated | unchanged | deferred.
  */
-export async function syncLead(co, ct, deal, { engine, twenty, budget }) {
+export async function syncLead(co, ct, deal, { engine, twenty, budget, useCallLogs = false }) {
   const s = getSettings().atomic;
   const ext = leadKey(co, ct);
   const lead = await get(`SELECT * FROM leads WHERE external_id = :ext`, { ext });
@@ -180,8 +181,8 @@ export async function syncLead(co, ct, deal, { engine, twenty, budget }) {
     }
   }
 
-  // The telecaller's latest call result on the contact.
-  if (callKey && callKey !== lead.crm_call_key) {
+  // The telecaller's latest call result on the contact (only when the CRM has no call_logs table: those are read one by one).
+  if (!useCallLogs && callKey && callKey !== lead.crm_call_key) {
     await update('leads', lead.id, { crm_call_key: callKey });
     const outcome = twenty.mapOutcome(ct.last_outcome);
     if (engine.CALL_OUTCOMES.includes(outcome)) await engine.logCrmCall(lead.id, outcome, { notes: 'From the CRM', callbackAt: ct.next_attempt_at || null });
@@ -235,6 +236,7 @@ async function pollOnce({ force = false } = {}) {
   const [engine, twenty, tools] = await Promise.all([import('./pipeline/engine.js'), import('./twenty.js'), import('./tools.js')]);
   const out = { at: nowISO(), leads: 0, deals: 0, created: 0, linked: 0, history: 0, updated: 0, unchanged: 0, deferred: 0, errors: [] };
   const stages = {};
+  let cursor = st.call_log_cursor ?? null;
   try {
     const readAll = async (path) => {
       const rows = [];
@@ -277,31 +279,123 @@ async function pollOnce({ force = false } = {}) {
         out.removed = (out.removed || 0) + 1;
       }
     }
+    // Call logs: read before the leads so the contact's "latest outcome" is not counted a second time.
+    let callLogs = null;
+    if (s.call_logs !== false) callLogs = await readAll(`call_logs?select=*&id=gt.${Number(st.call_log_cursor) || 0}&order=id.asc`).catch(() => null);
     const budget = { left: s.import_per_poll || 20 };
     for (const u of units) {
       const ref = u.co ? `company #${u.co.id}` : `contact #${u.ct.id}`;
       try {
-        const r = await syncLead(u.co, u.ct, currentDeal(u.deals, s), { engine, twenty, budget });
+        const r = await syncLead(u.co, u.ct, currentDeal(u.deals, s), { engine, twenty, budget, useCallLogs: !!callLogs });
         out[r] = (out[r] || 0) + 1;
       } catch (e) {
         out.errors.push(`${ref}: ${e.message}`);
         await logEvent(null, 'atomic', 'lead', 'error', `${ref}: ${e.message}`);
       }
     }
+    if (callLogs) {
+      // The cursor only moves forward; after the first successful read it is a number (0 = no calls yet),
+      // so a first real call later is acted on, not filed as history.
+      const moved = await applyCallLogs(callLogs, contacts, { engine, first: st.call_log_cursor == null }).catch((e) => { out.errors.push(`call logs: ${e.message}`); return null; });
+      cursor = Math.max(Number(cursor) || 0, Number(moved) || 0);
+    }
+    out.calls = callLogs?.length || 0;
+    if (s.crm_approval !== false) out.approvals = await applyApprovals({ engine, tools }).catch((e) => { out.errors.push(`approvals: ${e.message}`); return 0; });
     if (s.brochures_table && canWrite('brochures') && publicLinks()) out.brochures = await answerBrochureRequests(tools).catch((e) => { out.errors.push(`brochures: ${e.message}`); return 0; });
   } catch (e) {
     out.errors.push(e.message);
     await logEvent(null, 'atomic', 'poll', 'error', e.message);
   } finally {
     polling = false;
-    await setState('atomic', { ...st, last_poll_at: nowISO(), last_result: { ...out, errors: out.errors.slice(0, 10) }, stages_seen: Object.keys(stages).length || !out.errors.length ? stages : st.stages_seen });
+    await setState('atomic', { ...st, call_log_cursor: cursor, last_poll_at: nowISO(), last_result: { ...out, errors: out.errors.slice(0, 10) }, stages_seen: Object.keys(stages).length || !out.errors.length ? stages : st.stages_seen });
   }
   return out;
 }
 
-/** Brochure requests made in the CRM (brochures.status = pending): fill in the lead's brochure link. */
+/** The AxiFlow lead for a CRM contact: its own lead, else its company's. */
+async function leadForContact(contactId, contacts) {
+  const ct = contacts.find((c) => c.id === contactId);
+  return (await get(`SELECT * FROM leads WHERE crm_removed_at IS NULL AND (external_id = :ct OR crm_contact_id = :id) ORDER BY id DESC LIMIT 1`, { ct: `atomic:ct:${contactId}`, id: contactId }))
+    || (ct?.company_id != null && await get(`SELECT * FROM leads WHERE external_id = :ext AND crm_removed_at IS NULL`, { ext: `atomic:co:${ct.company_id}` }))
+    || null;
+}
+
+/**
+ * Every telecaller call in the CRM (call_logs) becomes a call on the AxiFlow lead, with its notes, and the
+ * pipeline reacts to the outcome. The first time, earlier calls are only added to the history (no actions).
+ * Returns the new cursor (highest call log id handled).
+ */
+async function applyCallLogs(rows, contacts, { engine, first }) {
+  const twenty = await import('./twenty.js');
+  let cursor = null;
+  for (const c of rows) {
+    const lead = await leadForContact(c.contact_id, contacts);
+    if (!lead) {
+      // Wait only while the contact's lead is still to be imported (big imports are spread over polls);
+      // a deleted contact or a lead removed from the CRM must not hold up later calls.
+      const ct = contacts.find((x) => x.id === c.contact_id);
+      const known = ct && await get(`SELECT 1 AS one FROM leads WHERE external_id = :a OR external_id = :b OR crm_contact_id = :id`, { a: `atomic:ct:${ct.id}`, b: `atomic:co:${ct.company_id}`, id: ct.id });
+      if (!first && ct && !known) break;
+      cursor = c.id;
+      continue;
+    }
+    const outcome = twenty.mapOutcome(c.outcome);
+    const when = c.created_at ? new Date(c.created_at).toISOString().slice(0, 16).replace('T', ' ') : '';
+    if (first) await addActivity(lead.id, 'call', `Call from the CRM (${when}): ${String(c.outcome || '').replace(/_/g, ' ')}`, c.notes || null);
+    else if (engine.CALL_OUTCOMES.includes(outcome)) {
+      await engine.logCrmCall(lead.id, outcome, { notes: c.notes || 'From the CRM', callbackAt: c.next_attempt_at || null });
+      await logEvent(lead.id, 'atomic', 'call_log', 'ok', `CRM call #${c.id}: ${outcome}`);
+    } else await logEvent(lead.id, 'atomic', 'call_log', 'skipped', `CRM call #${c.id}: unknown result "${c.outcome}"`);
+    cursor = c.id;
+  }
+  return cursor;
+}
+
+/**
+ * Approval in the CRM: brochures / proposal rows set to "approved" approve the pitch / send the proposal;
+ * "not_approved" makes a new version (written back as pending). A row seen for the first time is only recorded.
+ */
+async function applyApprovals({ engine, tools }) {
+  const s = getSettings().atomic || {};
+  const { background } = await import('./background.js');
+  let n = 0;
+  const kinds = [
+    { table: 'brochures', col: 'crm_brochure_state', kind: 'brochure' },
+    { table: s.proposals_table || 'proposal', col: 'crm_proposal_state', kind: 'proposal' },
+  ];
+  for (const k of kinds) {
+    const rows = await rest('GET', `${k.table}?select=id,company_id,contact_id,status&order=id.desc`).catch(() => []);
+    const seen = new Set();
+    for (const r of rows) {
+      const key = r.company_id != null ? `atomic:co:${r.company_id}` : r.contact_id != null ? `atomic:ct:${r.contact_id}` : null;
+      if (!key || seen.has(key)) continue; // newest row per lead
+      seen.add(key);
+      const lead = await get(`SELECT * FROM leads WHERE external_id = :key AND crm_removed_at IS NULL`, { key });
+      if (!lead || lead[k.col] === r.status) continue;
+      await update('leads', lead.id, { [k.col]: r.status });
+      if (lead[k.col] == null) continue; // first sight: remember only
+      n++;
+      await logEvent(lead.id, 'atomic', `${k.kind}_status`, 'ok', `${k.kind} marked "${r.status}" in the CRM`);
+      if (k.kind === 'brochure' && r.status === 'approved') {
+        if (lead.stage === 'brochure_ready') await engine.approveBrochure(lead.id, 'the CRM');
+        else await addActivity(lead.id, 'system', 'Brochure approved in the CRM');
+      } else if (k.kind === 'proposal' && r.status === 'approved') {
+        const doc = await tools.latestLeadDoc('proposal', lead.id);
+        const sent = doc && await get(`SELECT 1 AS one FROM proposals WHERE doc_id = :id`, { id: doc.id });
+        if (doc && !sent) await engine.sendProposalDoc(lead.id, doc.id);
+        else await addActivity(lead.id, 'system', 'Proposal approved in the CRM');
+      } else if (r.status === 'not_approved') {
+        await addActivity(lead.id, 'system', `${k.kind === 'brochure' ? 'Brochure' : 'Proposal'} not approved in the CRM: making a new version`);
+        background(() => tools.createDocForLead(k.kind, lead.id).catch((e) => logEvent(lead.id, 'atomic', `${k.kind}_redo`, 'error', e.message)), 'crm-redo');
+      }
+    }
+  }
+  return n;
+}
+
+/** Brochure requests made in the CRM (a pending row without a link): fill in the lead's brochure link. */
 async function answerBrochureRequests(tools) {
-  const rows = await rest('GET', `brochures?select=*&status=eq.pending&order=id.asc&limit=20`);
+  const rows = await rest('GET', `brochures?select=*&status=eq.pending&brochure_url=is.null&order=id.asc&limit=20`);
   let done = 0;
   for (const b of rows) {
     const lead = (b.company_id && await get(`SELECT * FROM leads WHERE external_id = :ext`, { ext: `atomic:co:${b.company_id}` }))
@@ -315,7 +409,8 @@ async function answerBrochureRequests(tools) {
     }
     let link = brochureLink(lead);
     try { link = (await uploadBrochurePdf(lead)) || link; } catch (e) { await logEvent(lead.id, 'atomic', 'brochure_pdf', 'error', `${e.message}; the row links to AxiFlow instead`); }
-    await rest('PATCH', `brochures?id=eq.${b.id}`, { brochure_url: link, title: b.title || `${lead.company}: website plan`, status: brochureStatus(), updated_at: nowISO() });
+    await rest('PATCH', `brochures?id=eq.${b.id}`, { brochure_url: link, title: b.title || `${lead.company}: website plan`, updated_at: nowISO() }); // stays pending until approved in the CRM
+    await update('leads', lead.id, { crm_brochure_state: b.status || 'pending' });
     done++;
   }
   return done;
@@ -426,13 +521,15 @@ async function upsertProposal(lead, docId) {
   const row = { company_id: lead.crm_company_id ?? null, contact_id: lead.crm_contact_id ?? null, deal_id: lead.crm_deal_id ?? null, title: `${lead.company}: website proposal`, [col]: link, updated_at: nowISO() };
   const where = lead.crm_company_id ? `company_id=eq.${lead.crm_company_id}` : lead.crm_contact_id ? `contact_id=eq.${lead.crm_contact_id}` : null;
   if (!where) return 'skipped';
-  const existing = await rest('GET', `${table}?select=id&${where}&order=id.desc&limit=1`);
+  const existing = await rest('GET', `${table}?select=id,status&${where}&order=id.desc&limit=1`);
   const write = async (body) => (existing.length ? rest('PATCH', `${table}?id=eq.${existing[0].id}`, body, 'return=minimal') : rest('POST', table, body, 'return=minimal'));
-  try { await write({ ...row, status: s.proposal_status || 'approved' }); }
+  const status = !existing.length || existing[0].status === 'not_approved' ? s.proposal_status || 'pending' : existing[0].status;
+  try { await write({ ...row, status }); }
   catch (e) {
     if (!/23514|check constraint/i.test(e.message)) throw e;
     await write(row); // the CRM does not accept that status value: keep its own default
   }
+  await update('leads', lead.id, { crm_proposal_state: status }); // our own write: not acted on when read back
   await logEvent(lead.id, 'atomic', 'proposal', 'ok', `${existing.length ? 'updated' : 'added'} the proposal in the CRM ${table} table`);
   return 'sent';
 }
@@ -443,12 +540,16 @@ async function upsertBrochure(lead) {
   if (!publicLinks()) throw new Error('brochure links need a public https BASE_URL');
   let link = brochureLink(lead);
   try { link = (await uploadBrochurePdf(lead)) || link; } catch (e) { await logEvent(lead.id, 'atomic', 'brochure_pdf', 'error', `${e.message}; the row links to AxiFlow instead`); }
-  const row = { company_id: lead.crm_company_id ?? null, contact_id: lead.crm_contact_id ?? null, deal_id: lead.crm_deal_id ?? null, title: `${lead.company}: website plan`, brochure_url: link, status: brochureStatus(), updated_at: nowISO() };
+  const row = { company_id: lead.crm_company_id ?? null, contact_id: lead.crm_contact_id ?? null, deal_id: lead.crm_deal_id ?? null, title: `${lead.company}: website plan`, brochure_url: link, updated_at: nowISO() };
   const where = lead.crm_company_id ? `company_id=eq.${lead.crm_company_id}` : lead.crm_contact_id ? `contact_id=eq.${lead.crm_contact_id}` : null;
   if (!where) return 'skipped';
-  const existing = await rest('GET', `brochures?select=id&${where}&order=id.desc&limit=1`);
-  if (existing.length) await rest('PATCH', `brochures?id=eq.${existing[0].id}`, row, 'return=minimal');
-  else await rest('POST', 'brochures', row, 'return=minimal');
+  const existing = await rest('GET', `brochures?select=id,status&${where}&order=id.desc&limit=1`);
+  // Approval happens in the CRM: a new row waits as pending; an approved row keeps its status when the file is
+  // replaced; a rejected (not_approved) one goes back to pending with the new version.
+  const status = !existing.length || existing[0].status === 'not_approved' ? brochureStatus() : existing[0].status;
+  if (existing.length) await rest('PATCH', `brochures?id=eq.${existing[0].id}`, { ...row, status }, 'return=minimal');
+  else await rest('POST', 'brochures', { ...row, status }, 'return=minimal');
+  await update('leads', lead.id, { crm_brochure_state: status }); // our own write: not acted on when read back
   await logEvent(lead.id, 'atomic', 'brochure', 'ok', `${existing.length ? 'updated' : 'added'} the brochure in the CRM brochures table`);
   return 'sent';
 }

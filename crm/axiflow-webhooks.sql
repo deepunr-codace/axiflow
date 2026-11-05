@@ -33,7 +33,7 @@ revoke all on function public.axiflow_notify() from public, anon, authenticated;
 do $$
 declare t text;
 begin
-  foreach t in array array['companies', 'contacts', 'deals', 'brochures', 'proposal'] loop
+  foreach t in array array['companies', 'contacts', 'deals', 'brochures', 'proposal', 'call_logs', 'call_assignments'] loop
     if to_regclass('public.' || t) is not null then
       execute format('drop trigger if exists axiflow_notify on public.%I', t);
       execute format('create trigger axiflow_notify after insert or update or delete on public.%I for each statement execute function public.axiflow_notify()', t);
@@ -52,7 +52,7 @@ order by 1;
 -- select id, status_code, content, created from net._http_response order by id desc limit 5;
 
 -- To remove everything again:
--- do $$ declare t text; begin foreach t in array array['companies','contacts','deals','brochures','proposal'] loop
+-- do $$ declare t text; begin foreach t in array array['companies','contacts','deals','brochures','proposal','call_logs','call_assignments'] loop
 --   if to_regclass('public.' || t) is not null then execute format('drop trigger if exists axiflow_notify on public.%I', t); end if;
 -- end loop; end $$;
 -- drop function if exists public.axiflow_notify();

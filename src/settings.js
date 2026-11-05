@@ -50,9 +50,11 @@ export const DEFAULT_SETTINGS = {
     proposal_bucket: 'proposal', // CRM storage bucket (public) for proposal PDFs
     proposals_table: 'proposal', // CRM table with one row per lead's proposal
     proposal_url_column: 'porposal_url', // spelled this way in the CRM
-    proposal_status: 'approved', // tried first; if the CRM rejects it, the row keeps the CRM default
+    proposal_status: 'pending', // new proposal rows wait for approval in the CRM (approved → AxiFlow sends it, not_approved → new version)
+    crm_approval: true, // react to approved / not_approved set in the CRM brochures and proposal tables
+    call_logs: true, // read every telecaller call from the CRM call_logs table
     brochure_bucket: 'brochure', // CRM storage bucket (public) for the brochure PDFs; the brochures row links to the file there
-    brochure_status: 'approved', // value the CRM accepts for a ready brochure (its check constraint rejects 'ready')
+    brochure_status: 'pending', // new brochure rows wait for approval in the CRM (allowed: pending, approved, not_approved)
     new_lead_action: 'interested', // a CRM lead without a deal: pitch maker, call script and brochure
     import_per_poll: 20, // new CRM leads imported per poll (big imports are spread out)
     poll_seconds: 60,
@@ -491,8 +493,10 @@ export async function seedDefaults() {
   // CRM writes: a list saved before call-script notes were allowed gets them (owner, 2026-11-04). An edited list is kept.
   const wt = s.atomic?.write_tables;
   const writeTables = Array.isArray(wt) && ['brochures,companies.pitch_point', 'brochures,companies.pitch_point,contact_notes,deal_notes', 'brochures,companies.pitch_point,contact_notes,deal_notes,storage.brochure'].includes(wt.join()) ? DEFAULT_SETTINGS.atomic.write_tables : null;
-  if (Object.keys(renamed).length || s.billing.invoice_prefix === 'WS' || about || writeTables) {
-    await saveSettings({ agency: renamed, ...(s.billing.invoice_prefix === 'WS' ? { billing: { invoice_prefix: 'AWS' } } : {}), ...(about ? { brochure: { about } } : {}), ...(writeTables ? { atomic: { write_tables: writeTables } } : {}) });
+  // CRM approval (owner, 2026-11-05): rows wait as pending; the old saved default 'approved' is replaced.
+  const approvalFix = s.atomic && (s.atomic.brochure_status === 'approved' || s.atomic.proposal_status === 'approved') ? { brochure_status: 'pending', proposal_status: 'pending' } : null;
+  if (Object.keys(renamed).length || s.billing.invoice_prefix === 'WS' || about || writeTables || approvalFix) {
+    await saveSettings({ agency: renamed, ...(s.billing.invoice_prefix === 'WS' ? { billing: { invoice_prefix: 'AWS' } } : {}), ...(about ? { brochure: { about } } : {}), ...(writeTables || approvalFix ? { atomic: { ...(writeTables ? { write_tables: writeTables } : {}), ...(approvalFix || {}) } } : {}) });
   }
 }
 
