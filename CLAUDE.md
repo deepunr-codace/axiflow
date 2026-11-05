@@ -34,6 +34,12 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - they reuse the in-app schemas, context and post-processing;
   - no agency example to copy; the proposal job carries no price figures at all.
   - Live test on Back To Roots: script #42 and proposal #43 done in about 1 min. The proposal found the real address (Poolany, Meloor) and built the page structure from the business's treatments, programmes, physicians, rooms and stay flow; prices stayed AxiFlow's line items.
+- **Prompt review and data fix** (owner: "whts prompt going to claude"). `tools.buildClaudeJob(doc)` builds the exact job without sending it; `sendToClaude` uses it. The prompts page was published as a private artifact (https://claude.ai/artifact/XPX9GMKTvvMUyTxDuYmQyf); the workflow page is https://claude.ai/artifact/CxUMdJ4DqgGp8xaaKMCsa3.
+  - **Found:** lead 10 had `website = amazon.com` and Codeace's fallback research (CRM id reuse), and AxiFlow's own "Brochure ready…" deal notes were sent as team notes.
+  - **Fixed:** the CRM website wins (empty = no website check); `usableResearch()` drops fallback research or research about another business; `OWN_NOTE` filter, dedupe, and notes under 4 characters skipped.
+  - **Still open:** Claude docs #39, #42, #43 were written with the Amazon website findings, so regenerate them (offered to the owner). AxiFlow's own `leads.website` for lead 10 is still amazon.com, which the in-app path still uses.
+- **Live sync:** the filled trigger SQL is `crm/axiflow-webhooks.READY.sql` (git-ignored; the secret matches the live WEBHOOK_SECRET, which answered 200). The owner runs it in the CRM Supabase SQL Editor; not run yet.
+- **Next (offered):** a GitHub scheduled pinger every 30 min on `/api/cron/tick` (needs repo secret `CRON_SECRET`); CRM-side buttons calling a secure AxiFlow endpoint (the owner asked about moving the tools into the CRM; the advice was to keep AxiFlow as the engine and add buttons in the CRM).
 - **Known limit:** the image catalogue is the template's generic sample set (salon stylist, 3D props), so visuals do not fit every industry. An image library per vertical is a possible next step.
 
 ## Status (2026-11-05): Claude mode (the 3 tools write with Claude Code on GitHub) + Codeace Editorial
