@@ -120,7 +120,8 @@ $('#themeBtn').onclick = toggleTheme;
 
 // Pop-up menus in the top bar (bell, account, New): one open at a time; outside click or Esc closes.
 const closePops = (except) => $$('.tb-pop.open').forEach((p) => p !== except && p.classList.remove('open'));
-for (const [btn, wrap, onOpen] of [['#bellBtn', '#bellWrap', fillBell], ['#avBtn', '#avWrap'], ['#newBtn', '#newWrap']]) {
+for (const [btn, wrap, onOpen] of [['#avBtn', '#avWrap'], ['#newBtn', '#newWrap']]) {
+  if (!$(btn)) continue;
   $(btn).onclick = (e) => { e.stopPropagation(); const w = $(wrap); closePops(w); if (w.classList.toggle('open') && onOpen) onOpen(); };
 }
 document.addEventListener('click', (e) => {
@@ -151,14 +152,11 @@ async function fillBell() {
 
 // ---------------------------------------------------------------- search palette
 const PAL_PAGES = [
-  ['#/today', 'home', 'Today'], ['#/crm', 'contacts', 'Leads'], ['#/leads', 'view_kanban', 'Pipeline'], ['#/board', 'view_week', 'Pipeline board'],
-  ['#/brochure', 'menu_book', 'Brochures'], ['#/proposal', 'request_quote', 'Proposals'], ['#/script', 'record_voice_over', 'Pitch scripts'],
-  ['#/designs', 'grid_view', 'Templates'], ['#/approvals', 'edit_note', 'Pitch approvals'], ['#/tasks', 'checklist', 'All tasks'], ['#/dashboard', 'monitoring', 'Reports'],
-  ['#/automation', 'receipt_long', 'Automation log'], ['#/templates', 'mail', 'Message templates'], ['#/settings', 'settings', 'Settings'],
+  ['#/tools', 'apps', 'All tools'], ['#/script', 'record_voice_over', 'Pitch Script Maker'], ['#/brochure', 'menu_book', 'Brochure Generator'], ['#/proposal', 'request_quote', 'Proposal Generator'],
+  ['#/designs', 'grid_view', 'Brochure templates'], ['#/designs/proposal', 'grid_view', 'Proposal templates'], ['#/settings', 'tune', 'Tool settings'],
 ];
 const PAL_ACTIONS = [
-  ['new-brochure', 'add', 'New brochure', () => (location.hash = '#/brochure')], ['new-proposal', 'add', 'New proposal', () => (location.hash = '#/proposal')], ['new-script', 'add', 'New pitch script', () => (location.hash = '#/script')],
-  ['new-plan', 'add', 'New revenue plan', () => (location.hash = '#/plan-edit/new')], ['run', 'play_arrow', 'Run automation now', () => $('#runBtnTop').click()],
+  ['new-script', 'add', 'New pitch script', () => (location.hash = '#/script')], ['new-brochure', 'add', 'New brochure', () => (location.hash = '#/brochure')], ['new-proposal', 'add', 'New proposal', () => (location.hash = '#/proposal')],
   ['theme', 'contrast', 'Switch light / dark mode', toggleTheme], ['menu', 'left_panel_close', 'Hide or show the menu', () => $('#panelBtn').click()],
   ['logout', 'logout', 'Log out', () => $('#logoutBtn').click()],
 ];
@@ -174,16 +172,16 @@ function openPalette() {
   let sel = 0;
   let timer = null;
   let seq = 0;
-  const draw = (leads) => {
+  const draw = (found) => {
     const t = q.value.trim().toLowerCase();
     const match = (s) => !t || s.toLowerCase().includes(t);
     const pages = PAL_PAGES.filter(([, , l]) => match(l)).map(([h, ic, l]) => ({ ic, l, sub: 'Page', go: () => (location.hash = h) }));
     const acts = PAL_ACTIONS.filter(([, , l]) => match(l)).map(([, ic, l, fn]) => ({ ic, l, sub: 'Action', go: fn }));
-    const ld = (leads || []).map((x) => ({ ic: 'person', l: x.company, sub: [x.contact_name, x.city].filter(Boolean).join(' · '), go: () => (location.hash = '#/lead/' + x.id) }));
+    const ld = (found || []).map((x) => ({ ic: TOOL_ICON[x.kind] || 'description', l: x.title, sub: TOOL_NAME[x.kind] || 'Document', go: () => (location.hash = '#/' + x.kind + '/' + x.id) }));
     items = [...ld, ...pages, ...acts];
     sel = Math.min(sel, Math.max(0, items.length - 1));
     const group = (title, list, offset) => (list.length ? '<div class="pal-g">' + title + '</div>' + list.map((it, i) => '<div class="pal-i' + (i + offset === sel ? ' sel' : '') + '" data-i="' + (i + offset) + '"><span class="mi">' + it.ic + '</span><span>' + esc(it.l) + '</span><small>' + esc(it.sub) + '</small></div>').join('') : '');
-    $('#palRes').innerHTML = (group('Leads', ld, 0) + group('Pages', pages, ld.length) + group('Actions', acts, ld.length + pages.length)) || '<div class="empty-note" style="padding:18px 12px;color:var(--muted)">No matches. Try a company, a town or a page name.</div>';
+    $('#palRes').innerHTML = (group('Documents', ld, 0) + group('Pages', pages, ld.length) + group('Actions', acts, ld.length + pages.length)) || '<div class="empty-note" style="padding:18px 12px;color:var(--muted)">No matches. Try a client name or a tool.</div>';
     $$('#palRes .pal-i').forEach((el) => (el.onclick = () => run(Number(el.dataset.i))));
   };
   const run = (i) => { const it = items[i]; if (!it) return; d.close(); it.go(); };
@@ -195,12 +193,14 @@ function openPalette() {
     const mine = ++seq;
     timer = setTimeout(async () => {
       try {
-        const r = await api('/leads?q=' + encodeURIComponent(t));
-        if (mine === seq) draw((Array.isArray(r) ? r : r.leads || []).slice(0, 8));
+        const lists = await Promise.all(['script', 'brochure', 'proposal'].map((k) => api('/tools/docs?kind=' + k).then((r) => r.map((d) => ({ ...d, kind: k }))).catch(() => [])));
+        const low = t.toLowerCase();
+        if (mine === seq) draw(lists.flat().filter((d) => String(d.title || '').toLowerCase().includes(low)).slice(0, 8));
       } catch { /* keep pages and actions */ }
     }, 180);
   };
   q.oninput = () => { sel = 0; search(); };
+  q.placeholder = 'Search documents, tools and actions';
   q.onkeydown = (e) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(items.length - 1, sel + 1); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(0, sel - 1); }
@@ -229,7 +229,7 @@ document.addEventListener('click', (e) => {
   const a = e.target.closest('[data-scroll]');
   if (!a) return;
   sessionStorage.setItem('scrollTo', a.dataset.scroll);
-  if (location.hash === '#/today') { e.preventDefault(); scrollToSection(); }
+  if (location.hash === '#/today' || location.hash === '#/tools' || location.hash === '') { e.preventDefault(); scrollToSection(); }
 });
 function scrollToSection() {
   const k = sessionStorage.getItem('scrollTo');
@@ -262,15 +262,10 @@ async function boot() {
 
 async function refreshBadges() {
   try {
-    const [m, d] = await Promise.all([api('/manager'), api('/dashboard')]);
+    const m = await api('/manager');
     const set = (id, n) => { const el = $(id); if (el) el.textContent = n || ''; };
-    const todo = m.approvals.length + m.drafts.length + m.hot.length + (m.proposals_check?.length || 0);
-    set('#badgeManager', todo);
-    set('#bellCount', todo);
-    set('#cntApprovals', m.approvals.length);
-    set('#cntDrafts', m.drafts.length);
-    set('#cntHot', m.hot.length);
-    set('#cntLeads', d.total);
+    set('#badgeTools', m.proposals_check?.length || 0);
+    set('#cntProposals', m.proposals_check?.length || 0);
   } catch { /* ignore */ }
 }
 
@@ -293,25 +288,25 @@ const initials = (s) => esc(String(s || '?').replace(/[^\p{L}\p{N} ]/gu, ' ').tr
 // ---------------------------------------------------------------- router
 const ROUTES = {
   brochure: ['Brochure Generator', (id) => renderTool('brochure', id)], proposal: ['Proposal Generator', (id) => renderTool('proposal', id)], designs: ['Templates', renderDesigns],
-  script: ['', renderScripts], crm: ['', renderCrmLeads],
+  script: ['', renderScripts], crm: ['', renderCrmLeads], tools: ['', renderToolsHome],
   plans: ['', renderPlans], plan: ['Revenue plan', renderPlan], 'plan-edit': ['', renderPlanEdit],
-  today: ['', renderManager], manager: ['', renderManager], customers: ['Customers', renderCustomers], dashboard: ['Reports', renderDashboard], leads: ['Pipeline', renderLeads], board: ['Pipeline board', renderBoard],
+  today: ['', renderToolsHome], manager: ['', renderToolsHome], 'sales-today': ['', renderManager], customers: ['Customers', renderCustomers], dashboard: ['Reports', renderDashboard], leads: ['Pipeline', renderLeads], board: ['Pipeline board', renderBoard],
   lead: ['Lead', renderLead], approvals: ['Pitch approvals', renderApprovals], tasks: ['Tasks', renderTasks],
   inbox: ['Messages', renderInbox], projects: ['Projects', renderProjects], invoices: ['Invoices', renderInvoices],
-  automation: ['Automation runs & log', renderAutomation], templates: ['Message templates', renderTemplates], settings: ['Settings', renderSettings],
+  automation: ['Automation runs & log', renderAutomation], templates: ['Message templates', renderTemplates], settings: ['Tool settings', renderSettings],
 };
 async function route() {
   if (!META) return;
   if (activeEditor && !/^#\/(brochure|proposal)\/\d+/.test(location.hash)) { activeEditor.flush?.(); activeEditor = null; }
-  const [name, arg] = (location.hash.replace(/^#\//, '') || 'today').split('/');
-  const [title, fn] = ROUTES[name] || ROUTES.today;
+  const [name, arg] = (location.hash.replace(/^#\//, '') || 'tools').split('/');
+  const [title, fn] = ROUTES[name] || ROUTES.tools;
   $('#pageTitle').textContent = title;
   $('.main').classList.toggle('notitle', !title);
   $('#shell').classList.toggle('editing', /^#\/(brochure|proposal)\/\d+/.test(location.hash)); // the editor needs the width: rail only
-  $$('#side a[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === ({ lead: 'leads', manager: 'today', plan: 'plans', 'plan-edit': 'plans' }[name] || name)));
+  $$('#side a[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === ({ lead: 'leads', manager: 'tools', today: 'tools', plan: 'plans', 'plan-edit': 'plans' }[name] || name)));
   { // top bar: where you are
     const navLabel = $('#side .p-item a.active .grow')?.textContent || '';
-    const parts = [navLabel || title || 'Today'];
+    const parts = [navLabel || title || 'All tools'];
     if (title && navLabel && title !== navLabel && !/Generator$/.test(title)) parts.push(title);
     $('#crumbTitle').textContent = parts.join(' / ');
     closePops();
@@ -392,6 +387,74 @@ async function homeTools() {
         <div class="ht-act"><a class="btn primary sm" href="#/${t.kind}"><span class="mi">add</span>New ${t.noun}</a>${docs.length > 3 ? `<a class="btn sm ghost" href="#/${t.kind}">See all ${docs.length}</a>` : ''}</div>
       </div>`;
     }).join('')}</div></section>`;
+}
+
+/** Home: the tools engine. Three tools, each with its own options (automation, templates, wording). */
+const TOOL_ICON = { script: 'record_voice_over', brochure: 'menu_book', proposal: 'request_quote' };
+const TOOL_NAME = { script: 'Pitch script', brochure: 'Brochure', proposal: 'Proposal' };
+async function renderToolsHome() {
+  const [lists, tpls, { settings: s, env }, m, crm] = await Promise.all([
+    Promise.all(HOME_TOOLS.map((t) => api('/tools/docs?kind=' + t.kind).catch(() => []))),
+    Promise.all(['brochure', 'proposal'].map((k) => api('/design/templates?kind=' + k).catch(() => []))),
+    api('/settings'), api('/manager').catch(() => ({ proposals_check: [] })), api('/atomic').catch(() => null),
+  ]);
+  const auto = s.automation?.auto_tools || {};
+  const defTpl = (i) => (tpls[i] || []).find((t) => t.is_default)?.name || 'Built-in layout';
+  const sw = (path, on, label, hint) => `<label class="te-opt"><span class="grow"><b>${label}</b><small>${hint}</small></span><input type="checkbox" class="te-sw" data-opt="${path}" ${on ? 'checked' : ''} aria-label="${label}"></label>`;
+  const link = (href, icon, label, hint) => `<a class="te-opt" href="${href}"><span class="grow"><b>${label}</b><small>${esc(hint)}</small></span><span class="mi">${icon}</span></a>`;
+  const OPTS = {
+    script: [
+      sw('automation.auto_tools.script', auto.script !== false, 'Write for every new CRM lead', 'Pitch point and call script go to the CRM'),
+      link('#/settings/business', 'badge', 'Caller and agency', `${s.agency?.sender_name || 'Caller'} from ${s.agency?.name || 'Codeace'}`),
+    ],
+    brochure: [
+      sw('automation.auto_tools.brochure', auto.brochure !== false, 'Make when a lead is interested', 'PDF goes to the CRM brochure bucket for approval'),
+      link('#/designs', 'grid_view', 'Template', defTpl(0)),
+      link('#/settings/brochure', 'edit_note', 'Wording', 'Cover, about us and services'),
+    ],
+    proposal: [
+      sw('automation.auto_tools.proposal', auto.proposal !== false, 'Make at the proposal stage', 'PDF goes to the CRM proposal bucket'),
+      sw('automation.proposal_needs_ok', s.automation?.proposal_needs_ok !== false, 'Wait for my OK before sending', 'Shows here until you send it'),
+      link('#/designs/proposal', 'grid_view', 'Template', defTpl(1)),
+      link('#/settings/proposal', 'payments', 'Prices and terms', 'Packages, payment terms, module split'),
+    ],
+  };
+  const week = Date.now() - 7 * 864e5;
+  const waiting = m.proposals_check || [];
+  view.innerHTML = `
+  <div class="te-head"><div><h2>Tools</h2><p>Three tools that work on your CRM leads. They run by themselves; open one to make or change a document by hand.</p></div>
+    <div class="te-status"><span><i class="dot-s ${crm?.enabled && crm?.keys ? 'on' : ''}"></i>${crm?.keys ? `CRM ${crm.linked_leads} lead${crm.linked_leads === 1 ? '' : 's'}` : 'CRM not connected'}</span><span><i class="dot-s ${env.ai.enabled ? 'on' : ''}"></i>AI ${env.ai.enabled ? 'on' : 'off'}</span></div></div>
+  <div class="te-grid">${HOME_TOOLS.map((t, i) => {
+    const docs = lists[i] || [];
+    const recent = docs.filter((d) => new Date(d.created_at).getTime() >= week).length;
+    const busyN = docs.filter((d) => d.status !== 'ready' && d.status !== 'error').length;
+    return `<section class="card te-card" data-sec="${t.kind}">
+      <div class="ht-top"><span class="ht-ic"><span class="mi">${t.icon}</span></span>
+        <div class="grow"><b>${t.name}</b><div class="small muted">${docs.length} made${recent ? ` · ${recent} this week` : ''}${busyN ? ` · ${busyN} writing` : ''}</div></div>
+        <a class="btn primary sm" href="#/${t.kind}"><span class="mi">add</span>New</a></div>
+      <p class="ht-text">${t.text}</p>
+      ${t.kind === 'proposal' && waiting.length ? `<div class="te-wait"><b>Waiting for your OK (${waiting.length})</b>${waiting.map((p) => `<div class="te-wrow"><span class="grow">${esc(p.company)} <span class="small muted">${money(p.total)} + tax</span></span><a class="btn sm" href="#/proposal/${p.id}">Open</a><button class="btn sm primary" data-send-proposal="${p.lead_id}" data-doc="${p.id}"><span class="mi">send</span>Send</button></div>`).join('')}</div>` : ''}
+      <div class="te-label">Latest</div>
+      <div class="ht-list">${docs.slice(0, 3).map((d) => `<a class="ht-doc" href="#/${t.kind}/${d.id}"><span class="grow">${esc(d.title)}</span><span class="small muted">${fmtDate(d.updated_at)}</span>${d.status === 'ready' ? '' : docTag(d)}</a>`).join('') || `<div class="ht-none small muted">No ${t.noun}s yet. They appear here as CRM leads come in.</div>`}
+        ${docs.length > 3 ? `<a class="ht-doc te-all" href="#/${t.kind}"><span class="grow">See all ${docs.length}</span><span class="mi">chevron_right</span></a>` : ''}</div>
+      <div class="te-label">Options</div>
+      <div class="te-opts">${OPTS[t.kind].join('')}</div>
+    </section>`;
+  }).join('')}</div>`;
+  $$('.te-sw', view).forEach((el) => (el.onchange = async () => {
+    const patch = {};
+    const keys = el.dataset.opt.split('.');
+    let o = patch;
+    keys.slice(0, -1).forEach((k) => (o = o[k] = {}));
+    o[keys.at(-1)] = el.checked;
+    try { await api('/settings', { method: 'PUT', body: patch }); toast(el.checked ? 'Turned on' : 'Turned off'); } catch (e) { el.checked = !el.checked; toast(e.message); }
+  }));
+  $$('[data-send-proposal]', view).forEach((b) => (b.onclick = () => busy(b, async () => {
+    if (!confirm('Send this proposal to the client now?')) return;
+    await api(`/leads/${b.dataset.sendProposal}/actions/send_proposal_doc`, { body: { doc_id: b.dataset.doc } });
+    toast('Proposal sent'); renderToolsHome(); refreshBadges();
+  })));
+  setTimeout(scrollToSection, 50);
 }
 
 async function renderManager() {
@@ -925,32 +988,62 @@ async function renderTemplates() {
 }
 
 // -------------------------------------------------------------- settings
-async function renderSettings() {
+async function renderSettings(section) {
   const { settings: s, env } = await api('/settings');
   const inp = (path, label, type = 'text') => {
     const v = path.split('.').reduce((o, k) => o?.[k], s);
     if (type === 'bool') return `<label class="check"><input type="checkbox" data-path="${path}" data-type="bool" ${v ? 'checked' : ''}> ${label}</label>`;
+    if (type === 'lines') return `<label class="wide">${label}<textarea data-path="${path}" data-type="lines" rows="3">${esc((v || []).join('\n'))}</textarea></label>`;
+    if (type === 'wtext') return `<label class="wide">${label}<input data-path="${path}" data-type="text" type="text" value="${esc(v)}"></label>`;
+    if (type === 'area') return `<label class="wide">${label}<textarea data-path="${path}" data-type="text" rows="3">${esc(v || '')}</textarea></label>`;
     return `<label>${label}<input data-path="${path}" data-type="${type}" type="${type === 'number' ? 'number' : 'text'}" value="${esc(Array.isArray(v) ? v.join(',') : v)}"></label>`;
   };
-  view.innerHTML = `<div class="card more-tools"><h2>More tools</h2><div class="row wrap">
+  view.innerHTML = `
+  <p class="hint">Options for the three tools. Everything else runs by itself.</p>
+  <div class="card" id="t-tools"><h2><span class="mi">bolt</span>When the tools run</h2><div class="form-grid">
+    ${inp('automation.auto_tools.script', 'Pitch Script Maker: write a call script for every new CRM lead', 'bool')}
+    ${inp('automation.auto_tools.brochure', 'Brochure Generator: make the brochure when a lead is interested', 'bool')}
+    ${inp('automation.auto_tools.proposal', 'Proposal Generator: make the proposal at the proposal stage', 'bool')}
+    ${inp('automation.proposal_needs_ok', 'Proposals wait for my OK before they are sent', 'bool')}</div></div>
+  <div class="card" id="t-business"><h2><span class="mi">badge</span>On every document</h2><p class="small muted">Shown in scripts ("this is Arjun from Codeace"), on brochure and proposal pages and in the contact details.</p>
+    <div class="form-grid">${inp('agency.name', 'Agency name')}${inp('agency.sender_name', 'Caller / sender name')}${inp('agency.email', 'Email')}${inp('agency.phone', 'Phone')}${inp('agency.website', 'Website')}${inp('agency.address', 'Address')}</div></div>
+  <div class="card" id="t-brochure"><h2><span class="mi">menu_book</span>Brochure wording</h2><p class="small muted">The AI tailors this copy to each client. {{company}} and {{industry}} are filled in. The design comes from the <a href="#/designs">default template</a>.</p>
+    <div class="form-grid">${inp('brochure.cover_title', 'Cover title', 'wtext')}${inp('brochure.cover_subtitle', 'Cover subtitle', 'area')}${inp('brochure.about', 'About us (one paragraph per line)', 'lines')}${inp('brochure.help_intro', 'How we help (intro)', 'area')}</div>
+    <label>Portfolio (shown in brochures, JSON)<textarea id="portJson" class="code" style="min-height:120px">${esc(JSON.stringify(s.agency.portfolio, null, 2))}</textarea></label></div>
+  <div class="card" id="t-proposal"><h2><span class="mi">request_quote</span>Proposal prices and terms</h2><p class="small muted">Prices always come from here (the AI writes the words only). The package total is split over the modules by their share.</p>
+    <div class="form-grid">${inp('billing.currency', 'Currency')}${inp('billing.tax_label', 'Tax label')}${inp('billing.tax_pct', 'Tax %', 'number')}${inp('proposal.support_days', 'Free support (days)', 'number')}
+    ${inp('proposal.payment_terms', 'Payment terms', 'area')}${inp('proposal.investment_note', 'Note under the prices', 'area')}${inp('proposal.deliverables_note', 'Deliverables note', 'area')}${inp('proposal.terms', 'Terms (one per line)', 'lines')}</div>
+    <label>Packages (JSON)<textarea id="pkgJson" class="code">${esc(JSON.stringify(s.packages, null, 2))}</textarea></label><br>
+    <label>Module split (JSON: name and share in %)<textarea id="modJson" class="code" style="min-height:120px">${esc(JSON.stringify(s.proposal?.modules || [], null, 2))}</textarea></label></div>
+  <div class="card"><h2><span class="mi">auto_awesome</span>AI writer</h2>
+    <p class="small muted">Status: ${env.ai.enabled ? '<b class="ok">on</b>' : env.ai.key_set ? '<b>disabled</b>' : '<b class="bad">no API key</b>: add OPENROUTER_API_KEY or ANTHROPIC_API_KEY (.env locally, Vercel environment variables live), then restart / redeploy'} · provider <b>${env.ai.provider === 'openrouter' ? 'OpenRouter' : 'Claude API'}</b>, model ${esc(env.ai.model)} · spent today $${env.ai.spent_today_usd}<br>Keys found: OpenRouter ${env.ai.keys?.openrouter ? 'yes' : 'no'}, Anthropic ${env.ai.keys?.anthropic ? 'yes' : 'no'}</p>
+    <div class="form-grid">${inp('ai.enabled', 'Use AI to write the documents', 'bool')}${inp('ai.daily_budget_usd', 'AI daily budget (USD)', 'number')}
+    <label>AI provider<select data-path="ai.provider">${[['auto', 'Automatic (whichever key is set)'], ['openrouter', 'OpenRouter'], ['anthropic', 'Claude API (Anthropic)']].map(([v, l]) => `<option value="${v}" ${(s.ai.provider || 'auto') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+    ${inp('ai.openrouter_model', 'OpenRouter model (empty = Claude model on OpenRouter)')}
+    ${inp('ai.model', 'Claude model')}${inp('ai.effort_research', 'Effort: research (low…max)')}${inp('ai.effort_writing', 'Effort: pitch, design, messages')}${inp('ai.effort_light', 'Effort: replies, planning')}
+    ${inp('ai.web_search_max_uses', 'Max web searches per lead', 'number')}${inp('ai.max_concurrent', 'Parallel AI jobs', 'number')}</div>
+    <p class="small muted">Without a key (or when the budget is reached) every tool falls back to its standard wording, so documents are still made.</p></div>
+  <div class="card" id="crmCard"><div class="sec-h"><h2>Team CRM</h2><span class="spacer"></span><button class="btn sm" id="crmSync"><span class="mi">sync</span>Read the CRM now</button></div>
+    <div id="crmStatus" class="small muted">Loading…</div>
+    <div class="form-grid" style="margin-top:12px">${inp('atomic.enabled', 'Use the CRM (read deals and call results)', 'bool')}${inp('atomic.read_only', 'Read only: write nothing except the tables below', 'bool')}${inp('atomic.write_tables', 'What AxiFlow may write while read only (table or table.column)', 'list')}${inp('atomic.deal_means_consent', 'An open deal counts as consent for WhatsApp/email', 'bool')}${inp('atomic.poll_seconds', 'Check the CRM every N seconds', 'number')}${inp('atomic.import_per_poll', 'New CRM leads to bring in per check', 'number')}</div>
+    <p class="small muted">The tools work on CRM leads (a company with a deal). A new lead gets a call script; when its status changes the brochure or proposal is made and its PDF goes back to the CRM.</p>
+    <h3 style="margin-top:16px">What each deal stage does</h3>
+    <p class="small muted">Stage values exactly as the CRM stores them. A new deal in a stage that is not listed counts as interested.</p>
+    <div id="crmStages"></div></div>
+  <div hidden>
+  <textarea id="careJson">${esc(JSON.stringify(s.care_plan, null, 2))}</textarea>
+  <div class="card more-tools"><h2>More tools</h2><div class="row wrap">
     ${[['#/approvals', 'Pitch approvals'], ['#/tasks', 'All tasks'], ['#/board', 'Pipeline board'], ['#/dashboard', 'Reports'], ['#/automation', 'Automation log'], ['#/templates', 'Message templates']].map(([h, n]) => `<a class="btn sm" href="${h}">${n}</a>`).join('')}
     <span class="spacer"></span><button class="btn sm primary" id="runBtn" title="Run every automatic step now">Run automation now</button></div></div>
   <div class="grid g2">
-  <div class="card"><h2>Your business</h2><div class="form-grid">${inp('agency.name', 'Agency name')}${inp('agency.sender_name', 'Sender name')}${inp('agency.email', 'Email (digest goes here)')}${inp('agency.phone', 'Phone')}${inp('agency.website', 'Website')}${inp('agency.address', 'Address')}${inp('agency.review_link', 'Google review link')}</div></div>
+  <div class="card"><h2>Your business</h2><div class="form-grid">${inp('agency.review_link', 'Google review link')}</div></div>
   <div class="card"><h2>Connections</h2><div class="conn">
     ${[['Email', env.channels.email === 'live', 'Add SMTP details in .env'], ['WhatsApp', env.channels.whatsapp === 'live', 'Add WA_TOKEN + WA_PHONE_NUMBER_ID in .env'],
       ['AI (' + (env.ai.provider === 'openrouter' ? 'OpenRouter' : 'Claude API') + ')', env.ai.enabled, env.ai.key_set ? 'Turn on below' : 'Add OPENROUTER_API_KEY or ANTHROPIC_API_KEY'], ['Team CRM', env.crm_webhook || env.atomic_keys, 'Add CRM_SUPABASE_URL + CRM_SUPABASE_SECRET_KEY']]
       .map(([n, on, how]) => `<div class="row"><i class="dot-s ${on ? 'on' : ''}"></i><b>${n}</b><span class="spacer"></span><span class="small ${on ? 'ok' : 'muted'}">${on ? 'Connected' : how}</span></div>`).join('')}
     <p class="small muted">Not connected = messages are only saved here (safe test mode), not delivered.</p>
-    <div class="form-grid">${inp('ai.enabled', 'Use AI', 'bool')}${inp('ai.daily_budget_usd', 'AI daily budget (USD)', 'number')}${inp('automation.auto_approve_brochure', 'Send pitches without my approval', 'bool')}</div></div></div>
+    <div class="form-grid">${inp('automation.auto_approve_brochure', 'Send pitches without my approval', 'bool')}</div></div></div>
   </div>
-  <div class="card" id="crmCard"><div class="sec-h"><h2>Team CRM</h2><span class="spacer"></span><button class="btn sm" id="crmSync"><span class="mi">sync</span>Read the CRM now</button></div>
-    <div id="crmStatus" class="small muted">Loading…</div>
-    <div class="form-grid" style="margin-top:12px">${inp('atomic.enabled', 'Use the CRM (read deals and call results)', 'bool')}${inp('atomic.read_only', 'Read only: write nothing except the tables below', 'bool')}${inp('atomic.write_tables', 'What AxiFlow may write while read only (table or table.column)', 'list')}${inp('atomic.deal_means_consent', 'An open deal counts as consent for WhatsApp/email', 'bool')}${inp('atomic.poll_seconds', 'Check the CRM every N seconds', 'number')}${inp('atomic.import_per_poll', 'New CRM leads to bring in per check', 'number')}</div>
-    <p class="small muted">Every CRM lead becomes an AxiFlow lead. New CRM leads get a pitch, call script and brochure straight away; the pitch point goes to the company's pitch point field, the call script to a note on the contact, and the brochure link to the brochures table.</p>
-    <h3 style="margin-top:16px">What each deal stage does</h3>
-    <p class="small muted">Stage values exactly as the CRM stores them. A new deal in a stage that is not listed counts as interested.</p>
-    <div id="crmStages"></div></div>
   <details class="block advanced"><summary><b>Advanced settings</b> <span class="small muted">schedule, limits, prices, AI tuning, marketing, integrations</span></summary>
   <div class="grid g2">
   <div class="card"><h2>Schedule &amp; sending</h2><div class="form-grid">${inp('schedule.enabled', 'Scheduler enabled', 'bool')}${inp('schedule.daily_time', 'Daily run time (HH:MM)')}${inp('schedule.timezone', 'Timezone')}${inp('schedule.sweep_minutes', 'Sweep every N minutes (0 = off)', 'number')}
@@ -958,26 +1051,15 @@ async function renderSettings() {
     ${inp('sending.daily_cap_whatsapp', 'Daily cap: WhatsApp', 'number')}${inp('sending.daily_cap_email', 'Daily cap: email', 'number')}${inp('sending.throttle_ms', 'Delay between live sends (ms)', 'number')}${inp('sending.default_country_code', 'Default country code')}</div></div>
   <div class="card"><h2>Automation</h2><div class="form-grid">${inp('automation.dry_run', 'Dry run (never send for real)', 'bool')}
     ${inp('automation.auto_send_booking_link', 'Auto-send booking link on positive reply', 'bool')}${inp('automation.auto_proposal_after_meeting', 'Make the proposal after the meeting', 'bool')}
-    ${inp('automation.auto_tools.script', 'Pitch script for every interested lead (sent to the CRM)', 'bool')}${inp('automation.auto_tools.brochure', 'Designed brochure for every interested lead', 'bool')}${inp('automation.auto_tools.proposal', 'Designed proposal (Proposal tool)', 'bool')}${inp('automation.proposal_needs_ok', 'Proposals wait for my OK before sending', 'bool')}${inp('automation.daily_digest', 'Daily digest email', 'bool')}
+    ${inp('automation.daily_digest', 'Daily digest email', 'bool')}
     ${inp('sequence.follow_up_1_days', 'Days until follow-up 1', 'number')}${inp('sequence.follow_up_2_days', 'Days until follow-up 2', 'number')}${inp('sequence.close_after_days', 'Days until closing (no reply)', 'number')}${inp('sequence.proposal_reminder_days', 'Days until proposal reminder', 'number')}${inp('sequence.invoice_reminder_days', 'Days between invoice reminders', 'number')}</div></div>
-  <div class="card"><h2>Billing &amp; meetings</h2><div class="form-grid">${inp('billing.currency', 'Currency')}${inp('billing.tax_label', 'Tax label')}${inp('billing.tax_pct', 'Tax %', 'number')}${inp('billing.advance_pct', 'Advance %', 'number')}${inp('billing.invoice_prefix', 'Invoice prefix')}
+  <div class="card"><h2>Billing &amp; meetings</h2><div class="form-grid">${inp('billing.advance_pct', 'Advance %', 'number')}${inp('billing.invoice_prefix', 'Invoice prefix')}
     ${inp('meeting.slots', 'Meeting slots (HH:MM list)', 'list')}${inp('meeting.days_ahead', 'Days bookable ahead', 'number')}${inp('meeting.duration_min', 'Meeting minutes', 'number')}${inp('meeting.meet_link', 'Meeting link')}${inp('milestones', 'Project milestones', 'list')}</div></div>
-  <div class="card"><h2><span class="mi">auto_awesome</span>AI manager</h2>
-    <p class="small muted">Status: ${env.ai.enabled ? '<b class="ok">on</b>' : env.ai.key_set ? '<b>disabled</b>' : '<b class="bad">no API key</b>: add OPENROUTER_API_KEY or ANTHROPIC_API_KEY (.env locally, Vercel environment variables live), then restart / redeploy'} · provider <b>${env.ai.provider === 'openrouter' ? 'OpenRouter' : 'Claude API'}</b>, model ${esc(env.ai.model)} · spent today $${env.ai.spent_today_usd}<br>Keys found: OpenRouter ${env.ai.keys?.openrouter ? 'yes' : 'no'}, Anthropic ${env.ai.keys?.anthropic ? 'yes' : 'no'}</p>
-    <div class="form-grid">${inp('ai.design_enabled', 'AI homepage designs', 'bool')}${inp('ai.auto_send_ai_replies', 'Auto-send AI replies (skip approval)', 'bool')}
-    <label>AI provider<select data-path="ai.provider">${[['auto', 'Automatic (whichever key is set)'], ['openrouter', 'OpenRouter'], ['anthropic', 'Claude API (Anthropic)']].map(([v, l]) => `<option value="${v}" ${(s.ai.provider || 'auto') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-    ${inp('ai.openrouter_model', 'OpenRouter model (empty = Claude model on OpenRouter)')}
-    ${inp('ai.model', 'Claude model')}${inp('ai.effort_research', 'Effort: research (low…max)')}${inp('ai.effort_writing', 'Effort: pitch, design, messages')}${inp('ai.effort_light', 'Effort: replies, planning')}
-    ${inp('ai.web_search_max_uses', 'Max web searches per lead', 'number')}${inp('ai.max_concurrent', 'Parallel AI jobs', 'number')}</div>
-    <p class="small muted">Without a key (or when the budget is reached) every AI step falls back to rules and templates, so the pipeline never stops.</p></div>
   <div class="card"><h2>Marketing pipes (JSON)</h2>
     <p class="small muted">Each touch: <code>after_days</code> since entering the pipe, <code>theme</code> (the AI writes the message from it), <code>fallback</code> (text used without AI).</p>
     <label>Nurture: undecided leads<textarea id="nurtureJson" class="code">${esc(JSON.stringify(s.marketing.nurture, null, 2))}</textarea></label><br>
     <label>Re-engage: leads who said no<textarea id="reengageJson" class="code">${esc(JSON.stringify(s.marketing.reengage, null, 2))}</textarea></label></div>
-  <div class="card"><h2>Packages &amp; portfolio (JSON)</h2><label>Packages<textarea id="pkgJson" class="code">${esc(JSON.stringify(s.packages, null, 2))}</textarea></label><br>
-    <label>Care plan<textarea id="careJson" class="code" style="min-height:80px">${esc(JSON.stringify(s.care_plan, null, 2))}</textarea></label><br>
-    <label>Portfolio (shown in brochures)<textarea id="portJson" class="code" style="min-height:120px">${esc(JSON.stringify(s.agency.portfolio, null, 2))}</textarea></label></div>
-  <div class="card"><h2>Integrations</h2><table class="small">
+    <div class="card"><h2>Integrations</h2><table class="small">
     <tr><td>Email</td><td><b>${env.channels.email}</b> <span class="muted">(set SMTP_* in .env)</span></td></tr>
     <tr><td>WhatsApp</td><td><b>${env.channels.whatsapp}</b> <span class="muted">(set WA_TOKEN, WA_PHONE_NUMBER_ID)</span></td></tr>
     <tr><td>Public lead form</td><td><a href="${esc(env.webhooks.public_form)}" target="_blank">${esc(env.webhooks.public_form)}</a></td></tr>
@@ -991,6 +1073,7 @@ async function renderSettings() {
 </div>
   </div>
   </details>
+  </div>
   <div class="row save-bar"><span class="spacer"></span><button class="btn primary" id="saveSettings">Save settings</button></div>`;
 
 
@@ -1017,6 +1100,7 @@ async function renderSettings() {
         case 'number': v = Number(el.value); break;
         case 'list': v = el.value.split(',').map((x) => x.trim()).filter(Boolean); break;
         case 'numlist': v = el.value.split(',').map((x) => Number(x.trim())).filter((x) => !Number.isNaN(x)); break;
+        case 'lines': v = el.value.split('\n').map((x) => x.trim()).filter(Boolean); break;
         default: v = el.value;
       }
       let o = patch;
@@ -1025,6 +1109,7 @@ async function renderSettings() {
     }
     try {
       patch.packages = JSON.parse($('#pkgJson').value);
+      patch.proposal = { ...(patch.proposal || {}), modules: JSON.parse($('#modJson').value) };
       patch.care_plan = JSON.parse($('#careJson').value);
       patch.agency.portfolio = JSON.parse($('#portJson').value);
       patch.marketing = { nurture: JSON.parse($('#nurtureJson').value), reengage: JSON.parse($('#reengageJson').value) };
@@ -1036,6 +1121,7 @@ async function renderSettings() {
     META = await api('/meta');
     toast('Settings saved');
   });
+  if (section) setTimeout(() => $('#t-' + section)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
 }
 
 

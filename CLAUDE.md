@@ -13,7 +13,14 @@ The team's main CRM is **Twenty**, set up by a co-worker and run by the **teleca
 
 Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATABASE_URL` and `pg`; embedded PGlite in `data/pg` when `DATABASE_URL` is empty), Vercel Blob for uploads (`data/uploads` locally), nodemailer, `@anthropic-ai/sdk` (Claude, `claude-opus-5-5`), and a vanilla-JS admin SPA in `public/`. There is no build step. Code map: see README. The old SQLite file `data/crm.db` is kept only as a backup/migration source.
 
-## Status (2026-11-05, latest): a lead = a CRM company with a deal
+## Status (2026-11-05, latest): AxiFlow is a tools engine (3 tools + their options)
+- Owner: "make it as a tools engine, 3 powerfull tools and its related options. hide all others".
+- **Menu** (`public/index.html`): All tools (`#/tools`, new home; `#/`, `#/today`, `#/manager` open it too) · Tools: Pitch scripts, Brochures, Proposals · Options: Templates, Tool settings. Leads, Pipeline, the bell, "Run automation", Automation log and Reports are gone from the menus and search (routes still work; the old Today is at `#/sales-today`). Search finds tool documents, tool pages and New actions only.
+- **Home** (`renderToolsHome` in `public/app.js`, styles `.te-*` at the end of styles.css): one card per tool with New, the 3 latest docs, and its options: switches that save at once (`automation.auto_tools.script|brochure|proposal`, `automation.proposal_needs_ok`) and links to its template (default template name) and wording / prices (`#/settings/<business|brochure|proposal>` scrolls to that card). Proposals waiting for the OK are listed on the Proposal card with Open / Send (count in the menu).
+- **Tool settings** (`renderSettings(section)`): When the tools run, On every document (agency), Brochure wording (cover, about lines, help intro, portfolio), Proposal prices and terms (currency, tax, support days, payment terms, notes, terms lines, packages + module split JSON), AI writer, Team CRM. All other inputs stay in the page inside `<div hidden>` so Save still sends them (dry-run check: saving changes no value). New input types `lines` (one per line → array), `area`, `wtext`.
+- Tool doc lists (`tools.listDocs`) only show docs of live CRM leads; the CRM lead count ignores removed leads (live: 1).
+
+## Status (2026-11-05): a lead = a CRM company with a deal
 - Owner (screenshot of the Leads page with 4 rows): "there is only one lead in crm". The CRM had 4 companies (Back to Roots + 3 "test" made that morning, no deals), 2 contacts, 1 deal, 1 call assignment; the owner chose (AskUserQuestion) **a lead = a company with a deal**.
 - `atomic.lead_rule` (`deal` default | `company`): `pollOnce` keeps only units with a non-archived deal (a contact without a company counts when a deal names it); `crmLeads()` (Leads page) uses the same rule; the "No deal yet" filter is gone. Companies without a deal are treated like leads removed from the CRM (hidden at once, purged after 7 days) and come back when a deal is opened.
 - Live: read = 1 lead, 3 removed (test leads #13, #14, #15); Pipeline, Today, tool lists and Leads page show only Back to Roots (#10).

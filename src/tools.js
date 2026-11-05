@@ -46,7 +46,7 @@ function cleanInput(raw) {
   return out;
 }
 
-export const listDocs = async (kind) => await all(`SELECT id, kind, token, title, status, source, error, template_id, created_at, updated_at FROM docs WHERE kind = :kind ORDER BY id DESC LIMIT 100`, { kind });
+export const listDocs = async (kind) => await all(`SELECT d.id, d.kind, d.token, d.title, d.status, d.source, d.error, d.template_id, d.created_at, d.updated_at FROM docs d JOIN leads l ON l.id = d.lead_id AND l.crm_removed_at IS NULL WHERE d.kind = :kind ORDER BY d.id DESC LIMIT 100 /* only docs of live CRM leads */`, { kind });
 
 export async function getDoc(id) {
   const d = await get(`SELECT * FROM docs WHERE id = :id`, { id });

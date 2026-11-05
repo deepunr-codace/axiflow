@@ -29,14 +29,13 @@
     <aside class="side" id="side">
       <div class="side-box">
       <div class="rail">
-        <a class="rail-logo" href="#/today" aria-label="AxiFlow home" style="text-decoration:none">A</a>
-        <a class="rail-btn" href="#/today" data-nav="today" data-tip="Today" aria-label="Today"><span class="mi">home</span></a>
-        <a class="rail-btn" href="#/crm" data-nav="crm" data-tip="Leads" aria-label="Leads"><span class="mi">contacts</span></a>
-        <a class="rail-btn" href="#/leads" data-nav="leads" data-tip="Pipeline" aria-label="Pipeline"><span class="mi">view_kanban</span></a>
+        <a class="rail-logo" href="#/tools" aria-label="AxiFlow tools" style="text-decoration:none">A</a>
+        <a class="rail-btn" href="#/tools" data-nav="tools" data-tip="All tools" aria-label="All tools"><span class="mi">apps</span></a>
         <div class="rail-sep"></div>
-        <a class="rail-btn" href="#/brochure" data-nav="brochure" data-tip="Brochures" aria-label="Brochures"><span class="mi">menu_book</span></a>
-        <a class="rail-btn" href="#/proposal" data-nav="proposal" data-tip="Proposals" aria-label="Proposals"><span class="mi">request_quote</span></a>
-        <a class="rail-btn" href="#/script" data-nav="script" data-tip="Pitch scripts" aria-label="Pitch scripts"><span class="mi">record_voice_over</span></a>
+        <a class="rail-btn" href="#/script" data-nav="script" data-tip="Pitch Script Maker" aria-label="Pitch Script Maker"><span class="mi">record_voice_over</span></a>
+        <a class="rail-btn" href="#/brochure" data-nav="brochure" data-tip="Brochure Generator" aria-label="Brochure Generator"><span class="mi">menu_book</span></a>
+        <a class="rail-btn" href="#/proposal" data-nav="proposal" data-tip="Proposal Generator" aria-label="Proposal Generator"><span class="mi">request_quote</span></a>
+        <div class="rail-sep"></div>
         <a class="rail-btn" href="#/designs" data-nav="designs" data-tip="Templates" aria-label="Templates"><span class="mi">grid_view</span></a>
         <div class="p-grow"></div>
         <a class="rail-btn" href="#/settings" data-nav="settings" data-tip="Settings" aria-label="Settings"><span class="mi">settings</span></a>
@@ -45,23 +44,19 @@
       <div class="panel" id="panel">
         <div class="p-head"><div class="grow"><div class="p-name">AxiFlow</div></div>
           <button class="icon-btn" id="panelClose" title="Collapse" aria-label="Collapse menu"><span class="mi">left_panel_close</span></button></div>
-        <div class="p-label">Sales</div>
         <div class="p-group">
-          <div class="p-item"><a href="#/today" data-nav="today"><span class="mi">home</span><span class="grow">Today</span><span class="count parent" id="badgeManager"></span></a></div>
-          <div class="p-sub-list">
-            <a href="#/today" data-scroll="approvals"><span class="grow">Approve pitches</span><span class="count" id="cntApprovals"></span></a>
-            <a href="#/today" data-scroll="drafts"><span class="grow">Replies to send</span><span class="count" id="cntDrafts"></span></a>
-            <a href="#/today" data-scroll="hot"><span class="grow">Close deals</span><span class="count" id="cntHot"></span></a>
-          </div>
-          <div class="p-item"><a href="#/crm" data-nav="crm"><span class="mi">contacts</span><span class="grow">Leads</span></a></div>
-          <div class="p-item"><a href="#/leads" data-nav="leads"><span class="mi">view_kanban</span><span class="grow">Pipeline</span><span class="count" id="cntLeads"></span></a></div>
+          <div class="p-item"><a href="#/tools" data-nav="tools"><span class="mi">apps</span><span class="grow">All tools</span><span class="count parent" id="badgeTools"></span></a></div>
         </div>
-        <div class="p-label">Create</div>
+        <div class="p-label">Tools</div>
         <div class="p-group">
-          <div class="p-item"><a href="#/brochure" data-nav="brochure"><span class="mi">menu_book</span><span class="grow">Brochures</span></a><a class="p-plus" href="#/brochure" title="New brochure" aria-label="New brochure"><span class="mi">add</span></a></div>
-          <div class="p-item"><a href="#/proposal" data-nav="proposal"><span class="mi">request_quote</span><span class="grow">Proposals</span></a><a class="p-plus" href="#/proposal" title="New proposal" aria-label="New proposal"><span class="mi">add</span></a></div>
           <div class="p-item"><a href="#/script" data-nav="script"><span class="mi">record_voice_over</span><span class="grow">Pitch scripts</span></a><a class="p-plus" href="#/script" title="New pitch script" aria-label="New pitch script"><span class="mi">add</span></a></div>
+          <div class="p-item"><a href="#/brochure" data-nav="brochure"><span class="mi">menu_book</span><span class="grow">Brochures</span></a><a class="p-plus" href="#/brochure" title="New brochure" aria-label="New brochure"><span class="mi">add</span></a></div>
+          <div class="p-item"><a href="#/proposal" data-nav="proposal"><span class="mi">request_quote</span><span class="grow">Proposals</span><span class="count" id="cntProposals"></span></a><a class="p-plus" href="#/proposal" title="New proposal" aria-label="New proposal"><span class="mi">add</span></a></div>
+        </div>
+        <div class="p-label">Options</div>
+        <div class="p-group">
           <div class="p-item"><a href="#/designs" data-nav="designs"><span class="mi">grid_view</span><span class="grow">Templates</span></a></div>
+          <div class="p-item"><a href="#/settings" data-nav="settings"><span class="mi">tune</span><span class="grow">Tool settings</span></a></div>
         </div>
         <div class="p-grow"></div>
         <div class="who"><div class="grow"><b id="whoName">Codeace</b><small>Admin</small></div>
@@ -75,21 +70,17 @@
         <div class="tbar">
           <button class="menu-btn" id="menuBtn" aria-label="Menu"><span class="mi">menu</span></button>
           <span class="top-logo">A</span>
-          <div class="crumbs"><span class="crumb-app">AxiFlow</span><span class="mi">chevron_right</span><b id="crumbTitle">Today</b></div>
-          <button class="search-trigger" id="searchBtn" aria-label="Search"><span class="mi">search</span><span class="st-label">Search leads, pages and actions</span><kbd>Ctrl K</kbd></button>
+          <div class="crumbs"><span class="crumb-app">AxiFlow</span><span class="mi">chevron_right</span><b id="crumbTitle">All tools</b></div>
+          <button class="search-trigger" id="searchBtn" aria-label="Search"><span class="mi">search</span><span class="st-label">Search documents, tools and actions</span><kbd>Ctrl K</kbd></button>
           <div class="tb-actions">
             <button class="tb-btn" id="panelBtn" data-tip="Hide menu" aria-label="Hide menu"><span class="mi">left_panel_close</span></button>
-            <button class="tb-btn" id="runBtnTop" data-tip="Run automation now" aria-label="Run automation now"><span class="mi">play_arrow</span></button>
             <button class="tb-btn" id="themeBtn" data-tip="Light mode" aria-label="Switch to light mode"><span class="mi">light_mode</span></button>
-            <div class="tb-pop" id="bellWrap"><button class="tb-btn" id="bellBtn" data-tip="Needs you" aria-label="What needs you"><span class="mi">notifications</span><i class="tb-dot" id="bellCount"></i></button><div class="pop" id="bellPop"></div></div>
             <a class="tb-btn tb-settings" href="#/settings" data-tip="Settings" aria-label="Settings"><span class="mi">settings</span></a>
             <span class="tb-sep"></span>
             <div class="tb-pop" id="avWrap"><button class="tb-av" id="avBtn" aria-label="Account">A</button>
               <div class="pop" id="avPop">
                 <div class="pop-h"><b id="avName">Codeace</b><small>Admin</small></div>
-                <a href="#/settings"><span class="mi">settings</span><span class="grow">Settings</span></a>
-                <a href="#/automation"><span class="mi">receipt_long</span><span class="grow">Automation log</span></a>
-                <a href="#/dashboard"><span class="mi">monitoring</span><span class="grow">Reports</span></a>
+                <a href="#/settings"><span class="mi">tune</span><span class="grow">Tool settings</span></a>
                 <button class="pi" data-act="theme"><span class="mi" id="avThemeIcon">light_mode</span><span class="grow" id="avThemeLabel">Light mode</span></button>
                 <button class="pi" data-act="search"><span class="mi">search</span><span class="grow">Search</span><kbd>Ctrl K</kbd></button>
                 <hr>
@@ -97,16 +88,16 @@
               </div></div>
             <div class="tb-pop" id="newWrap"><button class="btn primary sm tb-new" id="newBtn" aria-label="New"><span class="mi">add</span><span class="lbl">New</span></button>
               <div class="pop" id="newPop">
+                <a href="#/script"><span class="mi">record_voice_over</span><span class="grow">New pitch script</span></a>
                 <a href="#/brochure"><span class="mi">menu_book</span><span class="grow">New brochure</span></a>
                 <a href="#/proposal"><span class="mi">request_quote</span><span class="grow">New proposal</span></a>
-                <a href="#/script"><span class="mi">record_voice_over</span><span class="grow">New pitch script</span></a>
                 <hr>
                 <a href="#/designs"><span class="mi">upload_file</span><span class="grow">Import a template from PDF</span></a>
               </div></div>
           </div>
         </div>
         <header class="topbar">
-          <h1 id="pageTitle">Today</h1>
+          <h1 id="pageTitle"></h1>
           <div class="top-actions"></div>
         </header>
         <section id="view" class="view"></section>

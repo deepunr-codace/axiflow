@@ -711,7 +711,7 @@ export async function pushEvent(row) {
 /** Status for the Settings page. */
 export async function atomicStatus() {
   const st = await getState('atomic', {});
-  const linked = await get(`SELECT COUNT(*)::int AS n FROM leads WHERE external_id LIKE 'atomic:%'`);
+  const linked = await get(`SELECT COUNT(*)::int AS n FROM leads WHERE external_id LIKE 'atomic:%' AND crm_removed_at IS NULL`);
   const out = await all(`SELECT status, COUNT(*)::int AS n FROM crm_outbox WHERE target = 'atomic' GROUP BY status`);
   return {
     keys: atomicKeys(), enabled: atomicConfigured(), host: crmHost(), read_only: readOnly(),
