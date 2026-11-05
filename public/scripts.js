@@ -80,7 +80,7 @@ async function renderScript(id) {
   <div class="row sc-head">
     <div class="grow"><h2 style="margin:0;font-size:24px">${H.esc(d.title)}</h2>
       <div class="small muted" style="margin-top:4px">${meta}${d.input.website ? ` · <a href="${H.esc(d.input.website)}" target="_blank" rel="noopener">${H.esc(d.input.website.replace(/^https?:\/\//, ''))}${I('open_in_new')}</a>` : ''}${d.input.phone ? ` · <a href="tel:${H.esc(d.input.phone)}">${I('call')}${H.esc(d.input.phone)}</a>` : ''}</div></div>
-    <span class="tag">${d.source === 'ai' ? 'Written by AI' : 'Standard script'}</span><span class="small muted" id="scStatus">Saved</span>
+    <span class="tag${d.source === 'claude' ? ' claude' : ''}">${d.source === 'claude' ? 'Written by Claude' : d.source === 'ai' ? 'Written by AI' : 'Standard script'}</span><span class="small muted" id="scStatus">Saved</span>
     <button class="btn" id="scCopy">${I('content_copy')}Copy script</button>
     <a class="btn" href="/api/tools/docs/${id}/pdf?download=1">${I('download')}PDF</a>
     ${d.lead_id ? `<button class="btn primary" id="scUse" title="Saves it as this lead's call script; the CRM gets it with the next sync">${I('send')}Use for this lead's calls</button>` : ''}
