@@ -6,21 +6,36 @@ import { srcPath, loadImage } from './model.js';
 
 /*
  * Renders a design to PDF. Text metrics follow CSS so the PDF matches the editor:
- * line box = lh × size, glyphs sit in the middle of the line box (Poppins typo metrics:
- * ascent 1.05, descent 0.35 → content area 1.4 × size).
+ * line box = lh × size, glyphs sit in the middle of the line box. Content area = the font's
+ * hhea ascent + descent (Poppins 1.4, Unbounded 1.24, Hanken Grotesk 1.303 × size), as in Chrome.
  */
-const ASC = 1.05, CONTENT = 1.4, PDFKIT_LH = 1.5;
+const CONTENT = 1.4, PDFKIT_LH = 1.5; // Poppins (the pricing table)
+// Per font code: [content area, pdfkit line height] in em (from pdfkit's own font metrics, hhea).
+const METRICS = { UM: [1.24, 1.24], US: [1.24, 1.24], HR: [1.303, 1.303], HM: [1.303, 1.303], HS: [1.303, 1.303] };
+const fm = (font) => METRICS[font] || [CONTENT, PDFKIT_LH];
 
-export const textOpts = (e) => ({ width: e.w, align: e.align, lineGap: (e.lh - PDFKIT_LH) * e.size, characterSpacing: e.ls });
-const baselineShift = (e) => ((e.lh - CONTENT) / 2) * e.size;
+export const textOpts = (e) => ({ width: e.w, align: e.align, lineGap: (e.lh - fm(e.font)[1]) * e.size, characterSpacing: e.ls });
+/*
+ * pdfkit needs room for the space after a line's last word, the browser does not: a line that fills
+ * the box exactly would wrap one word earlier in the PDF. So pdfkit gets one space more width, and
+ * centred / right-aligned text moves back by half / all of it.
+ */
+const hang = (doc, e) => doc.font(e.font).fontSize(e.size).widthOfString(' ') + (e.ls || 0);
+const wrapOpts = (doc, e, w = e.w) => { const sp = hang(doc, e); return { ...textOpts(e), width: w + sp }; };
+/** Text as pdfkit gets it: every paragraph ends in a space, so its last line wraps by the same rule as the others. */
+const ptext = (t) => clean(t).replace(/\n/g, ' \n') + ' ';
+const hangX = (doc, e) => (e.align === 'center' ? hang(doc, e) / 2 : e.align === 'right' ? hang(doc, e) : 0);
+const baselineShift = (e) => ((e.lh - fm(e.font)[0]) / 2) * e.size;
+/** Width of one line of text (no wrapping), as the layouts need for inline highlights. */
+export function lineWidth(doc, e, text = e.text) { doc.font(e.font).fontSize(e.size); return doc.widthOfString(String(text ?? ''), { characterSpacing: e.ls }); }
 
 /** Height a text element needs (used by layouts and for pagination). */
 export function measureText(doc, e) {
   doc.font(e.font).fontSize(e.size);
-  if (!e.list) return doc.heightOfString(clean(e.text) || ' ', textOpts(e));
+  if (!e.list) return doc.heightOfString(ptext(e.text), wrapOpts(doc, e));
   const items = listItems(e.text);
   const ind = listIndent(e);
-  return items.reduce((a, it, i) => a + doc.heightOfString(clean(it) || ' ', { ...textOpts(e), width: e.w - ind }) + (i ? e.gap : 0), 0);
+  return items.reduce((a, it, i) => a + doc.heightOfString(ptext(it), wrapOpts(doc, e, e.w - ind)) + (i ? e.gap : 0), 0);
 }
 export const listItems = (t) => String(t || '').split('\n').map((s) => s.replace(/^\s*[•\-*]\s*/, '').trim()).filter(Boolean);
 export const listIndent = (e) => (e.list === 'icon' ? e.size * 2.3 : e.size * 1.6);
@@ -90,8 +105,8 @@ function drawImage(doc, e) {
   else doc.rect(e.x, e.y, e.w, e.h).clip();
   try {
     if (e.fit === 'fill') doc.image(img, e.x, e.y, { width: e.w, height: e.h });
-    else if (e.fit === 'contain') doc.image(img, e.x, e.y, { fit: [e.w, e.h], align: 'center', valign: 'center' });
-    else doc.image(img, e.x, e.y, { cover: [e.w, e.h], align: 'center', valign: 'center' });
+    else if (e.fit === 'contain') doc.image(img, e.x, e.y, { fit: [e.w, e.h], align: e.ha || 'center', valign: e.va || 'center' });
+    else doc.image(img, e.x, e.y, { cover: [e.w, e.h], align: e.ha || 'center', valign: e.va || 'center' });
   } catch { /* unreadable image: skip */ }
   doc.restore();
 }
@@ -112,9 +127,11 @@ const bulletIcon = () => srcPath('asset:brochure/bullet.png');
 
 function drawText(doc, e) {
   doc.save().opacity(e.opacity).fillColor(e.color).font(e.font).fontSize(e.size);
+  if (e.rot) doc.rotate(e.rot, { origin: [e.x + e.w / 2, e.y + (e.h || e.size * e.lh) / 2] });
   const y0 = e.y + baselineShift(e);
   if (!e.list) {
-    doc.text(clean(e.text), e.x, y0, textOpts(e));
+    if (e.outline) { doc.lineWidth(e.outline).strokeColor(e.color); doc.text(ptext(e.text), e.x - hangX(doc, e), y0, { ...wrapOpts(doc, e), stroke: true, fill: false }); }
+    else doc.text(ptext(e.text), e.x - hangX(doc, e), y0, wrapOpts(doc, e));
   } else {
     const ind = listIndent(e);
     let y = e.y;
@@ -127,8 +144,8 @@ function drawText(doc, e) {
       } else {
         doc.circle(e.x + e.size * 0.45, y + lineH / 2, Math.max(1.6, e.size * 0.14)).fill(e.color);
       }
-      doc.fillColor(e.color).font(e.font).fontSize(e.size).text(clean(it), e.x + ind, y + baselineShift(e), { ...textOpts(e), width: e.w - ind });
-      y += doc.heightOfString(clean(it) || ' ', { ...textOpts(e), width: e.w - ind }) + e.gap;
+      doc.fillColor(e.color).font(e.font).fontSize(e.size).text(ptext(it), e.x + ind, y + baselineShift(e), wrapOpts(doc, e, e.w - ind));
+      y += doc.heightOfString(ptext(it), wrapOpts(doc, e, e.w - ind)) + e.gap;
     }
   }
   doc.restore();

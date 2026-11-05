@@ -12,4 +12,7 @@ export const ICONS = {
   web: { mode: 'stroke', sw: 1.6, prims: [{ t: 'circle', cx: 12, cy: 12, r: 9 }, { t: 'path', d: 'M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18' }] },
   pin: { mode: 'stroke', sw: 1.8, prims: [{ t: 'path', d: 'M12 21s-6.5-6.2-6.5-11A6.5 6.5 0 0 1 18.5 10c0 4.8-6.5 11-6.5 11z' }, { t: 'circle', cx: 12, cy: 10, r: 2.2 }] },
   check: { mode: 'stroke', sw: 2.2, prims: [{ t: 'path', d: 'M4.5 12.5l5 5 10-11' }] },
+  'check-bold': { mode: 'stroke', sw: 2.6, prims: [{ t: 'path', d: 'M5 12.5l4.5 4.5L19 7.5' }] },
+  // Growth Deck services-list arrow (drawn in a 40×20 box; the element's w/h stretch the 24×24 grid).
+  'arrow-bar': { mode: 'fill', prims: [{ t: 'path', d: 'M0 8.4h15.6V0l8.4 12-8.4 12v-8.4H0z' }] },
 };

@@ -19,10 +19,18 @@ export const TINT = '#eaecf8';
 export const FOOT_L = '#5271ff';
 export const FOOT_R = '#758cc2';
 
+/** Font codes used by designs → files in assets/fonts. U* = Unbounded, H* = Hanken Grotesk (the Growth Deck template). */
+export const FONT_FILES = {
+  PB: 'Poppins-Bold.ttf', PS: 'Poppins-SemiBold.ttf', PM: 'Poppins-Medium.ttf', PR: 'Poppins-Regular.ttf',
+  UM: 'Unbounded-Medium.ttf', US: 'Unbounded-SemiBold.ttf',
+  HR: 'HankenGrotesk-Regular.ttf', HM: 'HankenGrotesk-Medium.ttf', HS: 'HankenGrotesk-SemiBold.ttf',
+};
+export const fontPath = (code) => path.join(FONTS, FONT_FILES[code] || FONT_FILES.PR);
+
 export function registerFonts(doc) {
   const have = (f) => fs.existsSync(path.join(FONTS, f));
-  const map = { PB: 'Poppins-Bold.ttf', PS: 'Poppins-SemiBold.ttf', PM: 'Poppins-Medium.ttf', PR: 'Poppins-Regular.ttf' };
-  const fb = { PB: 'Helvetica-Bold', PS: 'Helvetica-Bold', PM: 'Helvetica', PR: 'Helvetica' };
+  const map = FONT_FILES;
+  const fb = { PB: 'Helvetica-Bold', PS: 'Helvetica-Bold', PM: 'Helvetica', PR: 'Helvetica', UM: 'Helvetica-Bold', US: 'Helvetica-Bold', HR: 'Helvetica', HM: 'Helvetica', HS: 'Helvetica-Bold' };
   for (const [k, f] of Object.entries(map)) {
     if (have(f)) doc.registerFont(k, path.join(FONTS, f));
     else doc.registerFont(k, fb[k]);

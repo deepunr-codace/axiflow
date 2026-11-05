@@ -13,6 +13,10 @@ import { writeBrochure, brochureVars, templateBrochure } from './ai/brochure.js'
 import { writeProposalDoc, templateProposal } from './ai/proposal-doc.js';
 import { fillTemplate, chatEdit } from './ai/design-ai.js';
 import { brochureDesign, proposalDesign } from './design/layouts.js';
+import { deckDesign } from './design/deck.js';
+
+/** Built-in brochure layouts by template source: 'builtin-deck' = Codeace Growth Deck (owner's template, 2026-11-05), else the classic layout. */
+const brochureLayout = (tpl, content, s, company) => (tpl?.source === 'builtin-deck' ? deckDesign(content, s, { company }) : brochureDesign(content, s));
 import { renderDesignPdf } from './design/render-pdf.js';
 import { cleanDesign, cloneDesign, fillTokens } from './design/model.js';
 import { getTemplate, defaultTemplate } from './design/templates.js';
@@ -180,7 +184,7 @@ export async function generate(id, { wait = false } = {}) {
         : await writeProposalDoc(doc.input, doc.items, research);
       content = r.content;
       source = r.source;
-      design = doc.kind === 'brochure' ? brochureDesign(content, s) : proposalDesign(content, doc.items, s, { preparedFor: doc.input.company });
+      design = doc.kind === 'brochure' ? brochureLayout(tpl, content, s, doc.input.company) : proposalDesign(content, doc.items, s, { preparedFor: doc.input.company });
     } else {
       const vars = { ...brochureVars(doc.input), contact_name: doc.input.contact_name || '', agency: s.agency.name };
       const base = fillTokens(cloneDesign(tpl.design), vars, tpl.sample_company);
@@ -287,7 +291,7 @@ export async function templatePreview(id) {
   if (t.mode !== 'smart') return t.design;
   const s = getSettings();
   const input = { company: 'Your Client', industry: 'Business', package: s.packages[0].id };
-  if (t.kind === 'brochure') return brochureDesign(templateBrochureCopy(input), s);
+  if (t.kind === 'brochure') return brochureLayout(t, templateBrochureCopy(input), s, input.company);
   return proposalDesign(templateProposalCopy(input), defaultItems(input), s, { preparedFor: 'Your Client' });
 }
 const templateBrochureCopy = (input) => templateBrochure(input, getSettings().brochure.services.map((x) => x.id));

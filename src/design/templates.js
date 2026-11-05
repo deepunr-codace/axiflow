@@ -28,8 +28,14 @@ const parse = (j) => { try { return j ? JSON.parse(j) : null; } catch { return n
 
 export async function seedTemplates() {
   await run(`UPDATE design_templates SET name = REPLACE(name, 'Axilume', 'Codeace') WHERE source = 'builtin' AND name LIKE 'Axilume%'`); // agency renamed 2026-11-04
+  // Codeace Growth Deck (owner's brochure template, 2026-11-05): added once and made the default brochure template.
+  if (!await get(`SELECT 1 FROM design_templates WHERE kind = 'brochure' AND source = 'builtin-deck'`)) {
+    const now = nowISO();
+    const id = await insert('design_templates', { kind: 'brochure', name: 'Codeace Growth Deck', mode: 'smart', source: 'builtin-deck', is_default: 0, created_at: now, updated_at: now });
+    await run(`UPDATE design_templates SET is_default = CASE WHEN id = :id THEN 1 ELSE 0 END WHERE kind = 'brochure'`, { id });
+  }
   for (const kind of ['brochure', 'proposal']) {
-    if (!await get(`SELECT 1 FROM design_templates WHERE kind = :kind AND mode = 'smart'`, { kind })) {
+    if (!await get(`SELECT 1 FROM design_templates WHERE kind = :kind AND mode = 'smart' AND source = 'builtin'`, { kind })) {
       const now = nowISO();
       const anyDefault = await get(`SELECT 1 FROM design_templates WHERE kind = :kind AND is_default = 1`, { kind });
       await insert('design_templates', { kind, name: kind === 'brochure' ? 'Codeace Default Brochure' : 'Codeace Default Proposal', mode: 'smart', source: 'builtin', is_default: anyDefault ? 0 : 1, created_at: now, updated_at: now });

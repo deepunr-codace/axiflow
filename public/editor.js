@@ -1,8 +1,9 @@
 // Canva-style design editor for brochures and proposals (vanilla JS).
 // Pages are arrays of positioned elements; the server renders the same data to PDF.
 
-const FONT_W = { PR: 400, PM: 500, PS: 600, PB: 700 };
-const FONT_NAMES = { PR: 'Regular', PM: 'Medium', PS: 'SemiBold', PB: 'Bold' };
+const FONT_W = { PR: 400, PM: 500, PS: 600, PB: 700, UM: 500, US: 600, HR: 400, HM: 500, HS: 600 };
+const FONT_FAMILY = { UM: 'Unbounded', US: 'Unbounded', HR: '"Hanken Grotesk"', HM: '"Hanken Grotesk"', HS: '"Hanken Grotesk"' };
+const FONT_NAMES = { PR: 'Poppins Regular', PM: 'Poppins Medium', PS: 'Poppins SemiBold', PB: 'Poppins Bold', UM: 'Unbounded Medium', US: 'Unbounded SemiBold', HR: 'Hanken Regular', HM: 'Hanken Medium', HS: 'Hanken SemiBold' };
 const CONTENT = 1.4;
 let META = null;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -32,9 +33,10 @@ function textInner(e) {
   const box = document.createElement('div');
   box.className = 'txt';
   Object.assign(box.style, {
-    fontFamily: 'Poppins, sans-serif', fontWeight: FONT_W[e.font] || 400, fontSize: `${e.size}px`, lineHeight: String(e.lh),
+    fontFamily: `${FONT_FAMILY[e.font] || 'Poppins'}, sans-serif`, fontWeight: FONT_W[e.font] || 400, fontSize: `${e.size}px`, lineHeight: String(e.lh),
     letterSpacing: `${e.ls}px`, color: e.color, textAlign: e.align,
   });
+  if (e.outline) Object.assign(box.style, { color: 'transparent', webkitTextStroke: `${e.outline}px ${e.color}` });
   if (!e.list) { box.textContent = e.text; return box; }
   const ind = e.list === 'icon' ? e.size * 2.3 : e.size * 1.6;
   const lineH = e.lh * e.size;
@@ -80,9 +82,9 @@ function elementNode(e, items) {
   el.dataset.id = e.id;
   Object.assign(el.style, { left: `${e.x}px`, top: `${e.y}px`, width: `${e.w}px`, opacity: e.opacity ?? 1 });
   if (e.type !== 'text' && e.type !== 'pricing') el.style.height = `${e.h}px`;
-  if (e.type === 'text') el.append(textInner(e));
+  if (e.type === 'text') { el.append(textInner(e)); if (e.rot) el.style.transform = `rotate(${e.rot}deg)`; }
   else if (e.type === 'image') {
-    Object.assign(el.style, { backgroundImage: e.src ? `url("${fileUrl(e.src)}")` : 'none', backgroundSize: e.fit === 'fill' ? '100% 100%' : e.fit, backgroundPosition: 'center', backgroundRepeat: 'no-repeat', borderRadius: `${e.radius}px` });
+    Object.assign(el.style, { backgroundImage: e.src ? `url("${fileUrl(e.src)}")` : 'none', backgroundSize: e.fit === 'fill' ? '100% 100%' : e.fit, backgroundPosition: `${e.ha || 'center'} ${e.va || 'center'}`, backgroundRepeat: 'no-repeat', borderRadius: `${e.radius}px` });
     if (!e.src) el.classList.add('empty-img');
   } else if (e.type === 'shape') {
     const bg = e.gradient ? `linear-gradient(${e.gradient.angle}deg, ${e.gradient.stops.map(([o, c, a]) => `${rgba(c, a)} ${o * 100}%`).join(', ')})` : e.fill === 'none' ? 'transparent' : e.fill;
@@ -116,7 +118,7 @@ export function thumb(page, width, items) {
 // ======================================================================= editor
 export async function openEditor(root, { doc, api, toast, busy, modal, onChange }) {
   await loadMeta(api);
-  await document.fonts.load('700 20px Poppins').catch(() => {});
+  await Promise.all(['700 20px Poppins', '600 20px Unbounded', '500 20px Unbounded', '400 20px "Hanken Grotesk"', '500 20px "Hanken Grotesk"', '600 20px "Hanken Grotesk"'].map((f) => document.fonts.load(f).catch(() => {})));
   const S = {
     design: doc.design, items: doc.items, page: 0, sel: null, scale: 1, fitMode: true,
     history: [], future: [], saveTimer: null, editing: null, chat: doc.chat || [],
@@ -257,7 +259,7 @@ export async function openEditor(root, { doc, api, toast, busy, modal, onChange 
     let html = '';
     if (e.type === 'text') {
       html = `<h3>Text</h3>
-        <div class="ed-grid"><label>Weight<select data-k="font">${Object.entries(FONT_NAMES).map(([k, n]) => `<option value="${k}" ${k === e.font ? 'selected' : ''}>${n}</option>`).join('')}</select></label>${num('Size', 'size', e.size, 0.5)}</div>
+        <div class="ed-grid"><label>Font<select data-k="font">${Object.entries(FONT_NAMES).map(([k, n]) => `<option value="${k}" ${k === e.font ? 'selected' : ''}>${n}</option>`).join('')}</select></label>${num('Size', 'size', e.size, 0.5)}</div>
         ${colorField('Colour', 'color', e.color)}
         <div class="row ed-row seg ed-align">${['left', 'center', 'right'].map((a) => `<button data-align="${a}" class="${e.align === a ? 'on' : ''}">${a}</button>`).join('')}</div>
         <div class="ed-grid">${num('Line height', 'lh', e.lh, 0.05)}${num('Letter spacing', 'ls', e.ls, 0.1)}</div>
