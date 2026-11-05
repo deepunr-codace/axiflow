@@ -25,6 +25,14 @@ export function claudeMissing() {
   return m;
 }
 export const claudeOn = (s = getSettings()) => !!s.claude?.mode && !claudeMissing().length;
+/**
+ * The server that owns Claude jobs: the live site (https BASE_URL). A local dev server shares the database
+ * but must never send, retry or give up jobs (found live 2026-11-05: a local server with an empty token
+ * re-sent a waiting job three times with no credentials).
+ */
+export const claudeHost = () => /^https:/.test(BASE_URL);
+/** Claude mode is on but this live server is missing setup: the document waits with an error instead of being written in-app. */
+export const claudeBroken = (s = getSettings()) => !!s.claude?.mode && claudeHost() && claudeMissing().length > 0;
 
 async function dispatch(doc, claude) {
   const s = getSettings();
@@ -45,7 +53,9 @@ async function dispatch(doc, claude) {
  */
 export async function dispatchJob(doc, job, ctx = {}, { attempt = 1 } = {}) {
   const claude = { waiting: true, job, ctx, attempts: attempt, dispatched_at: nowISO(), last_error: null, run_url: null };
-  try { claude.run_url = await dispatch(doc, claude); } catch (e) { claude.last_error = e.message; }
+  const missing = claudeMissing();
+  if (missing.length) claude.last_error = `Claude mode is on but this server is missing: ${missing.join('; ')}`;
+  else try { claude.run_url = await dispatch(doc, claude); } catch (e) { claude.last_error = e.message; }
   await saveClaude(doc.id, { ...doc.input, claude });
   await logEvent(doc.lead_id ?? null, 'claude', job.kind, claude.last_error ? 'error' : 'ok', claude.last_error || `doc #${doc.id} sent to Claude Code (try ${attempt})`);
   return claude;
@@ -106,6 +116,7 @@ async function giveUp(doc, why) {
 /** Cron / every request: re-send jobs Claude has not answered in time; give up after the last try. */
 let lastSweep = 0;
 export async function retryStale({ force = false } = {}) {
+  if (!claudeOn()) return 0; // only the live, fully set up server handles Claude jobs
   if (!force && Date.now() - lastSweep < 60000) return 0;
   lastSweep = Date.now();
   const s = getSettings();

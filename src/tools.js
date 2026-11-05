@@ -17,7 +17,7 @@ import { classicDesign } from './design/deck.js';
 import { editorialDesign } from './design/editorial.js';
 import { contentToData } from './design/brochure-data.js';
 import { buildBrief, generateDeckData, deckJob } from './ai/brochure-deck.js';
-import { claudeOn, dispatchJob, claudeState } from './claude-worker.js';
+import { claudeOn, claudeBroken, dispatchJob, claudeState } from './claude-worker.js';
 
 /**
  * Built-in brochure layouts by template source: 'builtin-deck' = Codeace Growth Deck (classic design),
@@ -270,7 +270,9 @@ export async function generate(id, { wait = false } = {}) {
   await startJob(id, async () => {
     const doc = await getDoc(id);
     const s = getSettings();
-    if (claudeOn(s) && await sendToClaude(doc, s)) return 'waiting'; // Claude mode: Claude Code writes it, the callback finishes it
+    // Claude mode: Claude Code writes it and the callback finishes it. On the live site a missing setup does not fall back
+    // to the in-app AI (owner's choice): the job waits with the error and is retried. A local dev server writes in-app.
+    if ((claudeOn(s) || claudeBroken(s)) && await sendToClaude(doc, s)) return 'waiting';
     if (doc.kind === 'script') {
       const [research, audit] = await Promise.all([researchFor(doc), auditWebsite(normalizeUrl(doc.input.website)).catch(() => null)]);
       const r = await writeScript(doc.input, research, audit);
