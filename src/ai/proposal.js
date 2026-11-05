@@ -20,32 +20,10 @@ const SCHEMA = obj({
   next_steps: arr(str('max 3 short steps, the first is replying YES')),
 });
 
+/** The old pipeline's proposal text: standard template only (the in-app AI writer was removed, owner 2026-11-05). */
 export async function writeProposal(lead, items) {
   const s = getSettings();
   const pkg = s.packages.find((p) => p.id === lead.recommended_package) || s.packages[0];
-  if (aiEnabled()) {
-    try {
-      const notes = await all(`SELECT title, body FROM activities WHERE lead_id = :id AND type IN ('note','message_in') ORDER BY id DESC LIMIT 10`, { id: lead.id });
-      const research = lead.research_json ? JSON.parse(lead.research_json) : null;
-      const content = await runJson({
-        purpose: 'proposal', leadId: lead.id, effort: s.ai.effort_writing, schema: SCHEMA, maxTokens: 12000,
-        system: managerSystem('write a client proposal document'),
-        prompt: `Write the proposal for this client. It will be laid out as a PDF; pricing is added separately from the line items below, so do not write any prices or totals.
-
-${leadContext(lead, { messages: [] })}
-
-Line items being quoted (fixed by us): ${items.map((i) => `${i.name} (x${i.qty}): ${i.detail}`).join('; ')}
-Package timeline: ${pkg.timeline}. Payment: ${s.billing.advance_pct}% advance, balance on delivery.
-Research summary: <untrusted>${research?.business_summary || 'n/a'}</untrusted>
-Recent notes and messages: <untrusted>${notes.map((n) => `${n.title}: ${String(n.body || '').slice(0, 300)}`).join(' | ') || 'none'}</untrusted>
-
-Be specific to their business, warm and confident. Timeline phases must add up to the package timeline.`,
-      });
-      return { content, source: 'ai' };
-    } catch {
-      /* fall through to the template */
-    }
-  }
   return { content: fallbackProposal(lead, items, pkg, s), source: 'template' };
 }
 

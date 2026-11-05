@@ -70,14 +70,12 @@ Language: write the script in ${input.language || 'English'}${/letters/.test(inp
 }
 export const postScript = (content, input, audit) => repair(content || {}, templateScript(input, audit));
 
+/**
+ * Without Claude: the standard script for the vertical. The in-app AI writer was removed (owner, 2026-11-05:
+ * "remove old logics"); Claude mode writes scripts (claudeScriptJob in src/ai/claude-jobs.js).
+ */
 export async function writeScript(input, research, audit) {
-  if (!aiEnabled()) return { content: templateScript(input, audit), source: 'template' };
-  try {
-    const content = await runJson(scriptJob(input, research, audit));
-    return { content: postScript(content, input, audit), source: 'ai' };
-  } catch (e) {
-    return { content: templateScript(input, audit), source: 'template', error: e.message };
-  }
+  return { content: templateScript(input, audit), source: 'template' };
 }
 
 /**

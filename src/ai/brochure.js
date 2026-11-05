@@ -62,24 +62,6 @@ function schema(serviceIds) {
   });
 }
 
-/** The AI job for the classic brochure copy (in-app or Claude mode). postBrochure() merges the answer over the agency copy. */
-export function brochureJob(input, selected, research = null) {
-  const base = templateBrochure(input, selected);
-  const s = getSettings();
-  return {
-    kind: 'brochure', purpose: 'brochure', effort: s.ai.effort_writing, schema: schema(selected), maxTokens: 16000,
-    system: managerSystem('write the copy for a client-specific digital growth brochure'),
-    prompt: `Write brochure copy for this prospective client. Keep the agency's voice: confident, warm, plain English, no hype, no invented facts about the client.
-
-Client: ${input.company} · Industry: ${input.industry || 'unknown'} · City: ${input.city || 'unknown'} · Website: ${input.website || 'none'}
-Contact: ${input.contact_name || 'unknown'} · Notes from our team: <untrusted>${input.notes || 'none'}</untrusted>
-Research: <untrusted>${research ? JSON.stringify({ summary: research.business_summary, sells: research.what_they_sell, customers: research.target_customers, online: research.online_presence, pain_points: research.pain_points }) : 'none'}</untrusted>
-
-Our agency copy to adapt (keep its meaning, tailor the wording to this client):
-${JSON.stringify({ about: base.about, services: base.services.map((sv) => ({ id: sv.id, name: sv.name, paragraphs: sv.paragraphs, bullets: sv.bullets })), why: base.why_paragraphs })}`,
-  };
-}
-
 export function postBrochure(out, input, selected) {
   const base = templateBrochure(input, selected);
   out = out || {};
@@ -100,12 +82,7 @@ export function postBrochure(out, input, selected) {
 }
 
 /** Writes the brochure with the AI, falling back to the template on any failure. Returns { content, source }. */
+/** Without Claude: the agency copy with the client filled in (the in-app AI writer was removed, owner 2026-11-05). */
 export async function writeBrochure(input, selected, research = null) {
-  if (!aiEnabled()) return { content: templateBrochure(input, selected), source: 'template' };
-  try {
-    const out = await runJson(brochureJob(input, selected, research));
-    return { content: postBrochure(out, input, selected), source: 'ai' };
-  } catch (e) {
-    return { content: templateBrochure(input, selected), source: `template (AI failed: ${e.message})`.slice(0, 200) };
-  }
+  return { content: templateBrochure(input, selected), source: 'template' };
 }

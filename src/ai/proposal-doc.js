@@ -94,13 +94,7 @@ export function postProposal(content, input, items) {
   return { ...base, ...keep };
 }
 
+/** Without Claude: the standard proposal for the package (the in-app AI writer was removed, owner 2026-11-05). */
 export async function writeProposalDoc(input, items, research = null) {
-  const base = templateProposal(input, items);
-  if (!aiEnabled()) return { content: base, source: 'template' };
-  try {
-    const content = await runJson(proposalJob(input, items, research));
-    return { content: postProposal(content, input, items), source: 'ai' };
-  } catch (e) {
-    return { content: base, source: `template (AI failed: ${e.message})`.slice(0, 200) };
-  }
+  return { content: templateProposal(input, items), source: 'template' };
 }

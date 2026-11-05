@@ -1,7 +1,6 @@
 import { getSettings } from '../settings.js';
-import { runJson, aiEnabled } from './claude.js';
 import { ASSETS, agencyFacts } from '../design/brochure-data.js';
-import { PROMPT_VERSION, STAGE_LAYERS, buildMessages, systemPrompt, contextLayer, taskLayer, BROCHURE_SCHEMA, CONCEPTS_SCHEMA, CRITIQUE_SCHEMA, BrochureOutputError, parseConcepts, parseCritique, parseModelOutput, toBrochureData } from './brochure-deck-core.js';
+import { PROMPT_VERSION, buildMessages, systemPrompt, contextLayer, taskLayer, BROCHURE_SCHEMA, parseModelOutput, toBrochureData } from './brochure-deck-core.js';
 export * from './brochure-deck-core.js';
 
 /*
@@ -9,17 +8,12 @@ export * from './brochure-deck-core.js';
  * (Downloads/files (1)/brochure-template/components/brochure/ai: brief.ts, schemas.ts, prompt/layers.ts,
  * prompt/assemble.ts, brochure-ai.ts, generate.ts; docs/PROMPTS.md), 2026-11-05.
  *
- * The model invents the concept, writes the copy and picks the palette, images and layouts; the brief
- * supplies the facts (names, contact details, numbers, image files) and code merges those in. Stages:
- *   1 concepts  three directions, the model recommends one
- *   2 brochure  full copy + art direction on that concept
- *   3 critique  a critic scores the draft (settings.brochure_ai.critic_model, optional)
- *   4 repair    one round for the critic's notes and text that overflows the layout
- * "single" runs stage 2 (+ 4 for overflow only). Runs through runJson (OpenRouter or Claude, structured
- * output). Guard rails: stats not in the brief are removed, unknown image ids dropped, highlights checked.
- * Any failure → the caller falls back to the rule-based copy (contentToData).
+ * Claude (Claude mode, on GitHub) invents the concept, writes the copy and picks the palette, images and layouts;
+ * the brief supplies the facts (names, contact details, numbers, image files) and code merges those in.
+ * deckJob() = the brochure-stage prompt plus the concepts → draft → critique → repair process for one session;
+ * postDeck() = the guard rails (stats not in the brief removed, unknown image ids dropped, highlights checked).
+ * Without Claude the brochure is the rule-based copy (contentToData).
  */
-const BUDGET_MS = 240000; // a document job has ~300 s on Vercel
 
 // =============================================================== the brief
 /** BrochureBrief from a tool document's input (CRM lead) + Tool settings. */
@@ -41,61 +35,8 @@ export function buildBrief(input, { design = '', research = null, settings = get
   };
 }
 
-// =============================================================== the pipeline
-async function call(stage, built, schema, parse, opts, trace) {
-  const t0 = Date.now();
-  const ask = (messages) => runJson({
-    purpose: `brochure_${stage}`, leadId: opts.leadId, system: built.system, messages, schema, effort: 'medium', maxTokens: 16000,
-    temperature: opts.temperatures?.[stage], model: stage === 'critique' ? opts.criticModel || undefined : undefined,
-    timeoutMs: Math.max(20000, opts.deadline - Date.now()),
-  });
-  let value;
-  try { value = parse(await ask(built.messages)); } catch (e) {
-    // one more try when the reply was unusable (invalid JSON or missing parts)
-    if (!(e instanceof BrochureOutputError) && !/invalid JSON/i.test(e.message)) throw e;
-    if (Date.now() > opts.deadline - 30000) throw e;
-    value = parse(await ask([...built.messages, { role: 'user', content: `${e.message} Return the complete JSON matching the schema, with nothing else.` }]));
-  }
-  trace.push({ stage, ms: Date.now() - t0, layers: STAGE_LAYERS[stage] });
-  return value;
-}
-
-/**
- * The whole brochure from a brief. Returns { data, design, concept, concepts, critique, issues, removed, trace, source }.
- * Throws when AI is off or the brochure stage fails (callers fall back to the rule-based copy).
- */
-export async function generateDeckData(brief, opts = {}) {
-  if (!aiEnabled()) throw new Error('AI is off');
-  const s = getSettings();
-  const staged = (opts.pipeline || s.brochure_ai?.pipeline || 'staged') === 'staged';
-  const o = { temperatures: { concepts: 1.1, brochure: 0.9, critique: 0.2 }, criticModel: s.brochure_ai?.critic_model || '', ...opts, deadline: Date.now() + (opts.budgetMs || BUDGET_MS) };
-  const trace = [];
-  const left = () => o.deadline - Date.now();
-
-  let concepts, concept = opts.concept;
-  if (!concept && staged) {
-    try { concepts = await call('concepts', buildMessages('concepts', { brief }), CONCEPTS_SCHEMA, parseConcepts, o, trace); concept = concepts.concepts[concepts.chosenIndex]; }
-    catch (e) { trace.push({ stage: 'concepts', error: e.message }); }
-  }
-  const draft = await call('brochure', buildMessages('brochure', { brief, concept }), BROCHURE_SCHEMA, parseModelOutput, o, trace);
-  let result = toBrochureData(draft, brief);
-  const draftJson = JSON.stringify(draft);
-
-  let critique;
-  if (staged && left() > 90000) {
-    try { critique = await call('critique', buildMessages('critique', { brief, concept, draftJson }), CRITIQUE_SCHEMA, parseCritique, o, trace); }
-    catch (e) { trace.push({ stage: 'critique', error: e.message }); }
-  }
-  const overflow = result.issues.filter((i) => i.level === 'error' || i.level === 'warning');
-  if ((overflow.length || critique?.verdict === 'revise') && opts.repair !== false && left() > 75000) {
-    try {
-      const repaired = await call('repair', buildMessages('repair', { brief, concept, draftJson, issues: overflow, critique }), BROCHURE_SCHEMA, parseModelOutput, o, trace);
-      const next = toBrochureData(repaired, brief);
-      if (next.issues.length <= result.issues.length) result = next; // keep the revision unless it made the layout worse
-    } catch (e) { trace.push({ stage: 'repair', error: e.message }); }
-  }
-  return { ...result, concepts, critique, concept: result.concept || concept, trace: { promptVersion: PROMPT_VERSION, stages: trace }, source: 'ai' };
-}
+// The in-app staged pipeline (concepts → brochure → critique → repair with runJson) was removed (owner, 2026-11-05:
+// "remove old logics"); Claude mode runs the same process in one session (deckJob below).
 
 /** The assembled prompts of every stage for a brief, for review (Tool settings → "See the AI prompts"). */
 export function promptPreview(brief) {

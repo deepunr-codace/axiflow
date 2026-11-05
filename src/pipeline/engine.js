@@ -11,7 +11,7 @@ import { sendToLead, inSendWindow } from './messenger.js';
 import { logEvent, addActivity, addTask } from './log.js';
 import { crmEvent } from '../crm-sync.js';
 import { aiEnabled } from '../ai/claude.js';
-import { researchLead, fallbackResearch, buildPitch, fallbackPitch, buildDesign, fallbackDesign } from '../ai/pitchmaker.js';
+import { fallbackPitch } from '../ai/pitchmaker.js';
 import { composeMessage, analyzeReply, planNextAction, classifyReplyRules } from '../ai/manager.js';
 import { writeProposal } from '../ai/proposal.js';
 import { brochureUrl, brochureAttachment, proposalUrl, proposalAttachment } from '../pdf/docs.js';
@@ -212,16 +212,11 @@ async function step(lead, { force }) {
       await setStage(lead, 'researching', 'pitch maker started');
       return true;
     case 'researching': {
-      if ((await import('../claude-worker.js')).claudeOn()) {
-        // Claude mode (owner, 2026-11-05: "fully automated at high speed"): Claude researches and writes, so the brochure
-        // job goes out first; the in-app pitch maker then runs rule-based (no AI calls, no homepage design), only for the
-        // messages; a ready call script is kept instead of writing a second one.
-        await runLeadTools(lead.id, { script: !(await tools.latestLeadDoc('script', lead.id)) });
-        await runPitchMaker(lead.id, { design: false, ai: false });
-      } else {
-        await runPitchMaker(lead.id);
-        await runLeadTools(lead.id);
-      }
+      // Owner, 2026-11-05 ("high speed", "remove old logics"): the brochure job goes out first (Claude writes it in Claude
+      // mode); the pitch maker is rule-based (no AI, no homepage design) and only feeds the messages; a ready call script
+      // is kept instead of writing a second one.
+      await runLeadTools(lead.id, { script: !(await tools.latestLeadDoc('script', lead.id)) });
+      await runPitchMaker(lead.id);
       if (auto.auto_approve_brochure) await approveBrochure(lead.id, 'auto');
       else {
         await setStage(await getLead(lead.id), 'brochure_ready', 'pitch, design & brochure ready for approval');
@@ -404,62 +399,20 @@ async function runTouch(lead) {
 
 // ------------------------------------------------------------- pitch maker
 
-/**
- * Pitch maker: web research → pitch → homepage design concept → brochure.
- * Uses Claude when available; otherwise rule-based fallbacks so the pipe never stalls.
- */
-export async function runPitchMaker(id, { design = true, ai = true } = {}) {
+/** Rule-based pitch for the messages (the in-app AI research, pitch and homepage designer were removed, owner 2026-11-05). */
+export async function runPitchMaker(id) {
   const s = getSettings();
   const lead = await getLead(id);
   const audit = lead.audit_json ? JSON.parse(lead.audit_json) : null;
-  const useAi = ai && aiEnabled();
-
-  let research;
-  try {
-    research = useAi ? await researchLead(lead, audit) : fallbackResearch(lead, audit);
-  } catch (e) {
-    await logEvent(id, 'pitch_maker', 'research', 'error', e.message);
-    research = fallbackResearch(lead, audit);
-  }
-  const scorePatch = {};
-  if (research.source === 'ai' && Number.isFinite(research.fit_score)) {
-    scorePatch.score = Math.round((lead.score + Math.max(0, Math.min(100, research.fit_score))) / 2);
-  }
-  await update('leads', id, { research_json: research, ...scorePatch, updated_at: nowISO() });
-  await addActivity(id, 'system', `Web research done (${research.source}, ${research.sources?.length || 0} sources)`, research.business_summary);
-  await logEvent(id, 'pitch_maker', 'research', 'ok', `${research.source}, ${research.sources?.length || 0} sources, fit ${research.fit_score}`);
-
-  let pitch;
-  try {
-    pitch = useAi ? await buildPitch(await getLead(id), research) : fallbackPitch(await getLead(id), audit);
-  } catch (e) {
-    await logEvent(id, 'pitch_maker', 'pitch', 'error', e.message);
-    pitch = fallbackPitch(await getLead(id), audit);
-  }
+  const pitch = fallbackPitch(await getLead(id), audit);
   const prev = (() => { try { return lead.pitch_json ? JSON.parse(lead.pitch_json) : null; } catch { return null; } })();
-  if (prev?.telecaller_script && !useAi) pitch.telecaller_script = prev.telecaller_script; // keep the call script the tools made
+  if (prev?.telecaller_script) pitch.telecaller_script = prev.telecaller_script; // keep the call script the tools made
   await update('leads', id, { pitch_json: pitch, pitch_source: pitch.source, recommended_package: pitch.recommended_package, updated_at: nowISO() });
   await logEvent(id, 'pitch_maker', 'pitch', 'ok', `${pitch.source}: ${pitch.headline}`);
 
-  if (design) await runDesign(id, research, pitch);
   await generateBrochure(id);
   await addActivity(id, 'system', `Pitch ready (${pitch.source}): ${pitch.headline}`, `Hook: ${pitch.hook}\nPackage: ${pitch.recommended_package}. ${pitch.package_reason}`);
   await crmEvent(id, 'lead.pitch_ready', { headline: pitch.headline, package: pitch.recommended_package, source: pitch.source });
-}
-
-export async function runDesign(id, research = null, pitch = null) {
-  const s = getSettings();
-  const lead = await getLead(id);
-  research ??= lead.research_json ? JSON.parse(lead.research_json) : fallbackResearch(lead, null);
-  pitch ??= lead.pitch_json ? JSON.parse(lead.pitch_json) : fallbackPitch(lead, null);
-  let html, source = 'template';
-  if (aiEnabled() && s.ai.design_enabled) {
-    try { html = await buildDesign(lead, research, pitch); source = 'ai'; } catch (e) { await logEvent(id, 'pitch_maker', 'design', 'error', e.message); }
-  }
-  html ??= fallbackDesign(lead, pitch);
-  await update('leads', id, { design_html: html, design_version: (lead.design_version || 0) + 1, updated_at: nowISO() });
-  await logEvent(id, 'pitch_maker', 'design', 'ok', `${source} v${(lead.design_version || 0) + 1}, ${Math.round(html.length / 1024)}KB`);
-  await addActivity(id, 'system', `Homepage design concept v${(lead.design_version || 0) + 1} created (${source})`);
 }
 
 // ----------------------------------------------------------------- brochure

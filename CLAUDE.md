@@ -38,6 +38,14 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - **Found:** lead 10 had `website = amazon.com` and Codeace's fallback research (CRM id reuse), and AxiFlow's own "Brochure ready…" deal notes were sent as team notes.
   - **Fixed:** the CRM website wins (empty = no website check); `usableResearch()` drops fallback research or research about another business; `OWN_NOTE` filter, dedupe, and notes under 4 characters skipped.
   - **Still open:** Claude docs #39, #42, #43 were written with the Amazon website findings, so regenerate them (offered to the owner). AxiFlow's own `leads.website` for lead 10 is still amazon.com, which the in-app path still uses.
+- **Old in-app AI writing removed** (owner: "remove old logics"; chose "In-app AI writing" and "Delete the data too"):
+  - `writeScript`, `writeBrochure`, `writeProposalDoc` and the old pipeline's `writeProposal` are standard-template only; `generateDeckData` (the in-app staged deck pipeline) and `brochureJob` are gone;
+  - imported PDF templates get token fill only (no `fillTemplate` AI);
+  - in-app web research (`maybeResearch`) is gone;
+  - the pitch maker is rule-based (`fallbackPitch`), with no research step and no homepage designer (`runDesign` removed; the API `redesign` action answers an error);
+  - Claude mode writes everything. Without it (mode off or a local dev server) documents are the standard templates.
+  - **Kept:** the editor's AI assistant (`chatEdit`), the manager briefing, and the job builders and post-processors Claude uses.
+  - **Data** (backup `data/backup-2026-11-05T16-20-46-163Z.json`): 31 `ai_calls` rows of the removed writers deleted; `leads.research_json` cleared (3, including Codeace's on lead 10); `design_html` / `design_version` cleared (3).
 - **Speed** (owner: "make it fully automated at high speed"):
   - an interested lead in Claude mode dispatches the brochure first; `runPitchMaker(id, { design: false, ai: false })` runs rule-based afterwards and keeps the existing `telecaller_script`; no second script when one exists;
   - the workflow caches the Claude Code npm install (`actions/cache` on `~/.npm`, weekly key) and runs `claude -p`; job timeout 12 min;

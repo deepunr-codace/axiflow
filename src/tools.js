@@ -7,16 +7,14 @@ import { addActivity } from './pipeline/log.js';
 import { crmEvent } from './crm-sync.js';
 import { getSettings } from './settings.js';
 import { nowISO, token, normalizeUrl, BASE_URL } from './util.js';
-import { aiEnabled } from './ai/claude.js';
-import { researchLead } from './ai/pitchmaker.js';
-import { writeBrochure, brochureJob, brochureVars, templateBrochure } from './ai/brochure.js';
+import { writeBrochure, brochureVars, templateBrochure } from './ai/brochure.js';
 import { writeProposalDoc, proposalJob, templateProposal } from './ai/proposal-doc.js';
-import { fillTemplate, chatEdit } from './ai/design-ai.js';
+import { chatEdit } from './ai/design-ai.js';
 import { brochureDesign, proposalDesign } from './design/layouts.js';
 import { classicDesign } from './design/deck.js';
 import { editorialDesign } from './design/editorial.js';
 import { contentToData } from './design/brochure-data.js';
-import { buildBrief, generateDeckData, deckJob } from './ai/brochure-deck.js';
+import { buildBrief, deckJob } from './ai/brochure-deck.js';
 import { claudeOn, claudeBroken, dispatchJob, claudeState } from './claude-worker.js';
 import { claudeScriptJob, claudeProposalJob } from './ai/claude-jobs.js';
 
@@ -32,20 +30,8 @@ const brochureLayout = (tpl, content, s, company) => {
   const design = deckOf(tpl);
   return design ? drawDeck(design, contentToData(content, s, { company, design })) : brochureDesign(content, s);
 };
-/**
- * Deck brochures: the AI pipeline writes the whole deck (concepts → brochure → critique → repair); without AI,
- * or when it fails, the brochure copy + agency defaults are mapped onto the same data contract.
- */
+/** Deck brochures without Claude: the agency copy mapped onto the deck data contract (no AI). */
 async function writeDeck(doc, design, research, s) {
-  if (s.brochure_ai?.enabled !== false && aiEnabled()) {
-    try {
-      const r = await generateDeckData(buildBrief(doc.input, { design, research, settings: s }), { leadId: doc.lead_id });
-      return { content: { deck: { design, data: r.data, concept: r.concept, concepts: r.concepts, critique: r.critique, issues: r.issues, removed: r.removed, trace: r.trace } }, source: 'ai' };
-    } catch (e) {
-      const w = await writeBrochure(doc.input, doc.input.services, research);
-      return { content: { ...w.content, deck: { design, data: contentToData(w.content, s, { company: doc.input.company, design }), fallback: e.message } }, source: `${w.source} (deck AI failed: ${e.message})`.slice(0, 200) };
-    }
-  }
   const w = await writeBrochure(doc.input, doc.input.services, research);
   return { content: { ...w.content, deck: { design, data: contentToData(w.content, s, { company: doc.input.company, design }) } }, source: w.source };
 }
@@ -63,15 +49,6 @@ addColumns('docs', { design_json: 'TEXT', template_id: 'INTEGER', chat_json: 'TE
 const parse = (j, fb = null) => { try { return j ? JSON.parse(j) : fb; } catch { return fb; } };
 const str = (v, max = 2000) => String(v ?? '').trim().slice(0, max);
 
-function pseudoLead(input) {
-  return {
-    id: null, token: '', company: input.company, contact_name: input.contact_name || '',
-    industry: input.industry || null, city: input.city || null, website: normalizeUrl(input.website),
-    notes: input.notes || null, recommended_package: input.package || null, service: input.package || null,
-    stage: 'tool', pipe: 'conversion', interested: 'yes', score: 0, attempts: 0,
-    wa_opt_in: 0, email_opt_in: 0, phone_valid: 0, email_valid: 0,
-  };
-}
 
 const FIELDS = ['company', 'contact_name', 'industry', 'city', 'website', 'package', 'notes', 'research', 'vertical', 'language', 'phone'];
 export const KINDS = ['brochure', 'proposal', 'script'];
@@ -175,10 +152,8 @@ async function researchFor(doc) {
   }
   return maybeResearch(doc.input);
 }
-async function maybeResearch(input) {
-  if (!input.research || !aiEnabled()) return null;
-  try { return await researchLead(pseudoLead(input), null); } catch { return null; }
-}
+// In-app web research was removed (owner, 2026-11-05): Claude Code researches the business itself.
+async function maybeResearch() { return null; }
 
 /** Splits the package price into the configured modules (rounded to ₹1,000; last module takes the rest). */
 export function defaultItems(input) {
@@ -341,13 +316,14 @@ export async function generate(id, { wait = false } = {}) {
   await startJob(id, async () => {
     const doc = await getDoc(id);
     const s = getSettings();
-    // Claude mode: Claude Code writes it and the callback finishes it. On the live site a missing setup does not fall back
-    // to the in-app AI (owner's choice): the job waits with the error and is retried. A local dev server writes in-app.
+    // Claude mode: Claude Code writes it and the callback finishes it. On the live site a missing setup waits with the
+    // error and is retried. Otherwise (Claude mode off, or a local dev server) the standard templates are used; there is
+    // no in-app AI writer any more (owner, 2026-11-05: "remove old logics").
     if ((claudeOn(s) || claudeBroken(s)) && await sendToClaude(doc, s)) return 'waiting';
     if (doc.kind === 'script') {
       const [research, audit] = await Promise.all([researchFor(doc), auditWebsite(normalizeUrl(doc.input.website)).catch(() => null)]);
       const r = await writeScript(doc.input, research, audit);
-      await update('docs', id, { content_json: r.content, source: r.source, error: r.error ? `AI failed, used the standard script: ${r.error}`.slice(0, 500) : null, updated_at: nowISO() });
+      await update('docs', id, { content_json: r.content, source: r.source, error: null, updated_at: nowISO() });
       return;
     }
     const tpl = await getTemplate(doc.template_id) || await defaultTemplate(doc.kind);
@@ -363,9 +339,8 @@ export async function generate(id, { wait = false } = {}) {
     } else {
       const vars = { ...brochureVars(doc.input), contact_name: doc.input.contact_name || '', agency: s.agency.name };
       const base = fillTokens(cloneDesign(tpl.design), vars, tpl.sample_company);
-      const r = await fillTemplate(base, doc.input, { kind: doc.kind, sampleCompany: tpl.sample_company, research });
-      design = r.design;
-      source = r.source;
+      design = base; // name, place and agency filled in; the in-app AI rewrite was removed (owner, 2026-11-05)
+      source = 'template';
     }
     await update('docs', id, { design_json: cleanDesign(design), content_json: content, source, updated_at: nowISO() });
   }, { wait });

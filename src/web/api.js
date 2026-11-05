@@ -211,7 +211,7 @@ api.post('/leads/:id/actions/:action', async (req, res) => {
       break;
     }
     case 'repitch': await engine.runPitchMaker(id); break;
-    case 'redesign': await engine.runDesign(id); await engine.generateBrochure(id); break;
+    case 'redesign': throw new Error('Homepage designs were removed (owner, 2026-11-05)');
     case 'proposal_decision': await engine.decideProposal(id, b.decision, { reason: b.reason, by: 'admin' }); break;
     case 'test_crm_call': await engine.logCrmCall(id, b.outcome, { notes: b.notes }); break;
     case 'pitch_note': await update('leads', id, { pitch: String(b.pitch || '').slice(0, 2000) }); await engine.generateBrochure(id); break;
