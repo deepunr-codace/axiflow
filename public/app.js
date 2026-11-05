@@ -370,14 +370,40 @@ const HOT_HINT = {
   won: 'Accepted. Waiting for the advance payment',
 };
 
+/** Today: the three tools up front (new + the latest few of each). */
+const HOME_TOOLS = [
+  { kind: 'script', icon: 'record_voice_over', name: 'Pitch Script Maker', noun: 'script', text: 'Word-for-word call script, pitch points and objections for one lead.' },
+  { kind: 'brochure', icon: 'menu_book', name: 'Brochure Generator', noun: 'brochure', text: 'A brochure written for one client, in your template design.' },
+  { kind: 'proposal', icon: 'request_quote', name: 'Proposal Generator', noun: 'proposal', text: 'Scope, features, pricing and terms as a designed PDF.' },
+];
+async function homeTools() {
+  const lists = await Promise.all(HOME_TOOLS.map((t) => api(`/tools/docs?kind=${t.kind}`).catch(() => [])));
+  const week = Date.now() - 7 * 864e5;
+  return `<section class="block home-tools" data-sec="tools"><div class="sec-h"><h3>Your tools</h3><span class="hint">Made automatically for every CRM lead. Make one by hand any time.</span><span class="spacer"></span><a class="btn sm ghost" href="#/designs"><span class="mi">grid_view</span>Templates</a></div>
+    <div class="ht-grid">${HOME_TOOLS.map((t, i) => {
+      const docs = lists[i] || [];
+      const recent = docs.filter((d) => new Date(d.created_at).getTime() >= week).length;
+      const busyN = docs.filter((d) => d.status !== 'ready' && d.status !== 'error').length;
+      return `<div class="card ht-card">
+        <div class="ht-top"><span class="ht-ic"><span class="mi">${t.icon}</span></span>
+          <div class="grow"><b>${t.name}</b><div class="small muted">${docs.length} made${recent ? ` · ${recent} this week` : ''}${busyN ? ` · ${busyN} writing` : ''}</div></div></div>
+        <p class="ht-text">${t.text}</p>
+        <div class="ht-list">${docs.slice(0, 3).map((d) => `<a class="ht-doc" href="#/${t.kind}/${d.id}"><span class="grow">${esc(d.title)}</span><span class="small muted">${fmtDate(d.updated_at)}</span>${d.status === 'ready' ? '' : docTag(d)}</a>`).join('') || `<div class="ht-none small muted">No ${t.noun}s yet.</div>`}</div>
+        <div class="ht-act"><a class="btn primary sm" href="#/${t.kind}"><span class="mi">add</span>New ${t.noun}</a>${docs.length > 3 ? `<a class="btn sm ghost" href="#/${t.kind}">See all ${docs.length}</a>` : ''}</div>
+      </div>`;
+    }).join('')}</div></section>`;
+}
+
 async function renderManager() {
-  const [m, planCard] = await Promise.all([api('/manager'), homePlanCard()]);
+  const [m, planCard, toolsHtml] = await Promise.all([api('/manager'), homePlanCard(), homeTools()]);
   const todo = m.approvals.length + m.drafts.length + m.hot.length + (m.proposals_check?.length || 0);
   const hour = new Date().getHours();
   view.innerHTML = `
   <div class="hello"><div><div class="hello-date">${new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
       <h2>${hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'}</h2></div>
     <div class="hello-status"><i class="${m.ai.enabled ? '' : 'off'}"></i>${todo ? `${todo} thing${todo === 1 ? '' : 's'} need you · the rest runs automatically` : 'Nothing needs you · everything runs automatically'}</div></div>
+
+  ${toolsHtml}
 
   ${planCard}
 
