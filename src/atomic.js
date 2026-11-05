@@ -163,8 +163,8 @@ export async function syncLead(co, ct, deal, { engine, twenty, budget, useCallLo
     const label = deal ? `CRM deal "${deal.stage}"` : 'CRM lead without a deal';
     if (isClosed(deal, s)) {
       // Won or lost before AxiFlow saw it: keep it as history so the tools can still use it.
-      const r = await engine.createLead({ ...input, interested: deal.stage === 'won' || action === 'won' ? 'yes' : 'no' }, { source: 'crm', autoRun: false });
-      if (r.duplicate) await reattach(r.id, ext);
+      let r = await engine.createLead({ ...input, interested: deal.stage === 'won' || action === 'won' ? 'yes' : 'no' }, { source: 'crm', autoRun: false });
+      if (r.duplicate && !(await reattach(r.id, ext))) r = await engine.createLead({ ...input, interested: deal.stage === 'won' || action === 'won' ? 'yes' : 'no' }, { source: 'crm', autoRun: false, dedupe: false });
       const stage = action === 'won' && !deal.archived_at ? 'won' : 'lost';
       await update('leads', r.id, { ...links, crm_created_at: born, stage, stage_changed_at: nowISO(), crm_stage_key: stageKey, crm_call_key: callKey, crm_sync_hash: hash });
       await addActivity(r.id, 'system', `Imported from the CRM as ${stage === 'won' ? 'won' : 'closed'} (${label}); no automation`);
@@ -174,8 +174,8 @@ export async function syncLead(co, ct, deal, { engine, twenty, budget, useCallLo
     if (action === 'script' || action === 'ignore') {
       // A new lead: only the call script for the telecaller's first call (pitch point + script note go to the CRM).
       // The brochure comes when the lead turns interested.
-      const r = await engine.createLead({ ...input, interested: 'unknown' }, { source: 'crm', autoRun: false });
-      if (r.duplicate) await reattach(r.id, ext);
+      let r = await engine.createLead({ ...input, interested: 'unknown' }, { source: 'crm', autoRun: false });
+      if (r.duplicate && !(await reattach(r.id, ext))) r = await engine.createLead({ ...input, interested: 'unknown' }, { source: 'crm', autoRun: false, dedupe: false });
       await update('leads', r.id, { ...links, crm_created_at: born, crm_stage_key: stageKey, crm_lead_stage: ct?.lead_stage || null, crm_call_key: callKey, crm_sync_hash: hash, ...(r.duplicate ? {} : { stage: 'prepared', stage_changed_at: nowISO() }) });
       await logEvent(r.id, 'atomic', 'lead', 'ok', `${r.duplicate ? 'linked to existing lead' : 'created'} from ${ext} (${label}): call script only`);
       if (!r.duplicate) {
@@ -186,8 +186,8 @@ export async function syncLead(co, ct, deal, { engine, twenty, budget, useCallLo
       return r.duplicate ? 'linked' : 'created';
     }
     const interested = action === 'nurture' ? 'unknown' : action === 'not_interested' ? 'no' : 'yes';
-    const r = await engine.createLead({ ...input, interested }, { source: 'crm' });
-    if (r.duplicate) await reattach(r.id, ext);
+    let r = await engine.createLead({ ...input, interested }, { source: 'crm' });
+    if (r.duplicate && !(await reattach(r.id, ext))) r = await engine.createLead({ ...input, interested }, { source: 'crm', dedupe: false });
     await update('leads', r.id, { ...links, crm_created_at: born, crm_stage_key: stageKey, crm_lead_stage: ct?.lead_stage || null, crm_call_key: callKey, crm_sync_hash: hash });
     await logEvent(r.id, 'atomic', 'lead', 'ok', `${r.duplicate ? 'linked to existing lead' : 'created'} from ${ext} (${label})`);
     if (r.duplicate && interested !== 'unknown') await engine.applyInterestChange(r.id, interested, label);
@@ -232,9 +232,10 @@ export async function syncLead(co, ct, deal, { engine, twenty, budget, useCallLo
 /** A duplicate found for a CRM record: link it to that record when it is not linked to another live one. */
 async function reattach(id, ext) {
   const l = await get(`SELECT id, external_id, crm_removed_at FROM leads WHERE id = :id`, { id });
-  if (!l) return;
+  if (!l) return false;
   const free = !l.external_id || l.crm_removed_at || String(l.external_id).startsWith(`${ext}:old:`) || !String(l.external_id).startsWith('atomic:');
   if (free) await update('leads', id, { external_id: ext, crm_removed_at: null });
+  return !!free; // false: the match belongs to another live CRM record, so this record gets its own lead
 }
 
 /** Writes the call script for a new CRM lead and sends its pitch point + script note to the CRM. */

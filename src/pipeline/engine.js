@@ -134,10 +134,10 @@ export async function applyInterestChange(id, interested, reason = 'interest cha
 }
 
 /** Creates a lead (or merges/updates a duplicate or CRM record) and starts the pipeline in the background. */
-export async function createLead(input, { source, autoRun = true } = {}) {
+export async function createLead(input, { source, autoRun = true, dedupe = true } = {}) {
   const settings = getSettings();
   const data = normalizeLeadInput({ ...input, source: source || input.source }, settings);
-  const dup = await findDuplicate(data);
+  const dup = dedupe ? await findDuplicate(data) : null; // CRM records are their own leads (dedupe: false)
   if (dup) {
     const patch = {};
     for (const k of ['contact_name', 'email', 'phone', 'website', 'industry', 'city', 'service', 'budget', 'external_id']) if (!dup[k] && data[k]) patch[k] = data[k];
