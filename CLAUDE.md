@@ -183,7 +183,7 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - It follows the CRM theme from the first frame and respects reduced motion.
   - The v1 glow and streaks were dropped.
 - **Rebrand:** all Atomic CRM / LEGO / Marmelab names removed from the screens (name Axilume Web CRM, AWC mark and icons, own welcome card and changelog, template telemetry off); details in AXICORE.md.
-- **Sidebar:** the CRM sidebar is full height with square corners. At its bottom, AxiCore 2.0 is a neumorphic tile (owner: "numorphic premium"): the sidebar surface with paired soft shadows, a raised mark that presses in on hover, a pressed-in 2.0 chip and a raised arrow dimple; light and dark themes. The main area and its top bar are flush (no rounded corners, no outer margin). The AxiCore panel has a matching "CRM" tile at its bottom (it replaced the top "Back to the CRM" link).
+- **Sidebar:** the CRM sidebar is full height with square corners. At its bottom, AxiCore 2.0 is a **flat** tile (owner 2026-11-06: "remove the 3d effect", replacing the earlier neumorphic one; daa4e47, deployed): sidebar surface with a hairline top edge, mark / 2.0 chip / arrow as flat fills with hairline borders, hover changes the fill only; light and dark via the sidebar tokens. The main area and its top bar are flush (no rounded corners, no outer margin). The AxiCore panel has a matching "CRM" tile at its bottom (it replaced the top "Back to the CRM" link).
 
 ## Status (2026-11-05): classic deck closing slide redesigned
 - Owner (screenshot of the old "THANK YOU." slide: blur photo, orbit rings, caps): "redesign this last. dont generate anymore".
