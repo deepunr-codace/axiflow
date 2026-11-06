@@ -13,7 +13,161 @@ The team's main CRM is **Twenty**, set up by a co-worker and run by the **teleca
 
 Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATABASE_URL` and `pg`; embedded PGlite in `data/pg` when `DATABASE_URL` is empty), Vercel Blob for uploads (`data/uploads` locally), nodemailer, `@anthropic-ai/sdk` (Claude, `claude-opus-5-5`), and a vanilla-JS admin SPA in `public/`. There is no build step. Code map: see README. The old SQLite file `data/crm.db` is kept only as a backup/migration source.
 
-## Status (2026-11-05, latest): classic deck closing slide redesigned
+## Status (2026-11-06, latest): Pitch Script Maker = SWOT + how we solve it (no call script)
+- **Owner's requests:**
+  - "the pitch script generating is wrong, we want SWOT of the lead", with a SWOT prompt (strengths, weaknesses, opportunities, threats; short, structured, factual);
+  - "how we solve the problem: AEO, GEO, website development, automations, SEO";
+  - "dont need call script";
+  - "re run all pitch points and update db".
+- **What a script doc holds now** (`src/ai/script.js`; kind stays `script`, so the flow and CRM writes are unchanged):
+  - `pitch_point` (the CRM field);
+  - `swot` {summary, strengths, weaknesses, opportunities, threats};
+  - `solutions` [{service ∈ `SERVICES` (Website development / SEO / AEO / GEO / Automation), problem, how, outcome}].
+  - The owner's brief is `SWOT_BRIEF`, used word for word; `SERVICE_NOTES` defines AEO and GEO for the model.
+- **Rule-based version:** `templateScript` builds a SWOT from the website check, the vertical and the place (unverified points are marked "to confirm").
+- **Other changes:**
+  - `repair` keeps the model's usable parts;
+  - `swotText()` is the plain text used for the CRM note (`atomic.js scriptText`), the lead's `pitch_json.telecaller_script` and the CRM event;
+  - `claudeScriptJob` (claude-jobs.js) is a strategist prompt: research, then the SWOT, then the mapping;
+  - script page `renderSwot` (scripts.js: summary, 4 quadrants, solution rows, "Send to the CRM");
+  - PDF `swotPdf` (A4: band, pitch point, summary, 2×2 coloured grid, service pills);
+  - `cleanScript` keeps the new shape.
+  - Old call-script docs still open in the old layout.
+- **Rerun (owner chose "Rule-based SWOT now"):** all 60 live CRM leads' script docs regenerated and sent with use-for-lead (pitch point + SWOT note to the CRM). Scratchpad `swot-rerun.mjs` logs in with ADMIN_PASSWORD from `.env`.
+- **Claude mode is OFF on live AxiFlow** (switched off for the owner, who asked for it).
+  - **Why:** the Claude subscription behind `CLAUDE_CODE_OAUTH_TOKEN` hit its **5-hour usage limit**. Every GitHub run since about 2026-11-05 16:25 UTC failed in 2 s, and the run conclusion says "success" because of continue-on-error.
+  - **OpenRouter can't replace it yet:** the key is free tier with 0 credits, so Claude models are refused (402).
+- **Fixes for the usage-limit case:**
+  - the workflow prints Claude Code's error and post.mjs sends it (`Claude Code: …`);
+  - `retry()` treats a usage-limit error as a hold: no try used, state `claude_hold` until the reset time + 3 min, new GitHub dispatches wait, and `retryStale` re-sends after the reset.
+- **Ported to AWC engine** (c31cc97, b9bc106; deployed).
+- **Also today:** owner asked for an admin in the **old live team CRM** (explicit exception to read-only): auth user deepunr@codeace.com made via the Auth admin API (needed a `user_invitations` row first: "Sign up is not allowed"), sales id 4 set to admin, sign-in checked. The new AWC already had that account.
+- **Next:** with credit on OpenRouter (or after the subscription resets), switch Claude mode on and rerun for researched SWOTs.
+
+## Status (2026-11-06): merged project "Axilume Web CRM" (CRM + AxiCore 2.0), local only; rebranded and restyled
+- **Owner:** "maintaining two systems seems difficult… merge crm and these 3 tools… a new user role… a new option in sidebar 'AxiCore 2.0'". Then "build a new project by copying and merging these, build locally", "dont do anything that existing", and "on click axicore from sidebar, let it be a new page".
+- **Where:** `D:\projects\web-stream-automation\Axilume Web CRM` (the owner made the folder inside this repo; it is untracked here, and this repo was not changed). Move it next to the other projects before giving it its own git.
+- **Built from:**
+  - the CRM: github.com/karuncodeace/atomic-crm at 683acac, copied without `.git`;
+  - this project: copied to `engine/`.
+- **Changes** (all inside the new folder):
+  - **Role `axicore`:** in the CRM types and canAccess, the users form and badge, the edge function and the schema. The migration `20261106100000_axicore_role.sql` is **not applied**.
+  - **Sidebar:** "AxiCore 2.0", shown only for that role, opens `/axicore-app/` as its own full page with "Back to the CRM".
+  - **Login:** the engine accepts the CRM Supabase token and reads the role from `sales` (`AXICORE_ROLES`). Every other CRM user may only read documents.
+  - **Company pages:** a Documents panel.
+  - **Proxy:** Vite proxies the engine paths.
+  - **Engine safeguards:** `CRM_HARD_READ_ONLY=1` blocks every CRM write and upload. The engine has its own fresh local database, and `AXICORE_DEV_AUTH=1` applies only on this machine.
+- **Run:** `npm run dev:axicore` (engine :3300 + CRM demo data :5174). The project guide is `AXICORE.md` in that folder.
+- **Checked:** CRM typecheck passes; screenshots of the sidebar, the full-page tools and the company Documents panel; auth refuses no-login and fake tokens; no CRM write was sent (local outbox only); this repo unchanged.
+- **Next:**
+  1. Move the folder.
+  2. New git repo plus Vercel (CRM build + engine function + rewrites + env + cron).
+  3. Apply the role migration.
+  4. Move the engine tables into the CRM database (needs the CRM DB password).
+  5. Retire the old AxiFlow site.
+- **Plan memory:** `axicore-merge-plan`.
+- **Vercel setup (pushed, 2377f05):**
+  - one project for the CRM and the engine: root `vercel.json` (Vite build to `dist/`; function `api/engine.js` = `engine/src/app.js`, 300 s, region sin1, engine assets/public/claude-worker included);
+  - rewrites for `/api`, `/axicore-app`, `/pdf`, `/d`, `/fonts`, `/fonts.css`, `/brand`, `/webhooks`; daily cron;
+  - the PWA service worker skips those paths (`navigateFallbackDenylist`, checked in `dist/sw.js`);
+  - local production build passes.
+  - The env values to import are in git-ignored `Axilume Web CRM/.env.production.local` (secret key still to fill).
+  - **Owner:** import as ONE project (root `./`, preset Vite, not Services).
+  - **LIVE since 2026-11-06:** https://axilume-web-crm.vercel.app (Vercel project `axilume-web-crm`).
+    - **How it was deployed:** with the owner's permission, from the CLI (`vercel deploy --prod` in the AWC folder, linked via `.vercel/`); production env vars added from `.env.production.local`.
+    - **Keys:** the project also has Vercel's Supabase integration (`SUPABASE_URL`, `SUPABASE_SECRET_KEY` and others, marked sensitive, so the CLI cannot read them). `engine/src/crm-key.js` makes the engine use that key when the CRM is the same project, so no `CRM_SUPABASE_SECRET_KEY` is needed.
+    - **Fixes made while deploying:** rewrites for `/axicore-app/` and `/health`; `.vercelignore` (no env files or local data uploaded); the auth pages no longer filter the logo to one colour.
+    - **Checked live:**
+      - `/`, `/health`, `/api/me` (the engine reaches the database), `/api/settings` (401 without login), `/axicore-app/` with its JS and CSS, `/fonts.css`, the manifest;
+      - the sign-up page for the first account (branded, no console errors).
+  - **First account:** created by the owner (Deepu NR, deepunr@codeace.com, role `admin`). Owner chose option 1: admins open AxiCore too (`AXICORE_ROLES` and `VITE_AXICORE_ROLES` = `axicore,admin` on Vercel and locally; redeployed, checked in the live bundle). Managers and BDEs only see documents.
+  - **Workflow tested live (2026-11-06):** test leads created like an import (company + contact + `open_cold_deal`), with nobody logged in.
+    - **Trigger:** migration `axicore_notify` (pg_net trigger on 7 CRM tables; URL + secret in `axicore.notify_config`, not in git).
+    - **Steps and timings:**
+      - new lead → script, pitch point and script note with PDF (5 s);
+      - Interested deal or interested call → brochure PDF in the bucket + `brochures` row pending (4 s);
+      - approve → brochure_approved;
+      - Proposal stage → proposal PDF + `proposals` row pending;
+      - approve → proposal sent (₹17,700 from the price list);
+      - Won → won;
+      - Not interested → closed.
+    - **Fixed during the test:**
+      - CRM stages Proposal / Won / Lost added and the engine's stage map matched (the saved settings were updated too);
+      - `crmCall` no longer moves a lead in researching / brochure_ready to replied (that skipped the approval);
+      - Not interested closes leads in a conversation;
+      - CRM notes say AxiCore.
+    - Also stopped my local engine, which was running on the production database, and pointed local `engine/.env` back to its own local database.
+    - **Test data removed:** the CRM is empty again; the AxiCore copies are hidden. 4 test PDFs remain in the brochure / proposal buckets: the Storage API needs the secret key, which only Vercel can read, so the owner deletes folders 228eae96…, cb5f3689…, b93474fb… in Supabase Storage.
+    - **Safety rule seen:** an empty CRM read never marks leads removed.
+  - **Next:**
+    1. The owner opens AxiCore 2.0 from the sidebar with the real login; check the tools page.
+    2. Claude on GitHub (owner: "move github workflow into this repo", then "dont move.. copy"):
+       - **Done:**
+         - copies at the repo root: `.github/workflows/axicore-claude-generate.yml` (steps in `engine/`) and `axicore-tick.yml` (every 2 h, new URL); the originals stay in `engine/.github`;
+         - `claude.github_repo` = `deepunr-codace/axilume-web-crm` (default + saved setting);
+         - `CLAUDE_WORKER_SECRET` on Vercel; redeployed. The repo is private (API 404 to visitors).
+       - **Owner:** a fine-grained token for axilume-web-crm (Contents + Secrets read/write) → AxiCore → Integrations → Keys → GitHub token; then "Save to GitHub" for CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`), AXIFLOW_CALLBACK_SECRET and CRON_SECRET; then switch Claude mode on. Then I run a live test lead.
+       - **Template leftovers** (owner: "ya remove unwanted"):
+         - removed `doc/` (the template docs site), `deploy.yml` (Pages deploy) and `claude.yml` (the @claude issue bot);
+         - `check.yml` runs on pull requests or by hand only;
+         - the remote `gh-pages` branch is still there: deleting it was blocked by the permission check, so the owner deletes it.
+  - **Team data moved** (owner: "fix 1", "create a new admin midhunkv@codeace.com"), 2026-11-06:
+    - **How:** scratchpad `awc-move-team.cjs`; reads the old CRM over REST, never writes to it; one transaction; dry run first.
+    - **Copied:** 67 companies, 67 contacts, 67 deals, 35 call assignments, 1 call log and 1 import batch with their ids, plus the 62 sectors. The old CRM had no notes, tasks or brochures.
+    - **Users** (auth user + invitation row, so the CRM trigger makes the sales row):
+      - Karun (admin) and Princy (BDE, so imports work) got random passwords: they reset to log in;
+      - Midhun is **admin** with the password the owner gave.
+      - Owners of every lead and call mapped to the new user ids (Deepu 1, Karun 9, Midhun 10, Princy 11).
+    - **Checked with a real login:** Midhun signs in; the live engine `/api/me` says admin + axicore; AxiCore settings answer 200; he sees 67 companies.
+    - **AxiCore CRM automation is PAUSED** (`atomic.enabled=false` in `axicore.settings`), so the 67 copied leads did not each get a script at once. The owner decides when to turn it on (better after Claude mode).
+    - Changes made in the old CRM after this copy are not in AWC: re-run the script before the switch (new rows only; edits to existing rows are not updated).
+  - **Gap check (2026-11-06):**
+    - **Found and fixed:** a burst of CRM changes sent one ping each (57 in a second → 26 × 503, database connections exhausted). Fixes:
+      - migration `axicore_notify_debounce`: at most one ping per 3 s;
+      - the engine reads the CRM again 10 s after a ping;
+      - pool size 2 on Vercel;
+      - the setup page says AxiCore.
+      - Re-tested: 31 changes → 3 pings, all 200.
+    - **Still open:**
+      - edge functions not deployed (`/functions/v1/users` returns 404, so no user invites);
+      - no BDE users, and `import_leads` refuses without one;
+      - team data still in the old CRM;
+      - Claude token and repo secrets;
+      - email / WhatsApp mock;
+      - no Pexels / Unsplash key;
+      - Auth Site URL;
+      - DB password reset;
+      - 4 test PDFs in the buckets;
+      - Supabase free tier (pauses after a week of no activity, no point-in-time backups);
+      - no alerts.
+    3. Connect email / WhatsApp so the approved brochure and proposal reach the client (now mock).
+    2. Supabase Auth Site URL = https://axilume-web-crm.vercel.app.
+    3. `supabase functions deploy` (owner: login + link).
+    4. Reset the DB password, then update `DATABASE_URL` on Vercel and in the local env files.
+  - **Next after the first deploy:**
+    1. Check `/health`, the login page, `/axicore-app/` and a PDF on the Vercel address.
+    2. Set the Supabase Auth Site URL to that address.
+    3. Deploy the edge functions; first admin sign-up; give the `axicore` role.
+    4. Move the Claude GitHub workflow from `engine/.github` to the repo root, or use an API engine.
+- **Git:** its own repo, https://github.com/deepunr-codace/axilume-web-crm (`main`, first push 2026-11-06, 1,275 files). The folder has its own `.git` (nested in this repo's folder, untracked here). Push over HTTPS; SSH has no key. Checked before pushing: no env files except the CRM's own placeholder `supabase/functions/.env`, no keys or passwords in any file.
+- **Own Supabase project** (owner 2026-11-06, `hzxtdianyucccuogeygw`, Singapore, session pooler because the direct host is IPv6 only):
+  - CRM migrations pushed, plus the axicore role and `axicore_documents` (buckets brochure + proposal, table `proposals`);
+  - the engine's tables are in schema `axicore` of the same database (`DATABASE_SCHEMA`), and it points at this project as its CRM;
+  - secrets only in git-ignored env files; details in AXICORE.md.
+  - **Owner to do:** reset the DB password (pasted in chat), give the secret key, run `supabase login` / `link` / `functions deploy`, set the Auth URLs.
+  - **Then (me):**
+    1. Run `npm run dev` against the new project.
+    2. The owner signs up as the first admin; I give the `axicore` role.
+    3. Check AxiCore 2.0 with a real login. Turn `AXICORE_DEV_AUTH` off for that test.
+  - The live CRM and live AxiFlow were not changed (owner: "dont make any changes in the existing system - its currently live and working").
+- **AWC preloader** (owner: "lightning speed feel", then "premium standard"): a monochrome app-icon tile with the lightning mark, a fast sheen, the name and a slim progress line.
+  - Used both for the boot screen (`index.html`) and in the app (`awc-preloader.tsx` via `loading.tsx`).
+  - It follows the CRM theme from the first frame and respects reduced motion.
+  - The v1 glow and streaks were dropped.
+- **Rebrand:** all Atomic CRM / LEGO / Marmelab names removed from the screens (name Axilume Web CRM, AWC mark and icons, own welcome card and changelog, template telemetry off); details in AXICORE.md.
+- **Sidebar:** the CRM sidebar is full height with square corners. At its bottom, AxiCore 2.0 is a neumorphic tile (owner: "numorphic premium"): the sidebar surface with paired soft shadows, a raised mark that presses in on hover, a pressed-in 2.0 chip and a raised arrow dimple; light and dark themes. The main area and its top bar are flush (no rounded corners, no outer margin). The AxiCore panel has a matching "CRM" tile at its bottom (it replaced the top "Back to the CRM" link).
+
+## Status (2026-11-05): classic deck closing slide redesigned
 - Owner (screenshot of the old "THANK YOU." slide: blur photo, orbit rings, caps): "redesign this last. dont generate anymore".
 - **New `closingSlide()`** in `src/design/deck.js` (exported), on the theme ink background (no stock photo):
   - logo;
