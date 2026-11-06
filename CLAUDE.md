@@ -50,6 +50,7 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
 - **AWC repo secrets** (owner: "add it"):
   - `AXIFLOW_CALLBACK_SECRET` (= AWC `CLAUDE_WORKER_SECRET`) and `CRON_SECRET` added via the GitHub API (sealed with libsodium, this machine's git login);
   - `CLAUDE_CODE_OAUTH_TOKEN` was added by the owner.
+  - **Token-use logging** (owner asked how many tokens one pitch uses): the workflow prints `USAGE {...}` after each Claude run (turns, tokens, cache, cost, web searches, per model; numbers only, 1ddb661). Scratchpad `usage-collect.mjs` reads them from the run logs. Next: report the numbers and offer savings (Sonnet for SWOT via `--model`, fewer turns, capped research, a trimmed playbook/strategy/quality block for scripts).
   - **Still missing for AWC:** `GITHUB_DISPATCH_TOKEN` (owner: a fine-grained token for axilume-web-crm, Contents rw, saved in AxiCore Keys), then Claude mode on, then a test lead.
 
 ## Status (2026-11-06): merged project "Axilume Web CRM" (CRM + AxiCore 2.0), local only; rebranded and restyled
