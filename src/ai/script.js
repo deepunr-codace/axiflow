@@ -1,13 +1,13 @@
 import { getSettings } from '../settings.js';
-import { runJson, aiEnabled, obj, str, arr } from './claude.js';
+import { obj, str, arr } from './claude.js';
 import { managerSystem } from './playbook.js';
-import { money, firstName, contactFirstName } from '../util.js';
+import { money } from '../util.js';
 
 /*
- * Pitch Script Maker: a call script for the telecaller, following the owner's plan (Web Development.pdf p.6):
- * company-specific introduction, relevant website / e-commerce opportunities, three main pitching points,
- * questions to understand the client's needs, and the meeting-booking approach. Plus objections, a short
- * "pitch point" for the CRM, and the whole thing as a word-for-word script.
+ * Pitch Script Maker = a SWOT report of the lead plus how we solve it (owner, 2026-11-06: "the pitch script
+ * generating is wrong, we want SWOT of the lead … and how we solve the problem: AEO, GEO, website development,
+ * automations, SEO"; then "dont need call script"). Output: swot, solutions, and a one-line pitch point for the CRM.
+ * The doc kind stays 'script' so the flow (CRM note, pitch point, tool pages) is unchanged.
  */
 export const VERTICALS = [
   'FMCG & Spices', 'Clothing & Apparel', 'Toys & Baby Products', 'Wellness & Beauty', 'Automotive Parts',
@@ -15,19 +15,40 @@ export const VERTICALS = [
 ];
 export const LANGUAGES = ['English', 'Malayalam (in English letters)', 'Hindi (in English letters)'];
 
+/** Our services a finding can be solved with. */
+export const SERVICES = ['Website development', 'SEO', 'AEO', 'GEO', 'Automation'];
+export const SERVICE_NOTES = {
+  'Website development': 'a fast, mobile-first website or online store built around how their customers enquire, book or buy',
+  SEO: 'search engine optimisation: ranking on Google Search and Google Maps for what their customers type (local pages, Google Business Profile, reviews, speed, structured data)',
+  AEO: 'answer engine optimisation: being the answer shown in Google AI Overviews, featured snippets and voice search (clear question-and-answer content, FAQ and schema markup)',
+  GEO: 'generative engine optimisation: being named and recommended by AI assistants such as ChatGPT, Gemini and Perplexity (consistent facts about the business across the web, citable pages, reviews and mentions)',
+  Automation: 'WhatsApp and email auto-replies, online booking and enquiry forms that go straight to the CRM, follow-up reminders, review requests',
+};
+export const SWOT_KEYS = [['strengths', 'Strengths'], ['weaknesses', 'Weaknesses'], ['opportunities', 'Opportunities'], ['threats', 'Threats']];
+
+// The owner's SWOT brief (2026-11-06), used in every job.
+export const SWOT_BRIEF = `Analyse the business thoroughly across the four SWOT dimensions:
+- Strengths: key advantages and existing positive factors.
+- Weaknesses: internal limitations, gaps and areas that need improvement.
+- Opportunities: potential growth areas and future possibilities.
+- Threats: external risks, challenges and competitive factors.
+Present the findings as a short, structured and professional analytical report. Focus on meaningful insights, factual observations and practical conclusions rather than generic statements or promotional language. Base every point on the research, the website check and the CRM record; where nothing is known, say what is unknown instead of guessing.`;
+
 const schema = () => obj({
-  pitch_point: str('one line for the CRM "Pitch Point" field: the angle we pitch this business on'),
-  introduction: str('company-specific opening, 2-3 short lines: who we are, why we are calling them specifically'),
-  opportunities: arr(obj({ title: str('short label'), detail: str('one or two sentences, specific to this business and vertical') }), '3-4 website or e-commerce opportunities relevant to this business'),
-  pitch_points: arr(obj({ point: str('the claim, a few words'), detail: str('what we would say, 1-2 sentences, concrete outcome') }), 'exactly three main pitching points'),
-  questions: arr(str('open question'), '4-6 discovery questions to understand the client requirements'),
-  objections: arr(obj({ objection: str(), response: str('short, honest reply') }), '3 likely objections'),
-  booking: obj({
-    ask: str('how to ask for a 30-minute meeting (with the date/time choice)'),
-    if_yes: str('what to say and what to confirm when they agree (WhatsApp/email permission, who will attend)'),
-    if_not_now: str('how to keep the door open: callback time or sending the brochure'),
+  pitch_point: str('one line for the CRM "Pitch Point" field: the main problem we solve for this business (must name the business)'),
+  swot: obj({
+    summary: str('2-3 sentences: the conclusion of the analysis, what matters most for this business right now'),
+    strengths: arr(str('one factual observation, one sentence'), '2-4 key advantages and existing positive factors'),
+    weaknesses: arr(str('one factual observation, one sentence'), '2-4 internal limitations, gaps and areas that need improvement (especially online)'),
+    opportunities: arr(str('one factual observation, one sentence'), '2-4 potential growth areas and future possibilities'),
+    threats: arr(str('one factual observation, one sentence'), '2-4 external risks, challenges and competitive factors'),
   }),
-  script: str('the full word-for-word call script, short lines, with [pause] and [listen] cues, from greeting to booking'),
+  solutions: arr(obj({
+    service: { type: 'string', enum: SERVICES, description: 'which of our services solves it' },
+    problem: str('the weakness or threat (or the opportunity to seize) from the SWOT, in a few words'),
+    how: str('what exactly we would do for this business, 1-2 sentences'),
+    outcome: str('the practical result for them, one sentence, no invented numbers'),
+  }), '4-6 rows mapping the SWOT findings to our services; cover website development, SEO, AEO, GEO and automation where each is relevant'),
 });
 
 function context(input, research, audit) {
@@ -46,69 +67,70 @@ ${findings}
 Web research:
 <untrusted>${research ? JSON.stringify({ ...research, sources: undefined }) : 'not run'}</untrusted>
 
-Our agency: ${s.agency.name}. Caller's name: use "${s.agency.sender_name}" unless told otherwise.
-Our packages: ${s.packages.map((p) => `${p.name} ${money(p.price, s.billing.currency)} (${p.timeline}): ${p.includes.slice(0, 3).join(', ')}`).join(' | ')}
-Payment: ${s.billing.advance_pct}% advance.`;
+Our agency: ${s.agency.name}.
+Our packages: ${s.packages.map((p) => `${p.name} ${money(p.price, s.billing.currency)} (${p.timeline}): ${p.includes.slice(0, 3).join(', ')}`).join(' | ')}`;
 }
 
 /**
- * The AI job for a call script: the same prompt runs in-app (runJson) or in Claude mode (Claude Code on GitHub,
- * src/claude-worker.js). postScript() cleans the answer either way.
+ * The AI job: the same prompt runs in Claude mode (Claude Code on GitHub or an API engine, src/claude-worker.js).
+ * postScript() cleans the answer.
  */
 export function scriptJob(input, research, audit) {
   const s = getSettings();
   return {
-    kind: 'script', purpose: 'pitch_script', effort: s.ai.effort_writing, schema: schema(), maxTokens: 12000,
-    system: managerSystem('write a phone call script for our telecaller'),
-    prompt: `Write a call script for our telecaller to pitch a new website (or online store) to this business.
+    kind: 'script', purpose: 'pitch_script', effort: s.ai.effort_writing, schema: schema(), maxTokens: 8000,
+    system: managerSystem('write a SWOT analysis of a lead and how our services solve it'),
+    prompt: `Write a SWOT analysis of this business, then show how our services solve what it found.
 
 ${context(input, research, audit)}
 
-Rules: sound like a real person on the phone, not a brochure. Short lines. Be specific to this business and its vertical; no generic claims. Never invent facts about the business: if research is missing, ask instead of asserting. The goal of the call is a 30-minute meeting, not a sale.
-Language: write the script in ${input.language || 'English'}${/letters/.test(input.language || '') ? ' (spoken words in that language written in English letters; keep business terms like website, WhatsApp, Google in English)' : ''}.`,
+SWOT analysis (swot):
+${SWOT_BRIEF}
+
+How we solve it (solutions): map the most important weaknesses, threats and opportunities to our services:
+${SERVICES.map((k) => `- ${k}: ${SERVICE_NOTES[k]}`).join('\n')}
+Each row names one concrete problem of this business and what we would do about it. No prices, no invented numbers or guarantees.
+Language: English.`,
   };
 }
 export const postScript = (content, input, audit) => repair(content || {}, templateScript(input, audit));
 
-/**
- * Without Claude: the standard script for the vertical. The in-app AI writer was removed (owner, 2026-11-05:
- * "remove old logics"); Claude mode writes scripts (claudeScriptJob in src/ai/claude-jobs.js).
- */
+/** Without Claude: the rule-based SWOT. Claude mode writes it (claudeScriptJob in src/ai/claude-jobs.js). */
 export async function writeScript(input, research, audit) {
   return { content: templateScript(input, audit), source: 'template' };
 }
 
-/**
- * Weaker models sometimes ignore the structure (e.g. the whole script in "pitch_point", empty lists).
- * Keep what is usable, move a misplaced script to where it belongs, fill the rest from the standard script.
- */
+/** The report as plain text (the CRM note, the lead's pitch, copy to clipboard). */
+export function swotText(c, company = '') {
+  const out = [];
+  if (company) out.push(`SWOT analysis: ${company}`);
+  if (c.pitch_point) out.push(`Pitch point: ${c.pitch_point}`);
+  if (c.swot?.summary) out.push(`Summary:\n${c.swot.summary}`);
+  for (const [k, label] of SWOT_KEYS) if (c.swot?.[k]?.length) out.push(`${label}:\n${c.swot[k].map((v) => `- ${v}`).join('\n')}`);
+  if (c.solutions?.length) out.push(`How we solve it:\n${c.solutions.map((r) => `- ${r.service}: ${r.problem}. ${r.how}${r.outcome ? ` Result: ${r.outcome}` : ''}`).join('\n')}`);
+  return out.join('\n\n');
+}
+
+/** Keep what is usable from the model's answer, fill the rest from the rule-based report. */
 function repair(c, std) {
-  const out = { ...std };
-  const s = (v) => (typeof v === 'string' ? v.trim() : '');
+  const out = { ...std, swot: { ...std.swot } };
+  const s = (v) => (typeof v === 'string' ? v.trim().replace(/\*\*/g, '') : '');
   const list = (v, ok) => (Array.isArray(v) ? v.filter(ok) : []);
   let point = s(c?.pitch_point);
-  let script = s(c?.script);
-  if (point.length > 300 || point.split('\n').length > 3) { if (script.length < point.length) script = point; point = ''; }
-  // A pitch point is what we offer the client, not a description of the call (seen from a free model:
-  // "Short phone call script for Arjun, Codeace, targeting ... Goal: book a 30-minute meeting.").
-  if (/\b(call script|phone call|script for|telecaller|goal:|targeting)\b/i.test(point)) point = '';
-  // ...and it must say more than the business name and place ("Back To Roots ..., Meloor" is not a pitch).
-  // The standard pitch point ends with "for <company>", so its tail gives the name to discount.
+  if (point.length > 300 || point.split('\n').length > 3) point = '';
+  // ...and it must say more than the business name and place.
   const words = (v) => String(v || '').toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
   const known = new Set([...words(String(std.pitch_point || '').split(' for ').pop()), 'the', 'and', 'for', 'of', 'in', 'at']);
   if (words(point).filter((w) => !known.has(w)).length < 2) point = '';
-  if (point && std.pitch_point && point.toLowerCase().includes(String(std.pitch_point.split(' for ').pop() || '').replace(/\s*\(.*\)$/, '').toLowerCase().slice(0, 12))) out.pitch_point = point;
-  if (s(c?.introduction) && s(c.introduction).length < 1200) out.introduction = s(c.introduction);
-  const opps = list(c?.opportunities, (o) => s(o?.title) && s(o?.detail));
-  if (opps.length >= 2) out.opportunities = opps;
-  const pts = list(c?.pitch_points, (o) => s(o?.point) && s(o?.detail));
-  if (pts.length >= 3) out.pitch_points = pts.slice(0, 3);
-  const qs = list(c?.questions, (q) => s(q));
-  if (qs.length >= 3) out.questions = qs;
-  const obs = list(c?.objections, (o) => s(o?.objection) && s(o?.response));
-  if (obs.length) out.objections = obs;
-  if (s(c?.booking?.ask)) out.booking = { ask: s(c.booking.ask), if_yes: s(c.booking.if_yes) || std.booking.if_yes, if_not_now: s(c.booking.if_not_now) || std.booking.if_not_now };
-  if (script.length > 200) out.script = script.replace(/\*\*/g, '');
+  if (point) out.pitch_point = point;
+  if (s(c?.swot?.summary)) out.swot.summary = s(c.swot.summary);
+  for (const [k] of SWOT_KEYS) {
+    const got = list(c?.swot?.[k], (v) => s(v)).map(s).slice(0, 6);
+    if (got.length) out.swot[k] = got;
+  }
+  const sol = list(c?.solutions, (o) => SERVICES.includes(o?.service) && s(o?.problem) && s(o?.how))
+    .map((o) => ({ service: o.service, problem: s(o.problem), how: s(o.how), outcome: s(o.outcome) })).slice(0, 8);
+  if (sol.length >= 2) out.solutions = sol;
   return out;
 }
 
@@ -124,56 +146,42 @@ const OPPS = {
 };
 const DEFAULT_OPPS = [['A website that brings enquiries', 'Show up on Google and turn searches into calls and WhatsApp messages.'], ['WhatsApp enquiry button', 'One tap from the website to a conversation.'], ['Easy to update', 'Prices, photos and offers updated without hassle.']];
 
+/**
+ * Rule-based SWOT from what AxiFlow knows without research: the website check, the vertical and the place.
+ * It states only what was checked; anything else is marked as something to confirm.
+ */
 export function templateScript(input, audit) {
-  const s = getSettings();
-  const pkg = s.packages[1] || s.packages[0];
-  const name = contactFirstName(input.contact_name, input.company, '');
-  const caller = s.agency.sender_name || 'our team';
-  const where = input.city ? ` in ${input.city}` : '';
-  const issue = (audit?.findings || [])[0]?.text;
-  const opps = (OPPS[input.vertical] || DEFAULT_OPPS).map(([title, detail]) => ({ title, detail }));
-  const points = [
-    { point: input.website ? 'Your website can bring more enquiries' : 'Get found on Google', detail: issue ? `We had a quick look: ${issue.charAt(0).toLowerCase() + issue.slice(1)}.` : `When people${where} search for ${input.vertical ? input.vertical.toLowerCase() : 'what you sell'}, we want them to find ${input.company} first.` },
-    { point: opps[0].title, detail: opps[0].detail },
-    { point: 'Fixed price, ready fast', detail: `Our ${pkg.name} is ${money(pkg.price, s.billing.currency)}, ready in ${pkg.timeline}, and we manage it for you.` },
+  const opps = OPPS[input.vertical] || DEFAULT_OPPS;
+  const kind = input.vertical && input.vertical !== 'Other' ? input.vertical.toLowerCase() : 'their category';
+  const where = input.city || 'their area';
+  const f = (audit?.findings || []).map((x) => String(x.text).replace(/\.$/, ''));
+  const has = !!input.website && audit?.has_website !== false;
+  const strengths = [`An established ${kind} business in ${where} with existing customers and a local reputation (to confirm).`];
+  if (has && audit?.https) strengths.push('The website is live and served securely (HTTPS).');
+  if (has && audit?.load_ms && audit.load_ms < 2500) strengths.push(`The website loads quickly (about ${(audit.load_ms / 1000).toFixed(1)} s).`);
+  if (!has) strengths.push('A clean start online: nothing outdated to undo, so the first website can be built around how customers buy today.');
+  const weaknesses = f.length ? f.slice(0, 4).map((t) => `${t}.`) : ['Online presence not checked yet: how customers find them today is unknown.'];
+  const opportunities = [
+    `Customers in ${where} search Google and Maps for ${kind} before they call or visit.`,
+    'More people now ask AI assistants (ChatGPT, Gemini, Google AI Overviews) for recommendations; few local businesses are prepared for it.',
+    ...opps.slice(0, 2).map(([t, d]) => `${t}: ${d}`),
+  ].slice(0, 4);
+  const threats = [
+    `Competitors in ${where} who rank on Google and answer enquiries on WhatsApp quickly win the customers who search first.`,
+    'Enquiries that wait for a manual reply are lost to whoever answers first.',
+    'If facts about the business (hours, services, location) are missing or inconsistent online, search engines and AI assistants recommend others.',
   ];
-  const questions = [
-    'How do most of your customers find you today?',
-    input.website ? 'How many enquiries does your website bring in a month?' : 'When someone searches for your business online, what do they find?',
-    'Do you take orders or enquiries on WhatsApp now?',
-    'Which products or services would you most like to sell more of?',
-    'Who decides on things like this, you or someone else as well?',
+  const solutions = [
+    { service: 'Website development', problem: has ? (f.find((x) => !/meta|title|heading|description/i.test(x)) || 'A website that does not turn visitors into enquiries') : 'No website', how: `A fast, mobile-first website for ${input.company} with their services, photos, reviews and a WhatsApp enquiry button on every page.`, outcome: 'Visitors see what they offer and enquire in one tap.' },
+    { service: 'SEO', problem: 'Not found first on Google and Maps', how: `Local pages for ${where}, a complete Google Business Profile, page titles and descriptions, speed and structured data.`, outcome: `Shows up when people in ${where} search for ${kind}.` },
+    { service: 'AEO', problem: 'Customer questions are not answered online', how: 'A clear questions-and-answers section and FAQ markup on what customers ask before buying.', outcome: 'Their answers appear in Google AI Overviews, snippets and voice search.' },
+    { service: 'GEO', problem: 'AI assistants do not know or recommend them', how: 'Consistent business facts across the website, Google, directories and social pages, plus citable pages and review requests.', outcome: 'ChatGPT, Gemini and Perplexity can name them when asked for a recommendation.' },
+    { service: 'Automation', problem: 'Enquiries depend on someone being free to reply', how: 'Instant WhatsApp and email replies, an enquiry or booking form that goes straight to the CRM, follow-up and review reminders.', outcome: 'No enquiry waits, and every lead is followed up.' },
   ];
-  const booking = {
-    ask: 'Can we do a 30-minute call where I show you a homepage idea for your business? Would tomorrow or the day after work better?',
-    if_yes: 'Great. Shall I send the details and a short plan on WhatsApp to this number? Who else should join the call?',
-    if_not_now: 'No problem. When is a better time to call back? Meanwhile I can send a short plan on WhatsApp, is that okay?',
-  };
-  const objections = [
-    { objection: 'It is too expensive', response: `It is a fixed ${money(pkg.price, s.billing.currency)} with ${s.billing.advance_pct}% to start. One extra customer a month usually covers it.` },
-    { objection: 'We already get customers by word of mouth', response: 'That is great. People who hear about you now search for you first; the website makes that first look count.' },
-    { objection: 'We are busy right now', response: `We do the work. It takes about 30 minutes of your time and is ready in ${pkg.timeline}.` },
-  ];
-  const introduction = `Hello${name ? ` ${name}` : ''}, this is ${caller} from ${s.agency.name}. We build websites and online stores for ${input.vertical && input.vertical !== 'Other' ? input.vertical.toLowerCase() + ' businesses' : 'businesses'}${where}. I'm calling ${input.company} because we see a clear opportunity for you online.`;
-  const script = [
-    `Hello, am I speaking with ${name || `someone from ${input.company}`}?`,
-    `This is ${caller} calling from ${s.agency.name}. Is this a good time for two minutes?`,
-    '[pause]',
-    introduction.split('. ').slice(1).join('. '),
-    '',
-    questions[0], '[listen]', questions[1], '[listen]',
-    '',
-    ...points.map((p) => `${p.point}: ${p.detail}`),
-    '',
-    `If they object: "${objections[0].response}"`,
-    '',
-    booking.ask,
-    `[If yes] ${booking.if_yes}`,
-    `[If not now] ${booking.if_not_now}`,
-    '[Log the outcome in the CRM]',
-  ].join('\n');
+  const summary = `${input.company} ${has ? 'has a website, but' : 'has no website yet, so'} ${f.length ? 'the website check found gaps that cost enquiries' : 'its online presence still needs to be confirmed'}. The clearest gains are being found first on Google, Maps and AI assistants, and answering every enquiry quickly.`;
   return {
-    pitch_point: `${opps[0].title} for ${input.company}${input.website ? '' : ' (no website yet)'}`.slice(0, 200),
-    introduction, opportunities: opps, pitch_points: points, questions, objections, booking, script,
+    pitch_point: `${has ? (f.length ? 'Fix the website gaps and get found on Google and AI search' : 'Get found on Google and AI search') : 'A website that brings enquiries'} for ${input.company}`.slice(0, 200),
+    swot: { summary, strengths: strengths.slice(0, 4), weaknesses, opportunities, threats },
+    solutions,
   };
 }

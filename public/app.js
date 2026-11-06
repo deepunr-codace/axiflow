@@ -392,7 +392,7 @@ const HOT_HINT = {
 
 /** Today: the three tools up front (new + the latest few of each). */
 const HOME_TOOLS = [
-  { kind: 'script', icon: 'record_voice_over', name: 'Pitch Script Maker', noun: 'script', text: 'Word-for-word call script, pitch points and objections for one lead.' },
+  { kind: 'script', icon: 'analytics', name: 'Pitch Script Maker', noun: 'SWOT', text: 'SWOT analysis of one lead and how we solve it: website, SEO, AEO, GEO, automation.' },
   { kind: 'brochure', icon: 'menu_book', name: 'Brochure Generator', noun: 'brochure', text: 'A brochure written for one client, in your template design.' },
   { kind: 'proposal', icon: 'request_quote', name: 'Proposal Generator', noun: 'proposal', text: 'Scope, features, pricing and terms as a designed PDF.' },
 ];
@@ -429,7 +429,7 @@ async function renderToolsHome() {
   const link = (href, icon, label, hint) => `<a class="te-opt" href="${href}"><span class="grow"><b>${label}</b><small>${esc(hint)}</small></span><span class="mi">${icon}</span></a>`;
   const OPTS = {
     script: [
-      sw('automation.auto_tools.script', auto.script !== false, 'Write for every new CRM lead', 'Pitch point and call script go to the CRM'),
+      sw('automation.auto_tools.script', auto.script !== false, 'Write for every new CRM lead', 'Pitch point and SWOT note go to the CRM'),
       link('#/settings/business', 'badge', 'Caller and agency', `${s.agency?.sender_name || 'Caller'} from ${s.agency?.name || 'Codeace'}`),
     ],
     brochure: [
@@ -714,7 +714,7 @@ async function renderLead(id) {
     : ['qualified', 'new', 'researching'].includes(l.stage) ? A('run', 'Run now', 'primary') : '';
   const quick = l.stage === 'do_not_contact' ? '' : A('message', 'Message') + A('book', 'Book meeting');
   const more = [
-    `<a href="#/script/new" data-script-lead="${l.id}"><span class="mi">record_voice_over</span>Write a call script</a>`,
+    `<a href="#/script/new" data-script-lead="${l.id}"><span class="mi">analytics</span>Write a SWOT</a>`,
     M('pitch_note', 'Edit personal note in brochure'), M('note', 'Add note'), M('plan_next', '<span class="mi">auto_awesome</span>Ask manager for next step'),
     l.stage !== 'do_not_contact' ? M('repitch', l.pitch_json ? '<span class="mi">auto_awesome</span>Redo research & pitch' : '<span class="mi">auto_awesome</span>Make pitch now') : '',
     l.brochure_version ? `<a target="_blank" href="/pdf/brochure/${l.token}.pdf">Open brochure PDF<span class="mi">open_in_new</span></a>` : '',
@@ -1028,7 +1028,7 @@ async function renderSettings(section) {
   view.innerHTML = `
   <p class="hint">Options for the three tools. Everything else runs by itself.</p>
   <div class="card" id="t-tools"><h2><span class="mi">bolt</span>When the tools run</h2><div class="form-grid">
-    ${inp('automation.auto_tools.script', 'Pitch Script Maker: write a call script for every new CRM lead', 'bool')}
+    ${inp('automation.auto_tools.script', 'Pitch Script Maker: write a SWOT for every new CRM lead', 'bool')}
     ${inp('automation.auto_tools.brochure', 'Brochure Generator: make the brochure when a lead is interested', 'bool')}
     ${inp('automation.auto_tools.proposal', 'Proposal Generator: make the proposal at the proposal stage', 'bool')}
     ${inp('automation.proposal_needs_ok', 'Proposals wait for my OK before they are sent', 'bool')}</div></div>
@@ -1056,7 +1056,7 @@ async function renderSettings(section) {
   <div class="card" id="crmCard"><div class="sec-h"><h2>Team CRM</h2><span class="spacer"></span><button class="btn sm" id="crmSync"><span class="mi">sync</span>Read the CRM now</button></div>
     <div id="crmStatus" class="small muted">Loading…</div>
     <div class="form-grid" style="margin-top:12px">${inp('atomic.enabled', 'Use the CRM (read deals and call results)', 'bool')}${inp('atomic.read_only', 'Read only: write nothing except the tables below', 'bool')}${inp('atomic.write_tables', 'What AxiFlow may write while read only (table or table.column)', 'list')}${inp('atomic.deal_means_consent', 'An open deal counts as consent for WhatsApp/email', 'bool')}${inp('atomic.poll_seconds', 'Check the CRM every N seconds', 'number')}${inp('atomic.import_per_poll', 'New CRM leads to bring in per check', 'number')}</div>
-    <p class="small muted">The tools work on CRM leads (a company with a deal). A new lead gets a call script; when its status changes the brochure or proposal is made and its PDF goes back to the CRM.</p>
+    <p class="small muted">The tools work on CRM leads (a company with a deal). A new lead gets a SWOT; when its status changes the brochure or proposal is made and its PDF goes back to the CRM.</p>
     <h3 style="margin-top:16px">What each deal stage does</h3>
     <p class="small muted">Stage values exactly as the CRM stores them. A new deal in a stage that is not listed counts as interested.</p>
     <div id="crmStages"></div></div>
@@ -1240,7 +1240,7 @@ async function renderIntegrations(section) {
     <p class="small muted" style="margin-top:8px">Pitch scripts have no template. <a href="#/designs">Manage templates</a></p></div>
 
   <div class="card" id="i-crm"><div class="sec-h"><h2>Team CRM (Atomic CRM on Supabase)</h2><span class="spacer"></span><button class="btn sm" data-test="crm"><span class="mi">network_check</span>Test</button><button class="btn sm" id="intCrmSync"><span class="mi">sync</span>Read the CRM now</button></div>
-    <p class="small muted">The CRM is the source of leads. AxiFlow reads companies, contacts, deals, call logs and approvals. It writes only what is allowed below: the call script note, the pitch point, and brochure and proposal rows with their PDFs in the CRM buckets.</p>
+    <p class="small muted">The CRM is the source of leads. AxiFlow reads companies, contacts, deals, call logs and approvals. It writes only what is allowed below: the SWOT note, the pitch point, and brochure and proposal rows with their PDFs in the CRM buckets.</p>
     <div class="row" style="margin:8px 0">${dot(crmOk, crm.keys && !crmOk)}<b>${esc(crm.host || 'Not connected')}</b>${crm.keys ? `<span class="pill">${crm.read_only ? 'Read only + allowed writes' : 'Read and write'}</span>` : ''}<span class="spacer"></span><span class="small muted">${crm.linked_leads || 0} leads · ${crm.waiting_writes} CRM writes waiting</span></div>
     <p class="small">Last read: ${crm.last_poll_at ? `${fmtDate(crm.last_poll_at)}${crm.last_result ? ` · ${crm.last_result.deals ?? 0} deals, ${crm.last_result.created ?? 0} new, ${crm.last_result.updated ?? 0} updated${crm.last_result.errors?.length ? ` · <span class="bad">${esc(crm.last_result.errors[0])}</span>` : ''}` : ''}` : 'never'}</p>
     <div class="int-test" data-result="crm"></div>
@@ -1248,7 +1248,7 @@ async function renderIntegrations(section) {
     <h3>What AxiFlow does with CRM data</h3>
     <div class="form-grid">${field('atomic.enabled', 'Use the CRM', 'bool')}${field('atomic.read_only', 'Read only (write only the list below)', 'bool')}
       ${field('atomic.lead_rule', 'What counts as a lead', 'select', [['deal', 'A company with a deal'], ['company', 'Every company']])}
-      ${field('atomic.new_lead_action', 'A new CRM lead gets', 'select', [['script', 'A call script only'], ['interested', 'The full pitch (script + brochure)'], ['ignore', 'Nothing']])}
+      ${field('atomic.new_lead_action', 'A new CRM lead gets', 'select', [['script', 'A SWOT only'], ['interested', 'The full pitch (SWOT + brochure)'], ['ignore', 'Nothing']])}
       ${field('atomic.poll_seconds', 'Read the CRM every (seconds)', 'number')}${field('atomic.import_per_poll', 'New leads per read', 'number')}${field('atomic.purge_removed_days', 'Delete leads removed in the CRM after (days, -1 = never)', 'number')}
       ${field('atomic.crm_approval', 'Act on approved / sent back in the CRM', 'bool')}${field('atomic.call_logs', 'Read every telecaller call (call_logs)', 'bool')}${field('atomic.deal_means_consent', 'An open deal counts as WhatsApp/email consent', 'bool')}
       ${field('atomic.write_tables', 'Allowed writes while read only (table or table.column, comma separated)', 'list')}</div>
@@ -1430,7 +1430,7 @@ async function renderTool(kind, id) {
  * New documents are only made by hand through "New" (#/<kind>/new); the automation adds the rest.
  */
 const LIST = {
-  script: { title: 'Pitch scripts', noun: 'pitch script', icon: 'record_voice_over', text: 'Call scripts for the telecaller. A new CRM lead gets one automatically; the newest ready one per lead is in the CRM as a note, with its pitch point.' },
+  script: { title: 'Pitch scripts', noun: 'pitch script', icon: 'analytics', text: 'SWOT analysis of each lead and how we solve it (website, SEO, AEO, GEO, automation). A new CRM lead gets one automatically; the newest ready one per lead is in the CRM as a note, with its pitch point.' },
   brochure: { title: 'Brochures', noun: 'brochure', icon: 'menu_book', text: 'Brochures for interested CRM leads. The newest ready one per lead is in the CRM brochure bucket, where it is approved or sent back.' },
   proposal: { title: 'Proposals', noun: 'proposal', icon: 'request_quote', text: 'Proposals for leads at the proposal stage. The newest ready one per lead is in the CRM proposal bucket, where it is approved before it goes out.' },
 };

@@ -32,26 +32,27 @@ function craft() {
 
 const leadBlock = (dossier) => (dossier ? section('lead', `What the CRM and AxiFlow know about this lead (the team's own records):\n${dossier}`) : '');
 
-/** The call script, built by Claude from the lead: research → angle → word-for-word call. */
+/** The lead's SWOT report and how our services solve it, built by Claude from research and the CRM record. */
 export function claudeScriptJob(input, research, audit, dossier = '') {
   const base = scriptJob(input, research, audit);
   const s = getSettings();
   return {
     ...base,
     system: [
-      section('identity', `You are a senior sales coach and copywriter for ${s.agency.name}, a digital agency in Kerala. You write the phone call script a telecaller uses to call one specific business and book a 30-minute meeting about a new website (or online store and automation). Success: the person on the phone feels this caller knows their business, and agrees to the meeting.`),
-      guardrails('- The caller is the agency\'s telecaller; never pretend to be the client or a customer.'),
+      section('identity', `You are a senior digital strategist at ${s.agency.name}, a digital agency in Kerala that builds websites and does SEO, AEO (answer engine optimisation), GEO (generative engine optimisation, being recommended by AI assistants) and business automation. You write a short SWOT analysis of one business and show how our services solve what it found. The sales team reads it before talking to the business. Success: an analyst would sign it; every point is specific to this business and backed by what you found.`),
+      guardrails('- A point you could not verify is stated as unknown or "to confirm", never as fact.'),
       craft(),
-      section('output_contract', 'Return the call script as JSON matching the schema. pitch_point: one line for the CRM naming what we offer this business (it must mention the business). script: the full word-for-word call, short spoken lines, with [pause] and [listen] cues, from greeting to booking.'),
+      section('output_contract', 'Return JSON matching the schema. pitch_point: one line for the CRM naming the main problem we solve for this business (it must name the business). swot: summary plus 2-4 points per dimension, each one factual sentence. solutions: 4-6 rows, each one concrete problem of this business mapped to one service (Website development, SEO, AEO, GEO or Automation), what we would do and the practical result.'),
     ].join('\n\n'),
     prompt: [
       base.prompt,
       leadBlock(dossier),
       section('process', `Work in this order:
-1. Research the business (if web search is allowed): its website, Google / Maps listing, Instagram or Facebook page. Find what it sells or offers, who its customers are, how they enquire or book today, and what is missing online.
-2. Read the CRM record: the contact's call stage and last call result, the team's notes and open tasks. If there was an earlier call (callback, no answer, interested), open the script so it fits that moment.
-3. Choose the one angle that matters most to this business, and build the whole call on it: the opening, three pitching points from what you found, questions that uncover their real need, honest answers to their likely objections, and the booking ask.
-4. Check every line against <craft> and <guardrails>; rewrite what fails.`),
+1. Research the business (if web search is allowed): its website, Google / Maps listing and reviews, Instagram or Facebook page, and two or three competitors in the same place. Find what it offers, who its customers are, how they enquire, book or buy today, how it shows up on Google and in AI answers, and what is missing online.
+2. Read the CRM record: the call results, the team's notes and open tasks.
+3. Write the SWOT from what you found: strengths and weaknesses are about the business itself (offer, reputation, website, search presence, response speed); opportunities and threats are outside it (demand, search and AI-assistant behaviour, competitors).
+4. Map the weaknesses, threats and opportunities that matter most to our services, so each solution answers a specific finding.
+5. Check every line against <craft> and <guardrails>; rewrite what fails.`),
     ].filter(Boolean).join('\n\n'),
     kind: 'script',
   };

@@ -1,6 +1,6 @@
 import { addColumns, get, all, insert, update, run } from './db.js';
 import { background } from './background.js';
-import { writeScript, scriptJob, VERTICALS, LANGUAGES } from './ai/script.js';
+import { writeScript, scriptJob, VERTICALS, LANGUAGES, SERVICES, swotText } from './ai/script.js';
 import { scriptPdf } from './pdf/script.js';
 import { auditWebsite } from './pipeline/enrich.js';
 import { addActivity } from './pipeline/log.js';
@@ -235,7 +235,7 @@ export async function createDoc(kind, raw, { wait = false, auto = false } = {}) 
  * Owner, 2026-11-05: "same result in all generations … based on the leads data, build the brochure from scratch".
  */
 // AxiFlow's own notes in the CRM (script note, brochure / proposal notes): not the team's notes.
-const OWN_NOTE = /AxiFlow|Call script from|Pitch point:|^Brochure ready for|^Proposal ready for|^Proposal sent|from the link below/i;
+const OWN_NOTE = /AxiFlow|Call script from|SWOT analysis|Pitch point:|^Brochure ready for|^Proposal ready for|^Proposal sent|from the link below/i;
 /** Stored research that belongs to this lead: not the no-AI fallback, and about this business (CRM ids get reused). */
 export function usableResearch(r, company) {
   if (!r || r.source === 'fallback') return null;
@@ -409,7 +409,15 @@ export async function generate(id, { wait = false } = {}) {
 function cleanScript(c) {
   const s = (v, n = 2000) => String(v ?? '').slice(0, n);
   const list = (v, n, f) => (Array.isArray(v) ? v.slice(0, n).map(f) : []);
-  return {
+  if (c.swot || c.solutions) {
+    const sw = c.swot || {};
+    return {
+      pitch_point: s(c.pitch_point, 300),
+      swot: { summary: s(sw.summary, 2000), ...Object.fromEntries(['strengths', 'weaknesses', 'opportunities', 'threats'].map((k) => [k, list(sw[k], 10, (v) => s(v, 600)).filter(Boolean)])) },
+      solutions: list(c.solutions, 10, (o) => ({ service: SERVICES.includes(o?.service) ? o.service : SERVICES[0], problem: s(o?.problem, 300), how: s(o?.how, 800), outcome: s(o?.outcome, 400) })).filter((o) => o.problem || o.how),
+    };
+  }
+  return { // older call-script docs
     pitch_point: s(c.pitch_point, 300), introduction: s(c.introduction),
     opportunities: list(c.opportunities, 8, (o) => ({ title: s(o?.title, 200), detail: s(o?.detail, 800) })).filter((o) => o.title || o.detail),
     pitch_points: list(c.pitch_points, 6, (o) => ({ point: s(o?.point, 200), detail: s(o?.detail, 800) })).filter((o) => o.point || o.detail),
@@ -513,11 +521,12 @@ export async function useScriptForLead(id) {
   const lead = await get(`SELECT id, pitch_json FROM leads WHERE id = :id`, { id: d.lead_id });
   if (!lead) throw new Error('Lead not found');
   const pitch = parse(lead.pitch_json, {}) || {};
-  pitch.telecaller_script = d.content.script;
+  const text = d.content.swot ? swotText(d.content) : d.content.script;
+  pitch.telecaller_script = text;
   if (d.content.pitch_point) pitch.headline = pitch.headline || d.content.pitch_point;
   await update('leads', lead.id, { pitch_json: pitch, updated_at: nowISO() });
-  await addActivity(lead.id, 'note', 'Call script updated from the Pitch Script Maker', d.content.pitch_point || null);
-  await crmEvent(lead.id, 'lead.script_updated', { telecaller_script: d.content.script, pitch_point: d.content.pitch_point });
+  await addActivity(lead.id, 'note', 'SWOT updated from the Pitch Script Maker', d.content.pitch_point || null);
+  await crmEvent(lead.id, 'lead.script_updated', { telecaller_script: text, pitch_point: d.content.pitch_point });
   return { ok: true };
 }
 

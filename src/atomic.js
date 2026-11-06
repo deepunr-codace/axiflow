@@ -4,6 +4,7 @@ import { getSettings, getState, setState } from './settings.js';
 import { nowISO, BASE_URL } from './util.js';
 import { addActivity, addTask, logEvent } from './pipeline/log.js';
 import { TERMINAL } from './stages.js';
+import { swotText } from './ai/script.js';
 
 /*
  * Team CRM connector: Atomic CRM (Marmelab) on its own Supabase project.
@@ -519,6 +520,7 @@ async function note(lead, text, attachments = []) {
 
 /** The call script as plain text for a CRM note. */
 function scriptText(lead, c, pdfUrl) {
+  if (c.swot) return [`SWOT analysis for ${lead.company} (from AxiFlow, ${new Date().toISOString().slice(0, 10)})`, swotText(c), pdfUrl && `PDF: ${pdfUrl}`].filter(Boolean).join('\n\n').slice(0, 20000);
   const out = [`Call script for ${lead.company} (from AxiFlow, ${new Date().toISOString().slice(0, 10)})`];
   if (c.pitch_point) out.push(`Pitch point: ${c.pitch_point}`);
   if (c.script) out.push(`Script (word for word):\n${c.script}`);
