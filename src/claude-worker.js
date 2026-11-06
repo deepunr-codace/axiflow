@@ -184,7 +184,7 @@ async function postProcess(doc, output) {
 // not the job's fault, so no try is used; every GitHub job waits until the reset, then goes again.
 const LIMIT_RE = /hit your .{0,20}limit|usage limit|limit reached|rate.?limit/i;
 function resetAt(why) {
-  const m = String(why).match(/resetss+(?:ats+)?(d{1,2})(?::(d{2}))?s*(am|pm)?/i);
+  const m = String(why).match(/resets\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
   let t = 0;
   if (m) {
     const d = new Date();
