@@ -34,6 +34,7 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - `cleanScript` keeps the new shape.
   - Old call-script docs still open in the old layout.
 - **Rerun (owner chose "Rule-based SWOT now"):** all 60 live CRM leads' script docs regenerated and sent with use-for-lead (pitch point + SWOT note to the CRM). Scratchpad `swot-rerun.mjs` logs in with ADMIN_PASSWORD from `.env`.
+- **Then (owner: "generate pitch points for existing leads and push to crm"):** the CRM had 233 leads (all deal stage `new`) and 113 were not imported yet (20 per read). `POST /api/atomic/sync` was repeated until none were left. Checked read-only in the CRM: **233/233 have the pitch point and a SWOT contact note.** 10 contacts have two SWOT notes (likely two AxiFlow leads on one contact; not deleted, since the CRM is read-only).
 - **Claude mode is OFF on live AxiFlow** (switched off for the owner, who asked for it).
   - **Why:** the Claude subscription behind `CLAUDE_CODE_OAUTH_TOKEN` hit its **5-hour usage limit**. Every GitHub run since about 2026-11-05 16:25 UTC failed in 2 s, and the run conclusion says "success" because of continue-on-error.
   - **OpenRouter can't replace it yet:** the key is free tier with 0 credits, so Claude models are refused (402).
