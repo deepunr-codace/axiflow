@@ -51,6 +51,15 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - `AXIFLOW_CALLBACK_SECRET` (= AWC `CLAUDE_WORKER_SECRET`) and `CRON_SECRET` added via the GitHub API (sealed with libsodium, this machine's git login);
   - `CLAUDE_CODE_OAUTH_TOKEN` was added by the owner.
   - **Token-use logging** (owner asked how many tokens one pitch uses): the workflow prints `USAGE {...}` after each Claude run (turns, tokens, cache, cost, web searches, per model; numbers only, 1ddb661). Scratchpad `usage-collect.mjs` reads them from the run logs. Next: report the numbers and offer savings (Sonnet for SWOT via `--model`, fewer turns, capped research, a trimmed playbook/strategy/quality block for scripts).
+  - **Measured** (8 runs, Sonnet 5.5 + Haiku for WebFetch): about 9 turns, 13k cache-write + 420k cache-read + 3.3k output tokens, about $0.14 API-equivalent, 45 s per SWOT.
+  - **Limit:** the 5-hour limit was hit again at 94/233 (resets 15:23 UTC); the owner's usage was at 100%.
+  - **Lean SWOT jobs** (owner chose "Cut tokens, then finish"; 486675e, AWC 629830e):
+    - `prepare.mjs` writes `work/PROMPT-inline.txt` (system + task + schema inline) for kind script;
+    - the workflow runs it with only WebSearch/WebFetch and max 8 turns, and `inline-result.mjs` saves the final message as `out/result.json` (validate + post as before);
+    - research capped at 2 searches + 2 fetches;
+    - `buildClaudeJob` leaves out `qualitySection` and the review scores for scripts (`withStrategy(schema, { review })`).
+    - Tested locally on a copy (prepare → inline-result → validate OK). Not yet seen on a real run: check the USAGE lines after 15:23 UTC.
+  - **Finish of the remaining 139:** `swot-claude-rerun.mjs --conc=3` (skips docs Claude already wrote and docs waiting on the server), started 10:46 UTC; it waits for the reset by itself.
   - **Still missing for AWC:** `GITHUB_DISPATCH_TOKEN` (owner: a fine-grained token for axilume-web-crm, Contents rw, saved in AxiCore Keys), then Claude mode on, then a test lead.
 
 ## Status (2026-11-06): merged project "Axilume Web CRM" (CRM + AxiCore 2.0), local only; rebranded and restyled
