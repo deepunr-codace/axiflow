@@ -324,8 +324,10 @@ export async function buildClaudeJob(doc, s = getSettings()) {
   // Every job: the vertical's playbook, the lead's agreed strategy (so call, brochure and proposal tell one story),
   // and a quality review before answering (owner, 2026-11-05: premium, relevant to the vertical and the business).
   const strategy = doc.lead_id ? (await get(`SELECT strategy_json FROM leads WHERE id = :id`, { id: doc.lead_id }).catch(() => null))?.strategy_json : null;
-  job.prompt = [job.prompt, playbookSection(vertical), strategySection(strategy ? JSON.parse(strategy) : null), qualitySection(doc.kind)].join('\n\n');
-  job.schema = withStrategy(job.schema);
+  // SWOT (kind script): no quality-review section or scores, to use fewer tokens (owner, 2026-11-06)
+  const lean = doc.kind === 'script';
+  job.prompt = [job.prompt, playbookSection(vertical), strategySection(strategy ? JSON.parse(strategy) : null), lean ? '' : qualitySection(doc.kind)].filter(Boolean).join('\n\n');
+  job.schema = withStrategy(job.schema, { review: !lean });
   job.vertical = vertical;
   // Claude Code researches the business itself (website, Google listing, social pages) unless switched off.
   job.web = s.claude?.web_research !== false || !!doc.input.research;

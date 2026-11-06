@@ -27,8 +27,9 @@ export const REVIEW_SCHEMA = {
 };
 
 /** Adds strategy + review to a job's output schema (both soft: a missing one never fails the job). */
-export function withStrategy(schema) {
+export function withStrategy(schema, { review = true } = {}) {
   if (!schema || schema.type !== 'object' || schema.properties?.strategy) return schema;
+  if (!review) return { ...schema, properties: { ...schema.properties, strategy: STRATEGY_SCHEMA }, required: [...(schema.required || []), 'strategy'] };
   return { ...schema, properties: { ...schema.properties, strategy: STRATEGY_SCHEMA, review: REVIEW_SCHEMA }, required: [...(schema.required || []), 'strategy', 'review'] };
 }
 
