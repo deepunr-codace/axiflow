@@ -43,7 +43,14 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - `retry()` treats a usage-limit error as a hold: no try used, state `claude_hold` until the reset time + 3 min, new GitHub dispatches wait, and `retryStale` re-sends after the reset.
 - **Ported to AWC engine** (c31cc97, b9bc106; deployed).
 - **Also today:** owner asked for an admin in the **old live team CRM** (explicit exception to read-only): auth user deepunr@codeace.com made via the Auth admin API (needed a `user_invitations` row first: "Sign up is not allowed"), sales id 4 set to admin, sign-in checked. The new AWC already had that account.
-- **Next:** with credit on OpenRouter (or after the subscription resets), switch Claude mode on and rerun for researched SWOTs.
+- **Claude rerun of all 233** (owner: "claude limit is back. pls re run all and push to db as soon as possible", 10:12 UTC):
+  - scratchpad `swot-claude-rerun.mjs`, 10 at a time; each result goes straight to use-for-lead;
+  - first results in about 13 min, of good quality (site-specific findings, "to confirm" where unverified).
+  - **Bug found:** the reset-time regex in `resetAt` had lost its backslashes in a heredoc patch, so every hold lasted 1 hour. Fixed in both repos (8d9710a, f8de028). The live hold was released in the AxiFlow DB by `release-hold.cjs` (10 docs).
+- **AWC repo secrets** (owner: "add it"):
+  - `AXIFLOW_CALLBACK_SECRET` (= AWC `CLAUDE_WORKER_SECRET`) and `CRON_SECRET` added via the GitHub API (sealed with libsodium, this machine's git login);
+  - `CLAUDE_CODE_OAUTH_TOKEN` was added by the owner.
+  - **Still missing for AWC:** `GITHUB_DISPATCH_TOKEN` (owner: a fine-grained token for axilume-web-crm, Contents rw, saved in AxiCore Keys), then Claude mode on, then a test lead.
 
 ## Status (2026-11-06): merged project "Axilume Web CRM" (CRM + AxiCore 2.0), local only; rebranded and restyled
 - **Owner:** "maintaining two systems seems difficult… merge crm and these 3 tools… a new user role… a new option in sidebar 'AxiCore 2.0'". Then "build a new project by copying and merging these, build locally", "dont do anything that existing", and "on click axicore from sidebar, let it be a new page".
