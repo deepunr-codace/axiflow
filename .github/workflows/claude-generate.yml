@@ -55,6 +55,8 @@ jobs:
           claude -p "$(cat claude-worker/PROMPT.txt)" \
             --allowedTools "$TOOLS" --max-turns 60 --output-format json > claude-worker/work/claude.json \
             || { node -e "try{const j=require('./claude-worker/work/claude.json');const m=String(j.is_error?j.result:j.subtype||'').slice(0,300);console.log('Claude Code failed:', m);require('fs').writeFileSync('claude-worker/work/claude-error.txt', m)}catch(e){console.log('Claude Code failed before answering')}"; exit 1; }
+          # usage only (numbers, no lead data): turns, tokens, cost, time, per model
+          node -e "const j=require('./claude-worker/work/claude.json');const u=j.usage||{};console.log('USAGE', JSON.stringify({kind:require('./claude-worker/work/job.json').kind,turns:j.num_turns,cost_usd:j.total_cost_usd,ms:j.duration_ms,input:u.input_tokens,cache_write:u.cache_creation_input_tokens,cache_read:u.cache_read_input_tokens,output:u.output_tokens,web_search:u.server_tool_use&&u.server_tool_use.web_search_requests,models:Object.fromEntries(Object.entries(j.modelUsage||{}).map(([k,v])=>[k,{in:v.inputTokens,out:v.outputTokens,cache_read:v.cacheReadInputTokens,cache_write:v.cacheCreationInputTokens,usd:v.costUSD}]))}))" || true
 
       - name: Send the result back to AxiFlow
         if: always()
