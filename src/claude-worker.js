@@ -1,5 +1,5 @@
 import { all, update, run } from './db.js';
-import { getSettings } from './settings.js';
+import { getSettings, getState, setState } from './settings.js';
 import { nowISO, BASE_URL } from './util.js';
 import { logEvent, addActivity } from './pipeline/log.js';
 
@@ -111,9 +111,12 @@ export async function dispatchJob(doc, job, ctx = {}, { attempt = 1 } = {}) {
   const missing = claudeMissing();
   const engine = engineOf();
   claude.engine = engine;
+  const hold = engine === 'github' ? await getState('claude_hold') : null;
   if (missing.length) claude.last_error = `Claude mode is on but this server is missing: ${missing.join('; ')}`;
+  else if (hold && new Date(hold.until) > new Date()) { claude.hold_until = hold.until; claude.last_error = `Waiting for the Claude usage limit to reset (${hold.why})`.slice(0, 300); }
   else if (engine === 'github') try { claude.run_url = await dispatch(doc, claude); } catch (e) { claude.last_error = e.message; }
   await saveClaude(doc.id, { ...doc.input, claude });
+  if (claude.hold_until) return claude;
   if (!missing.length && engine !== 'github') {
     const { background } = await import('./background.js');
     background(async () => {
@@ -177,9 +180,33 @@ async function postProcess(doc, output) {
 }
 
 /** A failed answer: send the job again right away while tries are left, else give up with a visible error. */
+// Claude Code's subscription limit (seen live 2026-11-06: "You've hit your 5-hour limit · resets 10:10am (UTC)"):
+// not the job's fault, so no try is used; every GitHub job waits until the reset, then goes again.
+const LIMIT_RE = /hit your .{0,20}limit|usage limit|limit reached|rate.?limit/i;
+function resetAt(why) {
+  const m = String(why).match(/resetss+(?:ats+)?(d{1,2})(?::(d{2}))?s*(am|pm)?/i);
+  let t = 0;
+  if (m) {
+    const d = new Date();
+    let h = Number(m[1]);
+    if (m[3]) h = (h % 12) + (/pm/i.test(m[3]) ? 12 : 0);
+    d.setUTCHours(h, Number(m[2] || 0), 0, 0);
+    if (d.getTime() < Date.now()) d.setUTCDate(d.getUTCDate() + 1);
+    t = d.getTime();
+  }
+  if (!t || t - Date.now() > 8 * 3600000) t = Date.now() + 3600000; // unknown or odd: try again in an hour
+  return new Date(t + 3 * 60000).toISOString();
+}
 async function retry(doc, why) {
   const s = getSettings();
   const c = doc.input.claude;
+  if (LIMIT_RE.test(why) && (c.engine || 'github') === 'github') {
+    const until = resetAt(why);
+    await setState('claude_hold', { until, why: why.slice(0, 200) });
+    await saveClaude(doc.id, { ...doc.input, claude: { ...c, waiting: true, hold_until: until, last_error: `Waiting for the Claude usage limit to reset (${why})`.slice(0, 300) } });
+    await logEvent(doc.lead_id ?? null, 'claude', c.job?.kind || doc.kind, 'ok', `doc #${doc.id}: Claude usage limit, waits until ${until}`);
+    return { status: 200, error: why };
+  }
   if ((c.attempts || 1) >= (s.claude?.max_attempts || 3)) {
     await giveUp(doc, why);
     return { status: 200, error: why };
@@ -207,6 +234,12 @@ export async function retryStale({ force = false } = {}) {
     const doc = await tools.getDoc(id);
     const c = doc?.input?.claude;
     if (!c?.waiting) continue;
+    if (c.hold_until) { // waiting for the usage limit: send again after the reset, with the same try
+      if (new Date(c.hold_until) > new Date()) continue;
+      await dispatchJob(doc, c.job, c.ctx, { attempt: c.attempts || 1 });
+      n++;
+      continue;
+    }
     // a whole designed brochure ("Claude designs", kind free) takes longer: the GitHub job may run 25 minutes
     // API engines run inside one server function (Vercel stops it after 5 minutes): retry after 7 minutes
     const wait = c.engine && c.engine !== 'github' ? 7 * 60000 : c.job?.kind === 'free' ? Math.max(limit, 27 * 60000) : limit;
