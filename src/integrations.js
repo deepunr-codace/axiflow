@@ -47,6 +47,8 @@ export async function integrationsStatus() {
     claude: {
       engine: cw.engineOf(s),
       engines: cw.ENGINES,
+      by_tool: Object.fromEntries(cw.TOOLS.map((t) => [t, cw.engineFor(t, s)])), // the engine each tool really uses
+      in_use: cw.enginesInUse(s),
       model: cw.engineModel(s),
       mode: !!s.claude?.mode,
       on: cw.claudeOn(s),

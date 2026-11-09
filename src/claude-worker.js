@@ -31,11 +31,26 @@ export const engineOf = (s = getSettings()) => (ENGINES[s.claude?.engine] ? s.cl
 const API_MODEL = { anthropic: 'claude-opus-5-5', openrouter: 'anthropic/claude-opus-5.5' };
 export const engineModel = (s = getSettings(), e = engineOf(s)) => (e === 'github' ? 'Claude Code' : s.claude?.api_model?.[e] || API_MODEL[e]);
 
-/** What is still needed before Claude mode can be switched on (for the chosen engine). */
+/*
+ * Engine per tool (owner, 2026-11-09: "dont use api key for swot. only for brochure and proposals"):
+ * claude.engines = { script, brochure, proposal }; a tool without its own engine follows claude.engine.
+ * Job kinds map to tools: script → script; deck / brochure / free → brochure; proposal → proposal.
+ */
+export const TOOLS = ['script', 'brochure', 'proposal'];
+const TOOL_OF = { script: 'script', deck: 'brochure', brochure: 'brochure', free: 'brochure', proposal: 'proposal' };
+export const engineFor = (kind, s = getSettings()) => {
+  const e = s.claude?.engines?.[TOOL_OF[kind] || kind];
+  return ENGINES[e] ? e : engineOf(s);
+};
+export const enginesInUse = (s = getSettings()) => [...new Set(TOOLS.map((t) => engineFor(t, s)))];
+
+/** What is still needed before Claude mode can be switched on (for every engine the tools use). */
 export function claudeMissing() {
   const s = getSettings();
+  return [...new Set(enginesInUse(s).flatMap((e) => missingFor(e, s)))];
+}
+function missingFor(e, s = getSettings()) {
   const m = [];
-  const e = engineOf(s);
   if (e === 'anthropic') { if (!process.env.ANTHROPIC_API_KEY) m.push('ANTHROPIC_API_KEY (your Anthropic API key: Integrations → Keys)'); return m; }
   if (e === 'openrouter') { if (!process.env.OPENROUTER_API_KEY) m.push('OPENROUTER_API_KEY (your OpenRouter key: Integrations → Keys)'); return m; }
   if (!process.env.GITHUB_DISPATCH_TOKEN) m.push('GITHUB_DISPATCH_TOKEN (GitHub token that may start the workflow)');
@@ -74,6 +89,13 @@ async function runOnApi(doc, claude, engine) {
   return runJson({ purpose: `claude_${job.kind}`, leadId: doc.lead_id, force, effort: 'medium', maxTokens: 24000, timeoutMs: 270000,
     system: job.system, prompt: `${job.prompt}${research}${note}`, schema: job.schema });
 }
+/** An API-engine run's numbers, summed from its ai_calls rows (research + answer), in the shape post.mjs sends. */
+async function apiUsage(doc, since, ms) {
+  const r = (await all(`SELECT COUNT(*) n, COALESCE(SUM(input_tokens),0) i, COALESCE(SUM(output_tokens),0) o, COALESCE(SUM(web_searches),0) w, COALESCE(SUM(cost_usd),0) c, MAX(model) m
+    FROM ai_calls WHERE purpose LIKE 'claude_%' AND created_at >= :since AND (lead_id = :lead OR (lead_id IS NULL AND :lead IS NULL))`, { since, lead: doc.lead_id ?? null }))[0];
+  if (!r?.n) return null;
+  return { turns: Number(r.n), input: Number(r.i), output: Number(r.o), web_search: Number(r.w), cost_usd: Number(r.c), ms, models: r.m ? { [r.m]: { in: Number(r.i), out: Number(r.o), usd: Number(r.c) } } : {} };
+}
 function parseJsonText(text) {
   const t = String(text || '').replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
   const a = t.indexOf('{'), b = t.lastIndexOf('}');
@@ -109,8 +131,8 @@ async function dispatch(doc, claude) {
  */
 export async function dispatchJob(doc, job, ctx = {}, { attempt = 1 } = {}) {
   const claude = { waiting: true, job, ctx, attempts: attempt, dispatched_at: nowISO(), last_error: null, run_url: null };
-  const missing = claudeMissing();
-  const engine = engineOf();
+  const engine = engineFor(job.kind);
+  const missing = missingFor(engine);
   claude.engine = engine;
   const hold = engine === 'github' ? await getState('claude_hold') : null;
   if (missing.length) claude.last_error = `Claude mode is on but this server is missing: ${missing.join('; ')}`;
@@ -122,7 +144,9 @@ export async function dispatchJob(doc, job, ctx = {}, { attempt = 1 } = {}) {
     const { background } = await import('./background.js');
     background(async () => {
       let body;
+      const since = nowISO(), t0 = Date.now();
       try { body = { doc_id: doc.id, token: doc.token, output: await runOnApi(doc, claude, engine) }; } catch (e) { body = { doc_id: doc.id, token: doc.token, error: `${ENGINES[engine]}: ${e.message}` }; }
+      body.usage = await apiUsage(doc, since, Date.now() - t0).catch(() => null); // for the Usage page, like the GitHub runs
       await acceptResult(body).catch(() => {});
     }, `claude-${engine}`);
   }
