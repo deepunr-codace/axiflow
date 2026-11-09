@@ -28,7 +28,7 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - **Live AxiFlow:** 5328460, at https://axiflow-v1.vercel.app; `/api/usage` answers with a real login and is empty so far.
   - **AWC:** d52fdda, deployed.
 - **Deploying live AxiFlow (owner: "in live there may somebody updated codes. so push this feature only to vercel"):**
-  - **GitHub pushes no longer trigger a Vercel deploy** for project `axiflow`: the last automatic one was 3 days earlier, possibly since the repo went private.
+  - **Correction (same day):** GitHub pushes DO deploy project `axiflow`: each push today got a deployment within ~1 min (the 09:35 push had not finished building when first checked). A push to `main` therefore goes live; check `origin/main` and `vercel ls axiflow` first.
   - **Deploy from a clean export** of the pushed commit: `git archive origin/main` into the scratchpad `axiflow-deploy/` + `.vercel/project.json`, then `vercel deploy --prod` from there.
   - **Never `vercel deploy` from the repo root:** there is no `.vercelignore`, so it would upload `.env`, `data/` and the AWC folder.
   - **Before deploying, check that no one else changed the code:** `git fetch` and compare with `origin/main`; `vercel ls` (all deployments so far are by deepunr-9593).
