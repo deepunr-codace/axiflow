@@ -319,7 +319,39 @@ const ROUTES = {
   lead: ['Lead', renderLead], approvals: ['Pitch approvals', renderApprovals], tasks: ['Tasks', renderTasks],
   inbox: ['Messages', renderInbox], projects: ['Projects', renderProjects], invoices: ['Invoices', renderInvoices],
   automation: ['Automation runs & log', renderAutomation], templates: ['Message templates', renderTemplates], settings: ['Tool settings', renderSettings], integrations: ['Integrations', renderIntegrations],
+  usage: ['', renderUsage],
 };
+
+// ------------------------------------------------------------ Claude usage (owner, 2026-11-09: "track usage")
+const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n || 0));
+const fmtUsd = (n) => (n ? `$${n < 10 ? n.toFixed(2) : Math.round(n)}` : '–');
+async function renderUsage(arg) {
+  const days = [7, 14, 30].includes(Number(arg)) ? Number(arg) : 14;
+  const u = await api(`/usage?days=${days}`);
+  const swot = u.by_kind.find((k) => k.kind === 'SWOT');
+  const OUT = { ok: ['green', 'Used'], limit: ['amber', 'Usage limit'], error: ['red', 'Failed'], late: ['', 'Late'] };
+  const row = (label, a) => `<tr><td>${label}</td><td>${a.runs}</td><td>${a.ok}</td><td>${a.limit ? `<span class="tag amber">${a.limit}</span>` : '0'}</td><td>${a.failed}</td><td title="${a.tokens.toLocaleString('en-IN')} tokens">${fmtTok(a.tokens)}</td><td title="input + cache writes + output">${fmtTok(a.fresh)}</td><td>${fmtTok(a.avg_tokens)}</td><td>${a.avg_seconds ? `${a.avg_seconds} s` : '–'}</td><td>${fmtUsd(a.cost_usd)}</td></tr>`;
+  const head = (first) => `<tr><th>${first}</th><th>Runs</th><th>Used</th><th>Limit hit</th><th>Failed</th><th>Tokens</th><th>Fresh</th><th>Per run</th><th>Time</th><th title="What the same work would cost on the paid API; on the subscription it counts against the plan's limit">API equiv.</th></tr>`;
+  view.innerHTML = `
+  <div class="hello"><h2>Claude usage</h2><p>Every Claude run reports its tokens when it answers. Tokens are Claude Code's own count: most of them are the context it re-reads on each step (cache reads, cheap but counted), "fresh" is new input plus output. "API equiv." is what the same work would cost on the paid API; on your subscription it uses the plan's 5-hour and weekly limits instead of money.</p></div>
+  ${u.hold ? `<div class="card next-action"><b>Usage limit reached.</b> Claude jobs wait until ${fmtDate(u.hold.until)}, then continue by themselves.</div>` : ''}
+  <div class="toolbar"><div class="seg">${[7, 14, 30].map((d) => `<button class="${d === days ? 'on' : ''}" data-days="${d}">${d} days</button>`).join('')}</div></div>
+  <div class="kpis stat-strip">${[
+    ['Runs today', u.today.runs],
+    ['Tokens today', fmtTok(u.today.tokens)],
+    [`Last 5 hours (${u.window.runs} run${u.window.runs === 1 ? '' : 's'})`, fmtTok(u.window.tokens)],
+    ['Per SWOT (avg)', swot ? fmtTok(swot.avg_tokens) : '–'],
+    [`API equiv. (${days} days)`, fmtUsd(u.period.cost_usd)],
+  ].map(([l, v]) => `<div class="card kpi"><div class="v">${v}</div><div class="l"><span>${l}</span></div></div>`).join('')}</div>
+  ${u.last_limit ? `<p class="small muted">Last limit hit: ${fmtDate(u.last_limit.at)}${u.last_limit.error ? ` · ${esc(u.last_limit.error.replace(/^Claude Code:\s*/, ''))}` : ''}</p>` : ''}
+  <div class="card"><h2>By day</h2>${u.by_day.length ? `<table class="small int-table">${head('Day')}${u.by_day.map((d) => row(d.day, d)).join('')}</table>` : '<p class="small muted">No Claude runs recorded yet. Runs are recorded from now on, as each one answers.</p>'}</div>
+  <div class="grid g2">
+    <div class="card"><h2>By tool</h2>${u.by_kind.length ? `<table class="small int-table"><tr><th>Tool</th><th>Runs</th><th>Per run</th><th>Steps</th><th>Time</th><th>Total</th></tr>${u.by_kind.map((k) => `<tr><td>${esc(k.kind)}</td><td>${k.runs}</td><td>${k.avg_tokens ? fmtTok(k.avg_tokens) : '–'}</td><td>${k.avg_turns || '–'}</td><td>${k.avg_seconds ? `${k.avg_seconds} s` : '–'}</td><td>${fmtTok(k.tokens)}</td></tr>`).join('')}</table>` : '<p class="small muted">Nothing yet.</p>'}</div>
+    <div class="card"><h2>Most tokens by lead</h2>${u.top_leads.length ? `<table class="small int-table"><tr><th>Lead</th><th>Runs</th><th>Tokens</th><th>API equiv.</th></tr>${u.top_leads.map((l) => `<tr><td>${esc(l.company || `Lead ${l.lead_id}`)}</td><td>${l.runs}</td><td>${fmtTok(l.tokens)}</td><td>${fmtUsd(l.cost_usd)}</td></tr>`).join('')}</table>` : '<p class="small muted">Nothing yet.</p>'}</div>
+  </div>
+  <div class="card"><h2>Latest runs</h2>${u.recent.length ? `<table class="small int-table"><tr><th>When</th><th>Lead</th><th>Tool</th><th>Result</th><th>Steps</th><th>Tokens</th><th>Searches</th><th>Time</th><th>API equiv.</th><th></th></tr>${u.recent.map((r) => `<tr><td>${fmtDate(r.at)}</td><td>${r.doc_id ? `<a href="#/${r.kind === 'SWOT' ? 'script' : r.kind === 'Proposal' ? 'proposal' : 'brochure'}/${r.doc_id}">${esc(r.company || `Doc ${r.doc_id}`)}</a>` : esc(r.company || '–')}</td><td>${esc(r.kind || '')}</td><td><span class="tag ${OUT[r.outcome]?.[0] || ''}" ${r.error ? `title="${esc(r.error)}"` : ''}>${OUT[r.outcome]?.[1] || esc(r.outcome)}</span></td><td>${r.turns ?? '–'}</td><td>${r.tokens ? fmtTok(r.tokens) : '–'}</td><td>${r.web_searches ?? '–'}</td><td>${r.seconds ? `${r.seconds} s` : '–'}</td><td>${fmtUsd(r.cost_usd)}</td><td>${r.run_url ? `<a href="${esc(r.run_url)}" target="_blank" rel="noopener">GitHub run</a>` : ''}</td></tr>`).join('')}</table>` : '<p class="small muted">No runs yet.</p>'}</div>`;
+  view.querySelectorAll('[data-days]').forEach((b) => (b.onclick = () => (location.hash = `#/usage/${b.dataset.days}`)));
+}
 async function route() {
   if (!META) return;
   if (activeEditor && !/^#\/(brochure|proposal)\/\d+/.test(location.hash)) { activeEditor.flush?.(); activeEditor = null; }
@@ -1232,6 +1264,7 @@ async function renderIntegrations(section) {
     <div class="form-grid" style="margin-top:12px">${field('claude.github_repo', 'GitHub repo (owner/name)')}${field('claude.timeout_minutes', 'Wait for an answer (minutes)', 'number')}</div>` : `<div class="form-grid" style="margin-top:12px">${field('claude.api_model.anthropic', 'Model on the Claude API')}${field('claude.api_model.openrouter', 'Model on OpenRouter')}${field('ai.daily_budget_usd', 'Daily spend limit (USD)', 'number')}</div>`}
     <div class="form-grid" style="margin-top:12px">${field('claude.max_attempts', 'Tries before giving up', 'number')}${field('claude.web_research', 'Claude may search the web for the business', 'bool')}</div>
     <h3>Last jobs</h3>${runs}
+    <p class="small"><a href="#/usage"><span class="mi in">monitoring</span>Tokens used per run, day and lead</a></p>
     <p class="small muted">Last result received: ${when(c.last_result)}</p></div>
 
   <div class="card" id="i-templates"><h2>Templates: automatic and by hand</h2>

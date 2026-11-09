@@ -351,6 +351,7 @@ api.post('/github-secret', async (req, res) => res.json(await (await import('../
 
 // Integrations page: every connection's status (secrets only as set / not set) and live tests
 api.get('/integrations', async (_req, res) => res.json(await (await import('../integrations.js')).integrationsStatus()));
+api.get('/usage', async (req, res) => res.json(await (await import('../usage.js')).usageReport({ days: Math.min(90, Math.max(1, Number(req.query.days) || 14)) })));
 api.post('/integrations/test/:name', async (req, res) => res.json(await (await import('../integrations.js')).testIntegration(req.params.name)));
 
 // Team CRM (Atomic CRM): status and a read right now

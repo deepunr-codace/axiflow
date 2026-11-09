@@ -2,6 +2,7 @@ import { all, update, run } from './db.js';
 import { getSettings, getState, setState } from './settings.js';
 import { nowISO, BASE_URL } from './util.js';
 import { logEvent, addActivity } from './pipeline/log.js';
+import { recordUsage } from './usage.js';
 
 /*
  * Claude mode (owner, 2026-11-05): the three tools (pitch script, brochure, proposal) write their documents with
@@ -136,9 +137,14 @@ export async function acceptResult(body) {
   const doc = await tools.getDoc(Number(body?.doc_id));
   if (!doc || !body?.token || body.token !== doc.token) return { status: 404, error: 'Unknown document' };
   const c = doc.input?.claude;
-  if (doc.status !== 'working' || !c?.waiting) return { status: 409, error: 'This document is not waiting for Claude' };
+  if (doc.status !== 'working' || !c?.waiting) { await recordUsage(doc, body, 'late'); return { status: 409, error: 'This document is not waiting for Claude' }; }
   if (body.run_url) c.run_url = String(body.run_url).slice(0, 300);
-  if (body.error || !body.output) return retry(doc, String(body.error || 'Claude returned no result').slice(0, 300));
+  if (body.error || !body.output) {
+    const why = String(body.error || 'Claude returned no result').slice(0, 300);
+    await recordUsage(doc, { ...body, error: why }, LIMIT_RE.test(why) ? 'limit' : 'error');
+    return retry(doc, why);
+  }
+  let used = false;
   try {
     const { content, source } = await postProcess(doc, body.output);
     // The lead's strategy: the first one Claude worked out is kept, so later documents follow it (src/ai/strategy.js)
@@ -152,10 +158,15 @@ export async function acceptResult(body) {
     const input = { ...doc.input, claude: { ...c, waiting: false, job: undefined, done: nowISO(), last_error: null } };
     await saveClaude(doc.id, input);
     await tools.completeDoc(doc.id, { content, source });
+    used = true;
+    await recordUsage(doc, body, 'ok');
     await afterReady(await tools.getDoc(doc.id));
     return { status: 200 };
   } catch (e) {
-    return retry(doc, `Claude's result could not be used: ${e.message}`.slice(0, 300));
+    if (used) return { status: 200 }; // the document is ready; only a follow-up failed (afterReady logs its own errors)
+    const why = `Claude's result could not be used: ${e.message}`.slice(0, 300);
+    await recordUsage(doc, { ...body, error: why }, 'error');
+    return retry(doc, why);
   }
 }
 

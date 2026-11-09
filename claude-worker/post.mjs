@@ -4,6 +4,16 @@ import { validate } from './validate.mjs';
 const dir = new URL('./work/', import.meta.url);
 const meta = JSON.parse(fs.readFileSync(new URL('meta.json', dir), 'utf8'));
 let body = { doc_id: meta.doc_id, token: meta.token, run_url: process.env.RUN_URL || null };
+// Usage for the Usage page (numbers only): turns, tokens, cost-equivalent, time, per model
+try {
+  const j = JSON.parse(fs.readFileSync(new URL('claude.json', dir), 'utf8'));
+  const u = j.usage || {};
+  body.usage = {
+    turns: j.num_turns, cost_usd: j.total_cost_usd, ms: j.duration_ms, input: u.input_tokens, cache_write: u.cache_creation_input_tokens,
+    cache_read: u.cache_read_input_tokens, output: u.output_tokens, web_search: u.server_tool_use?.web_search_requests,
+    models: Object.fromEntries(Object.entries(j.modelUsage || {}).map(([k, v]) => [k, { in: v.inputTokens, out: v.outputTokens, cache_read: v.cacheReadInputTokens, cache_write: v.cacheCreationInputTokens, usd: v.costUSD }])),
+  };
+} catch { /* Claude Code did not answer: no usage */ }
 const problems = await validate();
 const hard = problems.filter((p) => !/characters; keep it to|removed by the truth checks|Give exactly|lines or fewer|^layout:|\.(fonts|font_pairing|strategy|review)(\.|:)/.test(p)); // layout warnings: AxiFlow fits the text
 const claudeErr = fs.existsSync(new URL('claude-error.txt', dir)) ? fs.readFileSync(new URL('claude-error.txt', dir), 'utf8').trim() : '';
