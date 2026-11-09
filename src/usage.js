@@ -98,6 +98,9 @@ export async function usageReport({ days = 14 } = {}) {
     recent: rows.slice(0, 30).map((r) => ({
       at: r.at, doc_id: r.doc_id, lead_id: r.lead_id, company: r.company, kind: KIND[r.kind] || r.kind, outcome: r.outcome, error: r.error,
       turns: r.turns, tokens: total(r), fresh: fresh(r), output: r.output_tokens, web_searches: r.web_searches, cost_usd: r.cost_usd,
+      // Claude Code does not fill the web-search counter for its own WebSearch/WebFetch tools; pages it reads are
+      // summarised by the small Haiku model, so a Haiku line in the run's model usage means it did research
+      research: !!(r.web_searches || /haiku/i.test(r.models || '')),
       seconds: r.ms ? Math.round(r.ms / 1000) : null, run_url: r.run_url,
     })),
   };

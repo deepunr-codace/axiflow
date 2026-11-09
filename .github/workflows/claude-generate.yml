@@ -61,7 +61,7 @@ jobs:
             # SWOT, lean (measured 2026-11-09: 73k tokens per run, ~60k of it Claude Code's own default system prompt
             # and tools): our short system prompt instead, only the web tools, no MCP, and --json-schema so the answer
             # is always valid JSON (a malformed answer had cost a second paid run)
-            if [ "$WEB" = "1" ]; then EXTRA=(--tools "WebSearch,WebFetch" --allowedTools "WebSearch,WebFetch"); TURNS=8
+            if [ "$WEB" = "1" ]; then EXTRA=(--tools "WebSearch,WebFetch" --allowedTools "WebSearch,WebFetch"); TURNS=10
             else EXTRA=(--tools ""); TURNS=3; fi
             claude -p "$(cat $W/PROMPT-inline.txt)" --system-prompt "$(cat $W/SYSTEM-inline.txt)" "${EXTRA[@]}" \
               --strict-mcp-config --json-schema "$(cat $W/schema-inline.json)" \
