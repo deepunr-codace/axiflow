@@ -47,8 +47,14 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - **Follow-up** (live b421eb1, AWC 1c940c2, both deployed):
     - the Usage page shows **Research yes/no** (`usage.js` `research` = web_searches or a Haiku line in the model usage, since Claude Code leaves the search counter at 0);
     - lean SWOT max turns 8 → 10 (the 30k run finished on step 8).
+- **Full Claude rerun** (owner: "re run all swots in live", 2026-11-09 04:59 UTC, `swot-claude-rerun.mjs --go --all --conc=5`):
+  - 207/233 done in about 38 min with 0 failures, then the 5-hour limit;
+  - the last 26 wait for the hold until 09:13 UTC and continue by themselves.
+- **Anthropic API key:** added by the owner in live AxiFlow Keys (source app, `…nwAA`); `/keys-test/anthropic` OK.
+  - **Not used yet** (owner chose "keep it as backup"): Claude mode stays on the GitHub engine (subscription), and the in-app AI stays on OpenRouter free.
+  - **To use it:** set `claude.engine = anthropic` (pay-per-use, no 5-hour limit), with the model set to Sonnet to keep costs low.
 - **Next:**
-  1. On the owner's go: rerun the remaining 127 SWOTs with Claude, 3 at a time, with `swot-claude-rerun.mjs --go --conc=3`.
+  1. Confirm the last 26 SWOTs finished after 09:13 UTC.
   2. Watch the Usage page for real per-run numbers on brochures and proposals now that CLAUDE.md is gone from the runner.
   3. AWC still needs `GITHUB_DISPATCH_TOKEN`, then Claude mode on, then a test lead.
 
