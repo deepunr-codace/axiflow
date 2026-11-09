@@ -50,21 +50,30 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
-          WEB="$(node -p "require('./claude-worker/work/job.json').web ? 1 : 0")"
-          if [ -f claude-worker/work/PROMPT-inline.txt ]; then
-            # SWOT: the job is in the prompt and the JSON is the final message (no file tools, few turns)
-            PROMPT_FILE=claude-worker/work/PROMPT-inline.txt; TURNS=8; TOOLS="WebSearch,WebFetch"
-            [ "$WEB" = "1" ] || TOOLS="WebFetch"; [ "$WEB" = "1" ] || TURNS=2
+          W=claude-worker/work
+          WEB="$(node -p "require('./$W/job.json').web ? 1 : 0")"
+          OK=1
+          if [ -f $W/PROMPT-inline.txt ]; then
+            # SWOT, lean (measured 2026-11-09: 73k tokens per run, ~60k of it Claude Code's own default system prompt
+            # and tools): our short system prompt instead, only the web tools, no MCP, and --json-schema so the answer
+            # is always valid JSON (a malformed answer had cost a second paid run)
+            if [ "$WEB" = "1" ]; then EXTRA=(--tools "WebSearch,WebFetch" --allowedTools "WebSearch,WebFetch"); TURNS=8
+            else EXTRA=(--tools ""); TURNS=3; fi
+            claude -p "$(cat $W/PROMPT-inline.txt)" --system-prompt "$(cat $W/SYSTEM-inline.txt)" "${EXTRA[@]}" \
+              --strict-mcp-config --json-schema "$(cat $W/schema-inline.json)" \
+              --max-turns "$TURNS" --output-format json > $W/claude.json || OK=0
           else
-            PROMPT_FILE=claude-worker/PROMPT.txt; TURNS=60
             TOOLS="Read,Write,Edit,Bash(node claude-worker/validate.mjs),Bash(node claude-worker/validate.mjs:*)"
             [ "$WEB" = "1" ] && TOOLS="$TOOLS,WebSearch,WebFetch"
+            claude -p "$(cat claude-worker/PROMPT.txt)" \
+              --allowedTools "$TOOLS" --max-turns 60 --output-format json > $W/claude.json || OK=0
           fi
-          claude -p "$(cat "$PROMPT_FILE")" \
-            --allowedTools "$TOOLS" --max-turns "$TURNS" --output-format json > claude-worker/work/claude.json \
-            || { node -e "try{const j=require('./claude-worker/work/claude.json');const m=String(j.is_error?j.result:j.subtype||'').slice(0,300);console.log('Claude Code failed:', m);require('fs').writeFileSync('claude-worker/work/claude-error.txt', m)}catch(e){console.log('Claude Code failed before answering')}"; exit 1; }
-          # inline jobs: the final message is the answer
-          [ -f claude-worker/work/PROMPT-inline.txt ] && node claude-worker/inline-result.mjs
+          if [ "$OK" = "0" ]; then
+            node -e "try{const j=require('./claude-worker/work/claude.json');const m=String(j.is_error?j.result:j.subtype||'').slice(0,300);console.log('Claude Code failed:', m);require('fs').writeFileSync('claude-worker/work/claude-error.txt', m)}catch(e){console.log('Claude Code failed before answering')}"
+            exit 1
+          fi
+          # lean jobs: save the structured answer as out/result.json
+          [ -f $W/PROMPT-inline.txt ] && node claude-worker/inline-result.mjs
           # usage only (numbers, no lead data): turns, tokens, cost, time, per model
           node -e "const j=require('./claude-worker/work/claude.json');const u=j.usage||{};console.log('USAGE', JSON.stringify({kind:require('./claude-worker/work/job.json').kind,turns:j.num_turns,cost_usd:j.total_cost_usd,ms:j.duration_ms,input:u.input_tokens,cache_write:u.cache_creation_input_tokens,cache_read:u.cache_read_input_tokens,output:u.output_tokens,web_search:u.server_tool_use&&u.server_tool_use.web_search_requests,models:Object.fromEntries(Object.entries(j.modelUsage||{}).map(([k,v])=>[k,{in:v.inputTokens,out:v.outputTokens,cache_read:v.cacheReadInputTokens,cache_write:v.cacheCreationInputTokens,usd:v.costUSD}]))}))" || true
 
