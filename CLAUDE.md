@@ -44,6 +44,13 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
     - SWOT jobs run lean: `--system-prompt` (job.system + worker rules, `work/SYSTEM-inline.txt`), `--tools "WebSearch,WebFetch"`, `--strict-mcp-config`, `--json-schema` (answer read from `structured_output` by `inline-result.mjs`), max 8 turns, and at least 1 search when research is on.
     - `--bare` is not usable: it needs an API key, not the subscription OAuth.
   - **Result** (real run on Haritha Pharmaceuticals, doc 439): about 30k tokens in total (6.5k cache write, 18k cache read, 5.3k output), **$0.09 API-equivalent** (before: 73k / $0.27, and 420k / $0.14–0.35 on 2026-11-06). Valid JSON the first time; research done (found the suspended site, flagged "to confirm" items). Output is now the largest part.
+  - **Follow-up** (live b421eb1, AWC 1c940c2, both deployed):
+    - the Usage page shows **Research yes/no** (`usage.js` `research` = web_searches or a Haiku line in the model usage, since Claude Code leaves the search counter at 0);
+    - lean SWOT max turns 8 → 10 (the 30k run finished on step 8).
+- **Next:**
+  1. On the owner's go: rerun the remaining 127 SWOTs with Claude, 3 at a time, with `swot-claude-rerun.mjs --go --conc=3`.
+  2. Watch the Usage page for real per-run numbers on brochures and proposals now that CLAUDE.md is gone from the runner.
+  3. AWC still needs `GITHUB_DISPATCH_TOKEN`, then Claude mode on, then a test lead.
 
 ## Status (2026-11-06): Pitch Script Maker = SWOT + how we solve it (no call script)
 - **Owner's requests:**
