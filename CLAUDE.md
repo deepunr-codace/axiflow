@@ -13,7 +13,28 @@ The team's main CRM is **Twenty**, set up by a co-worker and run by the **teleca
 
 Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATABASE_URL` and `pg`; embedded PGlite in `data/pg` when `DATABASE_URL` is empty), Vercel Blob for uploads (`data/uploads` locally), nodemailer, `@anthropic-ai/sdk` (Claude, `claude-opus-5-5`), and a vanilla-JS admin SPA in `public/`. There is no build step. Code map: see README. The old SQLite file `data/crm.db` is kept only as a backup/migration source.
 
-## Status (2026-11-06, latest): Pitch Script Maker = SWOT + how we solve it (no call script)
+## Status (2026-11-09, latest): Claude usage tracking (live AxiFlow + AWC)
+- **Owner's request:** "shall we add a setup to track usage?"; chose Claude token usage, in live AxiFlow + AWC.
+- **How it works:**
+  - `claude-worker/post.mjs` sends `usage` (turns, tokens, cache, cost-equivalent, ms, web searches, per model) with every answer;
+  - `acceptResult` records one row per answer in table `claude_usage` (`src/usage.js` `recordUsage`) with outcome ok / limit / error / late; tracking never blocks the doc.
+- **The page:** `GET /api/usage?days=` (`usageReport`) feeds the page `#/usage` (panel Options → "Claude usage"; link under Integrations → Claude → Last jobs). It shows:
+  - KPIs: runs and tokens today, last 5 hours, average per SWOT, API-equivalent;
+  - the limit hold banner and the last limit hit;
+  - tables by day, by tool and by lead, and the latest 30 runs with their GitHub links.
+  - Averages count only runs that reported numbers.
+- **Tested** on a throwaway PGlite DB (5 recorded answers; report checked) and in headless Edge (no console errors).
+- **Deployed:**
+  - **Live AxiFlow:** 5328460, at https://axiflow-v1.vercel.app; `/api/usage` answers with a real login and is empty so far.
+  - **AWC:** d52fdda, deployed.
+- **Deploying live AxiFlow (owner: "in live there may somebody updated codes. so push this feature only to vercel"):**
+  - **GitHub pushes no longer trigger a Vercel deploy** for project `axiflow`: the last automatic one was 3 days earlier, possibly since the repo went private.
+  - **Deploy from a clean export** of the pushed commit: `git archive origin/main` into the scratchpad `axiflow-deploy/` + `.vercel/project.json`, then `vercel deploy --prod` from there.
+  - **Never `vercel deploy` from the repo root:** there is no `.vercelignore`, so it would upload `.env`, `data/` and the AWC folder.
+  - **Before deploying, check that no one else changed the code:** `git fetch` and compare with `origin/main`; `vercel ls` (all deployments so far are by deepunr-9593).
+- **SWOT rerun status:** 106/233 by Claude; the remaining 127 keep the built-in SWOT (the throttled rerun stopped with the session); restart on request.
+
+## Status (2026-11-06): Pitch Script Maker = SWOT + how we solve it (no call script)
 - **Owner's requests:**
   - "the pitch script generating is wrong, we want SWOT of the lead", with a SWOT prompt (strengths, weaknesses, opportunities, threats; short, structured, factual);
   - "how we solve the problem: AEO, GEO, website development, automations, SEO";
