@@ -61,7 +61,15 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - API-key runs total their `ai_calls` rows (`apiUsage`) and report them to the Usage page;
   - Integrations → Claude has an "Engine per tool" section.
   - **Live settings now:** script = github (subscription), brochure = anthropic, proposal = anthropic (model `claude-opus-5-5`, daily spend limit `ai.daily_budget_usd` 15). Checked: mode on, nothing missing.
-  - **Not yet tested with a real brochure or proposal on the API key.** Risk: Vercel stops a function after 300 s, and a long Opus brochure (research + deck) could exceed it; then the doc retries after 7 min.
+  - **First real brochure on the API key** (owner: "last brochure still running, not completing"):
+    - **Why it waited:** doc #474 (Feet Fashion Kottakkal) was dispatched at 06:39 UTC on GitHub, before the switch, and was held by the subscription limit.
+    - **Bug 1:** regenerated on the API key, it failed 3 times with **400 "Schemas contains too many parameters with union types (29…)"**: the deck `BROCHURE_SCHEMA` has 29 nullable/union fields, over the strict structured-output limit. Each try paid for research again, about **$1.60 wasted**.
+    - **Fixes** (live 948dd3a, AWC 6a1b8f0):
+      - `runOnApi` asks for JSON text (`runText` + `parseJsonText`, like `free`) when `unionCount(schema) > 12`;
+      - `retry()` gives up at once on a refused request (`API error 4xx` other than 408/409/429);
+      - `retryStale` re-sends a held job at once when its tool's engine is no longer github.
+    - **Result:** #474 ready in 164 s for **$1.01** (Opus 5.5; 175k tokens incl. research), Editorial, 12 slides, specific copy ("Every step to your counter"), no truth-check removals.
+    - About 2.7 min is well under Vercel's 300 s limit. Proposals use a simple schema (0 unions), so they keep strict structured output.
 - **Next:**
   1. Confirm the last 26 SWOTs finished after 09:13 UTC.
   2. First real brochure / proposal on the API key: check time and cost on the Usage page.
