@@ -49,7 +49,7 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
     - lean SWOT max turns 8 → 10 (the 30k run finished on step 8).
 - **Full Claude rerun** (owner: "re run all swots in live", 2026-11-09 04:59 UTC, `swot-claude-rerun.mjs --go --all --conc=5`):
   - 207/233 done in about 38 min with 0 failures, then the 5-hour limit;
-  - the last 26 wait for the hold until 09:13 UTC and continue by themselves.
+  - the last 26 waited for the hold and finished at 09:18 UTC: **233/233 by Claude, 0 failures**.
 - **Anthropic API key:** added by the owner in live AxiFlow Keys (source app, `…nwAA`); `/keys-test/anthropic` OK.
   - **Not used yet** (owner chose "keep it as backup"): Claude mode stays on the GitHub engine (subscription), and the in-app AI stays on OpenRouter free.
   - **To use it:** set `claude.engine = anthropic` (pay-per-use, no 5-hour limit), with the model set to Sonnet to keep costs low.
@@ -71,7 +71,6 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
     - **Result:** #474 ready in 164 s for **$1.01** (Opus 5.5; 175k tokens incl. research), Editorial, 12 slides, specific copy ("Every step to your counter"), no truth-check removals.
     - About 2.7 min is well under Vercel's 300 s limit. Proposals use a simple schema (0 unions), so they keep strict structured output.
 - **Next:**
-  1. Confirm the last 26 SWOTs finished after 09:13 UTC.
   2. First real brochure / proposal on the API key: check time and cost on the Usage page.
   2. Watch the Usage page for real per-run numbers on brochures and proposals now that CLAUDE.md is gone from the runner.
   3. AWC still needs `GITHUB_DISPATCH_TOKEN`, then Claude mode on, then a test lead.
