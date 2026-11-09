@@ -53,8 +53,18 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
 - **Anthropic API key:** added by the owner in live AxiFlow Keys (source app, `…nwAA`); `/keys-test/anthropic` OK.
   - **Not used yet** (owner chose "keep it as backup"): Claude mode stays on the GitHub engine (subscription), and the in-app AI stays on OpenRouter free.
   - **To use it:** set `claude.engine = anthropic` (pay-per-use, no 5-hour limit), with the model set to Sonnet to keep costs low.
+- **Engine per tool** (owner: "dont use api key for swot. only for brochure and proposals"; live d01b309, AWC 3bbcc14):
+  - setting `claude.engines` = {script, brochure, proposal}; unset follows `claude.engine`;
+  - `engineFor(kind)` maps job kinds to tools (deck / free / brochure → brochure);
+  - `claudeMissing()` checks every engine in use; `dispatchJob` uses the tool's engine;
+  - the usage-limit hold only applies to GitHub jobs;
+  - API-key runs total their `ai_calls` rows (`apiUsage`) and report them to the Usage page;
+  - Integrations → Claude has an "Engine per tool" section.
+  - **Live settings now:** script = github (subscription), brochure = anthropic, proposal = anthropic (model `claude-opus-5-5`, daily spend limit `ai.daily_budget_usd` 15). Checked: mode on, nothing missing.
+  - **Not yet tested with a real brochure or proposal on the API key.** Risk: Vercel stops a function after 300 s, and a long Opus brochure (research + deck) could exceed it; then the doc retries after 7 min.
 - **Next:**
   1. Confirm the last 26 SWOTs finished after 09:13 UTC.
+  2. First real brochure / proposal on the API key: check time and cost on the Usage page.
   2. Watch the Usage page for real per-run numbers on brochures and proposals now that CLAUDE.md is gone from the runner.
   3. AWC still needs `GITHUB_DISPATCH_TOKEN`, then Claude mode on, then a test lead.
 
