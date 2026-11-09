@@ -33,6 +33,17 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - **Never `vercel deploy` from the repo root:** there is no `.vercelignore`, so it would upload `.env`, `data/` and the AWC folder.
   - **Before deploying, check that no one else changed the code:** `git fetch` and compare with `origin/main`; `vercel ls` (all deployments so far are by deepunr-9593).
 - **SWOT rerun status:** 106/233 by Claude; the remaining 127 keep the built-in SWOT (the throttled rerun stopped with the session); restart on request.
+- **Token analysis** (owner pasted the Usage page: one SWOT used 2% of the 5-hour limit; "analyze whts wrong"):
+  - **Found:**
+    1. A malformed JSON answer failed the checks and cost a second paid run (73k tokens each).
+    2. **The repo's CLAUDE.md (125 KB ≈ 50k tokens) was loaded into every Claude run on GitHub**, and re-read on every step of the full jobs. Proof: a one-word prompt from the repo folder = 51k tokens, from an empty folder = 1k.
+    3. Claude Code's default system prompt and tools (we don't need them for a SWOT).
+    4. Research had been skipped (0 searches).
+  - **Fixed** (live 5308f69 + efd9651, AWC 6ff348e; GitHub-side only, no Vercel deploy needed):
+    - the workflow runs `rm -rf CLAUDE.md .claude` (AWC also `AGENTS.md` and the parent folder's) before Claude, for every job kind;
+    - SWOT jobs run lean: `--system-prompt` (job.system + worker rules, `work/SYSTEM-inline.txt`), `--tools "WebSearch,WebFetch"`, `--strict-mcp-config`, `--json-schema` (answer read from `structured_output` by `inline-result.mjs`), max 8 turns, and at least 1 search when research is on.
+    - `--bare` is not usable: it needs an API key, not the subscription OAuth.
+  - **Result** (real run on Haritha Pharmaceuticals, doc 439): about 30k tokens in total (6.5k cache write, 18k cache read, 5.3k output), **$0.09 API-equivalent** (before: 73k / $0.27, and 420k / $0.14–0.35 on 2026-11-06). Valid JSON the first time; research done (found the suspended site, flagged "to confirm" items). Output is now the largest part.
 
 ## Status (2026-11-06): Pitch Script Maker = SWOT + how we solve it (no call script)
 - **Owner's requests:**
