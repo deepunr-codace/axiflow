@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { websiteTypeOf, rememberWebsiteType } from './website-type.js';
 import { addColumns, get, all, run, update } from './db.js';
 import { getSettings, getState, setState } from './settings.js';
 import { nowISO, BASE_URL } from './util.js';
@@ -151,6 +152,9 @@ export async function syncLead(co, ct, deal, { engine, twenty, budget, useCallLo
   if (lead && born && !lead.crm_created_at) await update('leads', lead.id, { crm_created_at: born });
   const hash = hashOf(deal, co, ct);
   if (lead && lead.crm_sync_hash === hash) return 'unchanged';
+  // Website type chosen in the CRM when the lead turned Interested (deal categories): known before any brochure starts
+  const wt = websiteTypeOf(deal?.categories);
+  if (wt && wt !== lead?.website_type) await rememberWebsiteType({ dealId: deal?.id, companyId: co?.id, type: wt, by: 'crm deal' }).catch(() => {});
   const links = { crm_deal_id: deal?.id ?? null, crm_company_id: co?.id ?? null, crm_contact_id: ct?.id ?? null, crm_sales_id: deal?.sales_id ?? co?.sales_id ?? ct?.sales_id ?? null };
   const input = dealInput(deal, co, ct, s);
   const stageKey = deal ? deal.stage : '';
@@ -324,7 +328,7 @@ async function pollOnce({ force = false } = {}) {
     const [companies, contacts, deals] = await Promise.all([
       readAll('companies?select=*&order=id.asc'),
       readAll('contacts?select=*&order=id.asc'),
-      readAll('deals?select=id,name,company_id,contact_ids,stage,description,amount,sales_id,archived_at,updated_at&order=updated_at.desc'),
+      readAll('deals?select=id,name,company_id,contact_ids,stage,description,amount,sales_id,archived_at,updated_at,categories&order=updated_at.desc'),
     ]);
     out.deals = deals.length;
     for (const d of deals) stages[d.stage] = (stages[d.stage] || 0) + 1;

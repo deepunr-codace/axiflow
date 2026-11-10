@@ -1,4 +1,5 @@
 import express from 'express';
+import { isWebsiteType, rememberWebsiteType } from '../website-type.js';
 import { EXTRA_FONTS, PAIRINGS } from '../design/fonts.js';
 import * as atomic from '../atomic.js';
 import { crmLeads, crmLead } from '../crm-leads.js';
@@ -366,6 +367,14 @@ api.get('/atomic/leads/:key', async (req, res) => { try { res.json(await crmLead
 api.post('/demo/seed', (_req, res) => res.status(410).json({ error: 'Demo leads are off: leads come only from the team CRM' })); // owner 2026-11-05
 
 // ------------------------------------------------- AI Brochure / Proposal tools
+// Website type chosen in the CRM when a lead turns Interested (owner, 2026-11-10); any signed-in CRM user
+api.post('/axicore/package', async (req, res) => {
+  const { deal_id, company_id, package: type } = req.body || {};
+  if (!isWebsiteType(type)) return res.status(400).json({ error: 'Unknown website type' });
+  if (!Number(deal_id) && !Number(company_id)) return res.status(400).json({ error: 'deal_id or company_id is required' });
+  const leads = await rememberWebsiteType({ dealId: deal_id, companyId: company_id, type, by: req.user?.email || req.user?.name || 'crm' });
+  res.json({ ok: true, leads });
+});
 // Documents panel on a CRM company page (AxiCore 2.0 in the team CRM; open to every signed-in CRM user)
 api.get('/axicore/company/:id/docs', async (req, res) => {
   const lead = await get(`SELECT id, company, crm_brochure_state, crm_proposal_state FROM leads WHERE external_id = :ext AND crm_removed_at IS NULL`, { ext: `atomic:co:${Number(req.params.id)}` });

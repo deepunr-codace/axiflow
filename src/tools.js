@@ -1,4 +1,5 @@
 import { addColumns, get, all, insert, update, run } from './db.js';
+import { isWebsiteType, websiteTypeFor, websiteTypeSection } from './website-type.js';
 import { background } from './background.js';
 import { writeScript, scriptJob, VERTICALS, LANGUAGES, SERVICES, swotText } from './ai/script.js';
 import { scriptPdf } from './pdf/script.js';
@@ -59,7 +60,7 @@ const parse = (j, fb = null) => { try { return j ? JSON.parse(j) : fb; } catch {
 const str = (v, max = 2000) => String(v ?? '').trim().slice(0, max);
 
 
-const FIELDS = ['company', 'contact_name', 'industry', 'city', 'website', 'package', 'notes', 'research', 'vertical', 'language', 'phone'];
+const FIELDS = ['company', 'contact_name', 'industry', 'city', 'website', 'package', 'notes', 'research', 'vertical', 'language', 'phone', 'website_type'];
 export const KINDS = ['brochure', 'proposal', 'script'];
 function cleanInput(raw) {
   const out = {};
@@ -183,8 +184,12 @@ export function defaultItems(input) {
  * options"): Tool settings → automation.auto_template.<kind> (a template id, 0 = the default). "Claude designs (no
  * template)" is only for documents made by hand, so the automation then falls back to the first real template.
  */
-export async function autoTemplate(kind) {
+export async function autoTemplate(kind, websiteType = null) {
   const isReal = (t) => t && t.kind === kind && t.source !== 'builtin-claude';
+  // a template set for the lead's website type (owner, 2026-11-10) wins over the general one
+  const byType = Number(getSettings().automation?.website_templates?.[kind]?.[websiteType]) || 0;
+  const typed = byType ? await getTemplate(byType) : null;
+  if (isReal(typed)) return typed;
   const pick = Number(getSettings().automation?.auto_template?.[kind]) || 0;
   const chosen = pick ? await getTemplate(pick) : await defaultTemplate(kind);
   if (isReal(chosen)) return chosen;
@@ -200,6 +205,7 @@ export async function createDoc(kind, raw, { wait = false, auto = false } = {}) 
   const s = getSettings();
   const input = cleanInput(raw);
   input.auto = !!auto; // made by the automation (true) or by hand in the tool (false)
+  if (!isWebsiteType(input.website_type)) input.website_type = await websiteTypeFor(await get(`SELECT * FROM leads WHERE id = :id`, { id: crmLead.id })) || '';
   if (kind === 'script') {
     if (!VERTICALS.includes(input.vertical)) input.vertical = input.vertical ? 'Other' : '';
     if (!LANGUAGES.includes(input.language)) input.language = LANGUAGES[0];
@@ -208,7 +214,7 @@ export async function createDoc(kind, raw, { wait = false, auto = false } = {}) 
     await generate(id, { wait });
     return id;
   }
-  const tpl = auto ? await autoTemplate(kind) : (raw.template_id && await getTemplate(Number(raw.template_id))) || await defaultTemplate(kind);
+  const tpl = auto ? await autoTemplate(kind, input.website_type || null) : (raw.template_id && await getTemplate(Number(raw.template_id))) || await defaultTemplate(kind);
   if (!tpl || tpl.kind !== kind) throw new Error('Template not found');
   if (kind === 'brochure') {
     const ids = s.brochure.services.map((x) => x.id);
@@ -326,7 +332,7 @@ export async function buildClaudeJob(doc, s = getSettings()) {
   const strategy = doc.lead_id ? (await get(`SELECT strategy_json FROM leads WHERE id = :id`, { id: doc.lead_id }).catch(() => null))?.strategy_json : null;
   // SWOT (kind script): no quality-review section or scores, to use fewer tokens (owner, 2026-11-06)
   const lean = doc.kind === 'script';
-  job.prompt = [job.prompt, playbookSection(vertical), strategySection(strategy ? JSON.parse(strategy) : null), lean ? '' : qualitySection(doc.kind)].filter(Boolean).join('\n\n');
+  job.prompt = [job.prompt, doc.kind === 'script' ? '' : websiteTypeSection(doc.input.website_type), playbookSection(vertical), strategySection(strategy ? JSON.parse(strategy) : null), lean ? '' : qualitySection(doc.kind)].filter(Boolean).join('\n\n');
   job.schema = withStrategy(job.schema, { review: !lean });
   job.vertical = vertical;
   // Claude Code researches the business itself (website, Google listing, social pages) unless switched off.

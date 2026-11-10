@@ -1303,6 +1303,9 @@ async function renderIntegrations(section) {
   <div class="card" id="i-templates"><h2>Templates: automatic and by hand</h2>
     <p class="small muted">Documents the automation makes (a CRM status change) always use a real template, so every brochure and proposal in the CRM follows a tested design. When you make one by hand (New), you choose: a template, or "Claude designs" (Claude lays out every slide itself; brochures only, needs Claude mode).</p>
     <div class="form-grid">${field('automation.auto_template.brochure', 'Automatic brochures use', 'select', tplOpts('brochure'))}${field('automation.auto_template.proposal', 'Automatic proposals use', 'select', tplOpts('proposal'))}</div>
+    <h3>Brochure template per website type</h3>
+    <p class="small muted">When a lead turns Interested, the CRM asks which website the client wants. The brochure uses the template set here for that type (and Claude writes it around that build). "The default template" falls back to the choice above.</p>
+    <div class="form-grid">${Object.entries(st.templates.website_types || {}).map(([k, n]) => field(`automation.website_templates.brochure.${k}`, n, 'select', [[0, 'The default template'], ...tplOpts('brochure').slice(1)])).join('')}</div>
     <p class="small muted" style="margin-top:8px">Pitch scripts have no template. <a href="#/designs">Manage templates</a></p></div>
 
   <div class="card" id="i-crm"><div class="sec-h"><h2>Team CRM (Atomic CRM on Supabase)</h2><span class="spacer"></span><button class="btn sm" data-test="crm"><span class="mi">network_check</span>Test</button><button class="btn sm" id="intCrmSync"><span class="mi">sync</span>Read the CRM now</button></div>

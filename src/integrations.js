@@ -70,6 +70,7 @@ export async function integrationsStatus() {
     templates: {
       list: tpl,
       auto: s.automation?.auto_template || {},
+      website_types: Object.fromEntries(Object.entries((await import('./website-type.js')).WEBSITE_TYPES).map(([k, t]) => [k, t.label])),
     },
     scheduler: {
       cron_secret_set: set('CRON_SECRET'),

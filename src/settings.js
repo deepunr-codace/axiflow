@@ -35,6 +35,7 @@ export const DEFAULT_SETTINGS = {
     // Tools that run by themselves in the pipeline (designed documents from the default templates)
     auto_tools: { script: true, brochure: true, proposal: true },
     auto_template: { brochure: 0, proposal: 0 }, // template id for automatic documents, 0 = the default (never "Claude designs")
+    website_templates: { brochure: {}, proposal: {} }, // template id per website type chosen in the CRM (0/unset = auto_template)
     proposal_needs_ok: true, // an automatic proposal waits on Today until someone presses Send
     min_score: 25,
     daily_digest: true,
