@@ -4,6 +4,7 @@ import { registerFonts, toBuffer, clean } from '../pdf/brand.js';
 import { ICONS } from './icons.js';
 import { srcPath, loadImage } from './model.js';
 import { EXTRA_FONTS } from './fonts.js';
+import { isUserFont, userFontMetrics, preloadUserFonts, registerUserFonts, effectiveFont } from './user-fonts.js';
 
 /*
  * Renders a design to PDF. Text metrics follow CSS so the PDF matches the editor:
@@ -25,7 +26,9 @@ function measuredMetrics(font) {
     return (METRICS[font] = [content, content + (f.lineGap || 0) / 1000]);
   } catch { return (METRICS[font] = [CONTENT, PDFKIT_LH]); }
 }
-const fm = (font) => METRICS[font] || (EXTRA_FONTS[font] ? measuredMetrics(font) : [CONTENT, PDFKIT_LH]);
+const fm = (font) => METRICS[font] || (EXTRA_FONTS[font] ? measuredMetrics(font) : isUserFont(font) ? userMetrics(font) : [CONTENT, PDFKIT_LH]);
+// A font of an imported PDF: its own hhea numbers (stored when it was imported), as pdfkit and Chrome use them.
+const userMetrics = (font) => { const m = userFontMetrics(font); return m ? [m.ascent + m.descent, m.ascent + m.descent + (m.lineGap || 0)] : [CONTENT, PDFKIT_LH]; };
 /** CSS line-height "normal" (content area) of a font code, in em. */
 export const fontNormal = (font) => fm(font)[0];
 
@@ -151,6 +154,7 @@ export const listIndent = (e) => (e.list === 'icon' ? e.size * 2.3 : e.size * 1.
 export function scratchDoc() {
   const doc = new PDFDocument({ autoFirstPage: false });
   registerFonts(doc);
+  registerUserFonts(doc);
   return doc;
 }
 
@@ -309,8 +313,10 @@ function drawPricing(doc, e, items, settings) {
 /** Renders a whole design to a PDF buffer. */
 export async function renderDesignPdf(design, { title = '', author = '', items = null, settings }) {
   IMAGES = await preloadImages(design);
+  await preloadUserFonts(design).catch(() => {});
   const doc = new PDFDocument({ autoFirstPage: false, margin: 0, info: { Title: clean(title), Author: clean(author) } });
   registerFonts(doc);
+  registerUserFonts(doc);
   for (const p of design.pages) {
     doc.addPage({ size: [p.w, p.h], margin: 0 });
     doc.page.margins.bottom = -100000; // never auto-paginate: overflow stays on its page, like in the editor
@@ -323,7 +329,7 @@ export async function renderDesignPdf(design, { title = '', author = '', items =
       if (e.type === 'shape') drawShape(doc, e);
       else if (e.type === 'image') drawImage(doc, e);
       else if (e.type === 'icon') drawIcon(doc, e);
-      else if (e.type === 'text') drawText(doc, e);
+      else if (e.type === 'text') drawText(doc, isUserFont(e.font) ? { ...e, font: effectiveFont(e) } : e);
       else if (e.type === 'pricing') drawPricing(doc, e, items, settings);
     }
   }

@@ -37,6 +37,13 @@ app.get('/fonts.css', async (_req, res) => {
   const { EXTRA_FONTS } = await import('./design/fonts.js');
   res.type('text/css').set('cache-control', 'public, max-age=86400').send(Object.values(EXTRA_FONTS).map((f) => `@font-face { font-family: "${f.family}"; font-weight: ${f.weight}; src: url(/fonts/${f.file}) format('truetype'); font-display: block; }`).join('\n'));
 });
+// Fonts of imported PDF templates (src/design/user-fonts.js): public like the other fonts (the code is a hash), so the
+// editor's @font-face also loads them through the CRM's proxy
+app.get('/fonts/x/:code', async (req, res) => {
+  const f = await (await import('./design/user-fonts.js')).fontFile(req.params.code).catch(() => null);
+  if (!f) return res.status(404).end();
+  res.type(f.type).set('cache-control', 'public, max-age=31536000, immutable').send(f.buf);
+});
 app.use('/fonts', express.static(path.join(ROOT, 'assets', 'fonts'), { maxAge: '7d' }));
 app.use(express.static(path.join(ROOT, 'public')));
 // AxiCore 2.0: the same tools app on the team CRM's own address (the CRM proxies /axicore-app/ here), signed in with

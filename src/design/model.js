@@ -70,7 +70,7 @@ export function cleanElement(e) {
   if (e.locked) base.locked = true;
   switch (e.type) {
     case 'text':
-      return { ...base, text: str(e.text, 8000), font: FONTS.includes(e.font) ? e.font : 'PR', size: num(e.size, 4, 400, 16), color: color(e.color, '#141413'), align: ['left', 'center', 'right'].includes(e.align) ? e.align : 'left', lh: num(e.lh, 0.7, 3, 1.4), ls: num(e.ls, -20, 40, 0), list: ['', 'dot', 'icon'].includes(e.list) ? e.list : '', gap: num(e.gap, 0, 200, 8), outline: num(e.outline, 0, 20, 0), rot: num(e.rot, -180, 180, 0), hl: e.hl ? color(e.hl, '') : '', arc: num(e.arc, 0, 2000, 0) };
+      return { ...base, text: str(e.text, 8000), font: FONTS.includes(e.font) || /^X[0-9a-f]{8}$/.test(e.font) ? e.font : 'PR' /* X…: a font of an imported PDF (user-fonts.js) */, size: num(e.size, 4, 400, 16), color: color(e.color, '#141413'), align: ['left', 'center', 'right'].includes(e.align) ? e.align : 'left', lh: num(e.lh, 0.7, 3, 1.4), ls: num(e.ls, -20, 40, 0), list: ['', 'dot', 'icon'].includes(e.list) ? e.list : '', gap: num(e.gap, 0, 200, 8), outline: num(e.outline, 0, 20, 0), rot: num(e.rot, -180, 180, 0), hl: e.hl ? color(e.hl, '') : '', arc: num(e.arc, 0, 2000, 0) };
     case 'image':
       return { ...base, src: SRC_RE.test(e.src || '') ? e.src : '', fit: ['cover', 'contain', 'fill'].includes(e.fit) ? e.fit : 'cover', radius: num(e.radius, 0, 1000, 0), ha: ['left', 'center', 'right'].includes(e.ha) ? e.ha : 'center', va: ['top', 'center', 'bottom'].includes(e.va) ? e.va : 'center' };
     case 'shape':

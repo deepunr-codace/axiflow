@@ -17,7 +17,35 @@ export async function loadMeta(api) {
   for (const [code, f] of Object.entries(META.fonts || {})) { // classic typefaces (src/design/fonts.js)
     FONT_W[code] = f.weight; FONT_FAMILY[code] = `"${f.family}"`; FONT_NAMES[code] = f.name;
   }
+  await loadUserFonts(api).catch(() => {});
   return META;
+}
+
+/*
+ * Fonts of imported PDFs (src/design/user-fonts.js): each code X… is its own @font-face family "AXF-X…", loaded from
+ * /fonts/x/<code>. A subset font (only the letters the PDF used) sets text with a letter it lacks in its fallback
+ * face, the same rule as the PDF renderer (effectiveFont), so editor and PDF match.
+ */
+const USER_FONTS = {};
+export async function loadUserFonts(api) {
+  const list = await api('/design/fonts');
+  await Promise.all(list.map(async (f) => {
+    if (USER_FONTS[f.code]) return;
+    USER_FONTS[f.code] = f;
+    FONT_W[f.code] = f.weight; FONT_FAMILY[f.code] = `"AXF-${f.code}"`;
+    FONT_NAMES[f.code] = `${f.family} ${({ 100: 'Thin', 200: 'ExtraLight', 300: 'Light', 400: 'Regular', 500: 'Medium', 600: 'SemiBold', 700: 'Bold', 800: 'ExtraBold', 900: 'Black' })[f.weight] || f.weight}${f.italic ? ' Italic' : ''}${f.source === 'embedded' ? ' (from the PDF)' : ''}`;
+    try { const ff = new FontFace(`AXF-${f.code}`, `url(/fonts/x/${f.code})`, { weight: String(f.weight) }); document.fonts.add(ff); await ff.load(); } catch { /* the fallback face shows */ }
+  }));
+  return USER_FONTS;
+}
+export const userFont = (code) => USER_FONTS[code] || null;
+function effectiveFont(e) {
+  const f = USER_FONTS[e.font];
+  if (!/^X[0-9a-f]{8}$/.test(e.font || '')) return e.font;
+  if (!f) return 'PR';
+  if (f.chars == null) return e.font;
+  for (const ch of String(e.text || '').replace(/\*\*/g, '')) if (ch.trim() && !f.chars.includes(ch)) return f.fallback;
+  return e.font;
 }
 
 // ===================================================================== render
@@ -35,6 +63,8 @@ function money(n) {
 function textInner(e) {
   const box = document.createElement('div');
   box.className = 'txt';
+  const font = effectiveFont(e);
+  if (font !== e.font) e = { ...e, font };
   Object.assign(box.style, {
     fontFamily: `${FONT_FAMILY[e.font] || 'Poppins'}, sans-serif`, fontWeight: FONT_W[e.font] || 400, fontSize: `${e.size}px`, lineHeight: String(e.lh),
     letterSpacing: `${e.ls}px`, color: e.color, textAlign: e.align,
@@ -281,7 +311,7 @@ export async function openEditor(root, { doc, api, toast, busy, modal, onChange 
     let html = '';
     if (e.type === 'text') {
       html = `<h3>Text</h3>
-        <div class="ed-grid"><label>Font<select data-k="font">${[['Classic typefaces', (k) => !!META?.fonts?.[k]], ['Template fonts', (k) => !META?.fonts?.[k]]].map(([g, f]) => `<optgroup label="${g}">${Object.entries(FONT_NAMES).filter(([k]) => f(k)).map(([k, n]) => `<option value="${k}" ${k === e.font ? 'selected' : ''}>${n}</option>`).join('')}</optgroup>`).join('')}</select></label>${num('Size', 'size', e.size, 0.5)}</div>
+        <div class="ed-grid"><label>Font<select data-k="font">${[['Fonts of imported PDFs', (k) => !!USER_FONTS[k]], ['Classic typefaces', (k) => !!META?.fonts?.[k]], ['Template fonts', (k) => !META?.fonts?.[k] && !USER_FONTS[k]]].filter(([, f]) => Object.keys(FONT_NAMES).some(f)).map(([g, f]) => `<optgroup label="${g}">${Object.entries(FONT_NAMES).filter(([k]) => f(k)).map(([k, n]) => `<option value="${k}" ${k === e.font ? 'selected' : ''}>${n}</option>`).join('')}</optgroup>`).join('')}</select></label>${num('Size', 'size', e.size, 0.5)}</div>
         ${colorField('Colour', 'color', e.color)}
         ${e.hl ? colorField('Highlight colour', 'hl', e.hl) + '<p class="small muted">Words between ** and ** use the highlight colour.</p>' : ''}
         ${e.arc ? `<div class="ed-grid">${num('Circle size', 'arc', e.arc)}${num('Turn', 'rot', e.rot)}</div>` : ''}
@@ -679,14 +709,47 @@ export async function openEditor(root, { doc, api, toast, busy, modal, onChange 
 
 // ================================================================ PDF import
 /**
- * Turns a PDF (e.g. exported from Canva) into a template: each page's artwork becomes a
- * text-free background image, its text becomes editable text boxes at the same positions.
+ * Turns a PDF (e.g. exported from Canva) into a template: each page's artwork becomes a text-free background image,
+ * its text becomes editable text boxes at the same positions, in the PDF's own fonts (owner, 2026-11-10: "the pdf
+ * templates import is not same as the pdf, its changing the design"):
+ *  - every font of the PDF is resolved on the server (/api/design/fonts/resolve): the same family from Google Fonts,
+ *    else the font file the PDF carries; text is set at its real size, with the letter spacing measured per run;
+ *  - text the page does not visibly draw as text (invisible text over a picture, as in scanned or screenshot PDFs,
+ *    or text drawn as shapes) stays part of the picture: no text box is laid over it. With the client name given,
+ *    a line naming the client on such a page is covered and made editable, so {{company}} still works;
+ *  - rotated and very small text stays in the picture (it used to vanish).
+ * Returns the pages; pages.stats = { boxes, kept, named }.
  */
-export async function pdfToTemplate(file, onProgress = () => {}) {
+export async function pdfToTemplate(file, onProgress = () => {}, { api = null, sampleCompany = '' } = {}) {
   const pdfjs = await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs');
   pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs';
-  const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
+  const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer(), fontExtraProperties: true }).promise;
   if (pdf.numPages > 60) throw new Error('That PDF has more than 60 pages');
+  const fonts = new Map();
+  const resolve = (f) => {
+    const key = f?.name || '';
+    // per font object: Canva PDFs give each page its own subset under the same name ("AAAAAA+OpenSauceOne-SemiBold")
+    const id = f?.loadedName || key;
+    if (!fonts.has(id)) fonts.set(id, (async () => {
+      let r = null;
+      if (api && key && !/glyphless/i.test(key)) {
+        const data = f?.data && f.data.length < 2.5e6 ? toB64(f.data) : null;
+        // pdf.js's letter → font char map (it moves glyphs to private-use code points); the server rebuilds the cmap from it
+        const map = [];
+        const tu = f?.toUnicode?._map || f?.toUnicode, tf = f?.toFontChar;
+        if (tu && Array.isArray(tf)) for (let c = 0; c < tf.length && map.length < 5000; c++) if (typeof tu[c] === 'string' && tf[c] != null) map.push([tu[c], tf[c]]);
+        r = await api('/design/fonts/resolve', { body: { name: key, bold: !!f?.bold, black: !!f?.black, italic: !!f?.italic, data, map } }).catch(() => null);
+      }
+      r ||= { code: weightOf(key), builtin: true, ascent: 1.05, descent: 0.35, lineGap: 0, chars: null };
+      if (!r.builtin) await loadUserFonts(api).catch(() => {});
+      await document.fonts.load(`${FONT_W[r.code] || 400} 20px ${FONT_FAMILY[r.code] || 'Poppins'}`).catch(() => {});
+      if (r.fallback) await document.fonts.load(`${FONT_W[r.fallback] || 400} 20px ${FONT_FAMILY[r.fallback] || 'Poppins'}`).catch(() => {});
+      return r;
+    })());
+    return fonts.get(id);
+  };
+  const meas = document.createElement('canvas').getContext('2d');
+  const stats = { boxes: 0, kept: 0, named: 0 };
   const pages = [];
   for (let n = 1; n <= pdf.numPages; n++) {
     onProgress(n, pdf.numPages);
@@ -697,24 +760,61 @@ export async function pdfToTemplate(file, onProgress = () => {}) {
     const mk = () => { const c = document.createElement('canvas'); c.width = Math.round(vp.width); c.height = Math.round(vp.height); return c; };
     const bg = mk(), full = mk();
     const bctx = bg.getContext('2d', { willReadFrequently: true });
-    bctx.fillText = () => {}; bctx.strokeText = () => {};
+    // the background keeps rotated and tiny text (they get no text box), and loses the rest
+    const fill = bctx.fillText.bind(bctx), stroke = bctx.strokeText.bind(bctx);
+    const keepText = () => {
+      const m = bctx.getTransform();
+      const sx = Math.hypot(m.a, m.b), sy = Math.hypot(m.c, m.d);
+      const px = parseFloat((/(\d+(?:\.\d+)?)px/.exec(bctx.font) || [])[1] || 0) * sy / scale;
+      return Math.abs(m.b) > 0.01 * sx || Math.abs(m.c) > 0.01 * sy || px < 3;
+    };
+    bctx.fillText = (...a) => { if (keepText()) fill(...a); };
+    bctx.strokeText = (...a) => { if (keepText()) stroke(...a); };
     await page.render({ canvasContext: bctx, viewport: vp }).promise;
     const fctx = full.getContext('2d', { willReadFrequently: true });
     await page.render({ canvasContext: fctx, viewport: vp }).promise;
     const tc = await page.getTextContent();
-    const items = [];
+    const items = [], extra = [];
     for (const it of tc.items) {
       if (!it.str || !it.str.trim()) continue;
       const [a, b, , , ex, ey] = it.transform;
       const size = Math.hypot(a, b);
-      if (size < 3 || Math.abs(b) > 0.01 * size) continue; // skip tiny or rotated text
-      let fname = '';
-      try { fname = page.commonObjs.get(it.fontName)?.name || ''; } catch { /* unresolved */ }
-      items.push({ str: it.str, x: ex, base: vp1.height - ey, w: it.width, size, font: weightOf(fname), color: sampleColor(bctx, fctx, ex * scale, (vp1.height - ey - size * 0.8) * scale, Math.max(it.width, size) * scale, size * scale) });
+      if (size < 3 || Math.abs(b) > 0.01 * size) continue; // rotated or tiny: stays in the background
+      const base = vp1.height - ey;
+      const color = sampleColor(bctx, fctx, ex * scale, (base - size * 0.8) * scale, Math.max(it.width, size) * scale, size * scale);
+      if (!color) { // not drawn as visible text: it is part of the picture
+        stats.kept++;
+        if (sampleCompany && it.str.toLowerCase().includes(sampleCompany.toLowerCase()) && it.str.length <= sampleCompany.length + 40) {
+          extra.push(...namePatch(fctx, scale, it.str, ex, base, it.width, size));
+          stats.named++;
+        }
+        continue;
+      }
+      let f = null;
+      try { f = page.commonObjs.get(it.fontName); } catch { /* unresolved */ }
+      const r = await resolve(f);
+      // letter spacing: the run's width in the PDF against its width in the chosen font (only when that font has every letter)
+      let ls = 0;
+      const fits = r.chars == null || [...it.str].every((ch) => !ch.trim() || r.chars.includes(ch));
+      if (fits && it.width > 0) {
+        meas.font = `${FONT_W[r.code] || 400} ${size}px ${FONT_FAMILY[r.code] || 'Poppins'}`;
+        const k = [...it.str].length;
+        const d = (it.width - meas.measureText(it.str).width) / k;
+        if (k > 1 && Math.abs(d) > size * 0.01) ls = Math.max(-20, Math.min(40, Math.round(d * 100) / 100));
+      }
+      items.push({ str: it.str, x: ex, base, w: it.width, size, font: r.code, fm: r, ls, color });
     }
-    pages.push({ w: vp1.width, h: vp1.height, bg: bg.toDataURL('image/jpeg', 0.85), elements: blocksFrom(items) });
+    const elements = [...extra, ...blocksFrom(items)];
+    stats.boxes += elements.filter((e) => e.type === 'text').length - extra.filter((e) => e.type === 'text').length;
+    pages.push({ w: vp1.width, h: vp1.height, bg: bg.toDataURL('image/jpeg', 0.9), elements });
   }
+  pages.stats = stats;
   return pages;
+}
+function toB64(u8) {
+  let s = '';
+  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000));
+  return btoa(s);
 }
 
 function weightOf(name) {
@@ -725,10 +825,11 @@ function weightOf(name) {
   return 'PR';
 }
 
+/** The colour a run of text adds to the page (full render vs the text-free one), or null when it adds none. */
 function sampleColor(bctx, fctx, x, y, w, h) {
   x = Math.max(0, Math.floor(x)); y = Math.max(0, Math.floor(y));
   w = Math.max(1, Math.min(Math.floor(w), bctx.canvas.width - x)); h = Math.max(1, Math.min(Math.floor(h), bctx.canvas.height - y));
-  if (w < 1 || h < 1) return '#141413';
+  if (w < 1 || h < 1) return null;
   const A = bctx.getImageData(x, y, w, h).data, B = fctx.getImageData(x, y, w, h).data;
   let best = 0;
   const diffs = [];
@@ -736,11 +837,50 @@ function sampleColor(bctx, fctx, x, y, w, h) {
     const d = Math.abs(A[i] - B[i]) + Math.abs(A[i + 1] - B[i + 1]) + Math.abs(A[i + 2] - B[i + 2]);
     if (d > 40) { diffs.push([d, i]); if (d > best) best = d; }
   }
-  if (!diffs.length) return '#141413';
+  if (diffs.length < 3) return null;
   let r = 0, g = 0, bl = 0, n = 0;
   for (const [d, i] of diffs) if (d >= best * 0.8) { r += B[i]; g += B[i + 1]; bl += B[i + 2]; n++; }
   const hx = (v) => Math.round(v / n).toString(16).padStart(2, '0');
   return `#${hx(r)}${hx(g)}${hx(bl)}`;
+}
+
+/**
+ * The client's name inside a picture (no real text): the background behind it rebuilt row by row (each row blended
+ * from the colours just left and right of the name, so gradients and horizontal lines carry on) as an image over the
+ * name, and an editable text box on it, so a new client's name can replace it. Colour and weight come from the
+ * name's own pixels; the typeface is approximate (the picture's font is unknown). Sized to the name's line only
+ * (cap top to descender), so the lines above and below are not touched.
+ */
+function namePatch(ctx, scale, str, x, base, w, size) {
+  const padX = size * 0.08, top = base - size * 0.82, bottom = base + size * 0.24;
+  const X = Math.max(1, Math.floor((x - padX) * scale)), Y = Math.max(0, Math.floor(top * scale));
+  const W = Math.max(4, Math.min(Math.ceil((w + 2 * padX) * scale), ctx.canvas.width - X - 1)), H = Math.max(2, Math.min(Math.ceil((bottom - top) * scale), ctx.canvas.height - Y));
+  const src = ctx.getImageData(X - 1, Y, W + 2, H).data, SW = W + 2;
+  const at = (i, j) => { const k = (j * SW + i) * 4; return [src[k], src[k + 1], src[k + 2]]; };
+  const patch = new ImageData(W, H);
+  let ink = [0, 0, 0], inkN = 0, cover = 0;
+  const far = [];
+  for (let j = 0; j < H; j++) {
+    const L = at(0, j), R = at(SW - 1, j);
+    for (let i = 0; i < W; i++) {
+      const t = (i + 1) / (W + 1), bgp = [0, 1, 2].map((c) => Math.round(L[c] + (R[c] - L[c]) * t));
+      const k = (j * W + i) * 4;
+      patch.data.set([...bgp, 255], k);
+      const p = at(i + 1, j), d = Math.abs(p[0] - bgp[0]) + Math.abs(p[1] - bgp[1]) + Math.abs(p[2] - bgp[2]);
+      if (d > 90) { cover++; far.push([d, p]); }
+    }
+  }
+  far.sort((a, b) => b[0] - a[0]);
+  for (const [, p] of far.slice(0, Math.max(1, Math.floor(far.length * 0.3)))) { ink = ink.map((v, c) => v + p[c]); inkN++; } // the strongest third = the letters' own colour
+  const hex = (c) => '#' + c.map((v) => Math.round(v).toString(16).padStart(2, '0')).join('');
+  const color = inkN ? hex(ink.map((v) => v / inkN)) : '#141413';
+  const ratio = cover / (W * H); // how much of the line the letters cover: heavy faces cover more
+  const font = ratio > 0.3 ? 'PB' : ratio > 0.22 ? 'PS' : ratio > 0.16 ? 'PM' : 'PR';
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H; cv.getContext('2d').putImageData(patch, 0, 0);
+  return [
+    { type: 'image', src: cv.toDataURL('image/png'), x: X / scale, y: Y / scale, w: W / scale, h: H / scale, fit: 'fill', radius: 0, opacity: 1 },
+    { type: 'text', text: str.trim(), x, y: base - ((1.2 - CONTENT) / 2 + 1.05) * size, w: w * 1.25 + size, h: 1.2 * size, font, size, color, align: 'left', lh: 1.2, ls: 0, list: '', gap: 8 },
+  ];
 }
 
 /** Groups pdf.js text runs into lines, then lines into text boxes. */
@@ -748,11 +888,12 @@ function blocksFrom(items) {
   items.sort((p, q) => p.base - q.base || p.x - q.x);
   const lines = [];
   for (const it of items) {
-    const ln = lines.find((l) => Math.abs(l.base - it.base) < it.size * 0.35 && Math.abs(l.size - it.size) < 1.5 && it.x >= l.right - it.size * 0.2 && it.x - l.right < it.size * 1.2);
+    const ln = lines.find((l) => l.font === it.font && Math.abs(l.base - it.base) < it.size * 0.35 && Math.abs(l.size - it.size) < 1.5 && it.x >= l.right - it.size * 0.2 && it.x - l.right < it.size * 1.2);
     if (ln) {
       ln.text += it.x - ln.right > it.size * 0.15 && !/\s$/.test(ln.text) && !/^\s/.test(it.str) ? ' ' + it.str : it.str;
       ln.right = Math.max(ln.right, it.x + it.w);
-    } else lines.push({ ...it, text: it.str, left: it.x, right: it.x + it.w });
+      ln.lsw.push([it.ls, it.str.length]);
+    } else lines.push({ ...it, text: it.str, left: it.x, right: it.x + it.w, lsw: [[it.ls, it.str.length]] });
   }
   lines.sort((p, q) => p.base - q.base || p.left - q.left);
   const blocks = [];
@@ -760,23 +901,35 @@ function blocksFrom(items) {
     const b = blocks.find((k) => {
       const last = k.lines[k.lines.length - 1];
       const gap = l.base - last.base;
-      const sameCol = Math.abs(l.left - k.left) < l.size * 0.8 || Math.abs((l.left + l.right) / 2 - (last.left + last.right) / 2) < l.size;
+      const sameCol = Math.abs(l.left - k.left) < l.size * 0.8 || Math.abs((l.left + l.right) / 2 - (last.left + last.right) / 2) < l.size || Math.abs(l.right - k.right) < l.size * 0.5;
       return sameCol && Math.abs(l.size - k.size) < 1.5 && l.font === k.font && l.color === k.color && gap > 0 && gap < l.size * 1.9;
     });
     if (b) { b.lines.push(l); b.left = Math.min(b.left, l.left); b.right = Math.max(b.right, l.right); }
-    else blocks.push({ lines: [l], left: l.left, right: l.right, size: l.size, font: l.font, color: l.color });
+    else blocks.push({ lines: [l], left: l.left, right: l.right, size: l.size, font: l.font, fm: l.fm, color: l.color });
   }
   return blocks.map((b) => {
+    const text = b.lines.map((l) => l.text.trim()).join('\n');
+    // a subset font lacking one of the letters: the box is set (and positioned) in its fallback face, like the editor does
+    const own = b.fm.chars == null || [...text].every((ch) => !ch.trim() || b.fm.chars.includes(ch));
+    const font = own ? b.font : b.fm.fallback || 'PR';
+    const m = own ? b.fm : { ...(b.fm.fallback_metrics || { ascent: 1.05, descent: 0.35 }) };
+    const content = (m.ascent || 1.05) + (m.descent || 0.35);
+    const s = Math.round(b.size * 100) / 100;
     const gaps = b.lines.slice(1).map((l, i) => l.base - b.lines[i].base).sort((p, q) => p - q);
-    const s = Math.round(b.size * 0.94 * 10) / 10;
-    const lh = gaps.length ? Math.min(2.5, Math.max(0.9, gaps[Math.floor(gaps.length / 2)] / s)) : 1.25;
-    const centered = b.lines.length > 1 && b.lines.every((l) => Math.abs((l.left + l.right) / 2 - (b.left + b.right) / 2) < b.size * 0.6) && b.lines.some((l) => Math.abs(l.left - b.left) > b.size);
-    const w = (b.right - b.left) * 1.12 + 4;
-    const first = b.lines[0].base;
+    const lh = gaps.length ? Math.min(2.5, Math.max(0.8, gaps[Math.floor(gaps.length / 2)] / s)) : Math.max(1.2, Math.round(content * 100) / 100);
+    const lsw = own ? b.lines.flatMap((l) => l.lsw).sort((p, q) => p[0] - q[0]) : [];
+    let ls = 0, acc = 0;
+    const total = lsw.reduce((t, [, k]) => t + k, 0);
+    for (const [v, k] of lsw) { acc += k; if (acc >= total / 2) { ls = v; break; } } // median by letters
+    const multi = b.lines.length > 1;
+    const centered = multi && b.lines.every((l) => Math.abs((l.left + l.right) / 2 - (b.left + b.right) / 2) < b.size * 0.6) && b.lines.some((l) => Math.abs(l.left - b.left) > b.size);
+    const right = !centered && multi && b.lines.every((l) => Math.abs(l.right - b.right) < b.size * 0.4) && b.lines.some((l) => Math.abs(l.left - b.left) > b.size);
+    const slack = s * 0.6 + Math.abs(ls) * 2;
+    const w = b.right - b.left + slack;
+    const x = centered ? b.left - slack / 2 : right ? b.left - slack : b.left;
     return {
-      type: 'text', text: b.lines.map((l) => l.text.trim()).join('\n'),
-      x: centered ? b.left - (w - (b.right - b.left)) / 2 : b.left, y: first - ((lh - CONTENT) / 2 + 1.05) * s, w, h: lh * s * b.lines.length,
-      font: b.font, size: s, color: b.color, align: centered ? 'center' : 'left', lh: Math.round(lh * 100) / 100, ls: 0, list: '', gap: 8,
+      type: 'text', text, x, y: b.lines[0].base - ((lh - content) / 2 + (m.ascent || 1.05)) * s, w, h: lh * s * b.lines.length,
+      font, size: s, color: b.color, align: centered ? 'center' : right ? 'right' : 'left', lh: Math.round(lh * 1000) / 1000, ls, list: '', gap: 8,
     };
   });
 }

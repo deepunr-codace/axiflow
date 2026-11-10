@@ -449,6 +449,13 @@ api.delete('/design/templates/:id', async (req, res) => { await templates.delete
 api.post('/design/templates/import', express.json({ limit: '4mb' }), async (req, res) => res.json({ id: await templates.importTemplate(req.body || {}) }));
 
 // Images used in designs: upload (data URL) and serve (assets/ + data/uploads/).
+// Fonts of imported PDFs: the importer resolves each font of the PDF to a code (Google Fonts, else the PDF's own file)
+api.get('/design/fonts', async (_req, res) => res.json(await (await import('../design/user-fonts.js')).listUserFonts()));
+api.post('/design/fonts/resolve', express.json({ limit: '3mb' }), async (req, res) => {
+  const b = req.body || {};
+  if (!b.name || typeof b.name !== 'string') return res.status(400).json({ error: 'Font name missing' });
+  res.json(await (await import('../design/user-fonts.js')).resolveFont({ name: b.name.slice(0, 200), bold: !!b.bold, black: !!b.black, italic: !!b.italic, data: typeof b.data === 'string' ? b.data : null, map: Array.isArray(b.map) ? b.map : null }));
+});
 api.post('/design/images', express.json({ limit: '4.4mb' }), async (req, res) => res.json({ src: await saveDataUrl(req.body?.image, 'images') }));
 api.get('/design/file', async (req, res) => {
   const src = String(req.query.src || '');

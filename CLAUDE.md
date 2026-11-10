@@ -13,6 +13,32 @@ The team's main CRM is **Twenty**, set up by a co-worker and run by the **teleca
 
 Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATABASE_URL` and `pg`; embedded PGlite in `data/pg` when `DATABASE_URL` is empty), Vercel Blob for uploads (`data/uploads` locally), nodemailer, `@anthropic-ai/sdk` (Claude, `claude-opus-5-5`), and a vanilla-JS admin SPA in `public/`. There is no build step. Code map: see README. The old SQLite file `data/crm.db` is kept only as a backup/migration source.
 
+## Status (2026-11-10): PDF template import keeps the design (own fonts, picture pages kept)
+- **Owner:** "the pdf templates import is not same as the pdf its changing the design".
+- **Causes found:**
+  1. The PDFs the owner imports are often **pictures with an invisible text layer**: `Downloads/jayabharathams's - proposal.pdf` (Inter names, never drawn as text) and `Digital Growth Solutions for Bodhis LUXE.pdf` ("Glyphless" font). The old importer laid black Poppins text over text that was already in the picture.
+  2. Real-text PDFs (Canva: Open Sauce One, Mont, Monument Extended…) were reset in Poppins at 94% and reflowed.
+  3. Rotated or tiny text vanished (taken out of the background, never made a box).
+- **Now** (`pdfToTemplate` in public/editor.js, `src/design/user-fonts.js`):
+  - **Visible text only:** a run that adds no pixels (full render vs text-free render) stays part of the picture. With the client name given, each line naming the client gets a patch: the background rebuilt row by row from the colours left and right of it, an image uploaded via `/api/design/images`, plus a text box in the name's colour, in a Poppins weight chosen by how much of the line the letters cover. `{{company}}` replacement still works.
+  - **Fonts** (`POST /api/design/fonts/resolve`, table `design_fonts`, code `X<8 hex>`, files in storage `fonts/`, served publicly at `/fonts/x/<code>`):
+    - the same family and weight from Google Fonts (metric aliases Arial→Arimo, Times→Tinos…);
+    - else the PDF's own font file as pdf.js builds it. Its cmap is rebuilt from pdf.js's `toUnicode`/`toFontChar` (pdf.js moves glyphs to private-use code points), and a space is mapped to an empty glyph at 0.25 em (Canva subsets have none: pdfkit drew boxes).
+    - **Fallback:** a subset lacking a letter of an element sets that whole element in its `fallback` face (Inter or Lora by weight), with the same rule in the editor and the PDF (`effectiveFont`).
+    - **Font keys:** fonts are keyed per pdf.js font object (`loadedName`): Canva reuses one name for different per-page subsets.
+  - **Text:** real size, letter spacing measured per run against the chosen font, y from the font's own ascent/descent, right alignment detected.
+  - **Rotated / tiny text** stays in the background.
+  - **Font menu:** the editor lists imported fonts under "Fonts of imported PDFs".
+  - **PDF renderer:** `preloadUserFonts` + `registerUserFonts`; metrics come from the stored hhea numbers.
+- **Tested** (local throwaway DB):
+  - `Digital Growth Solutions.pdf` (12 pages, 78 boxes): editor and server PDF match the original on pages 1, 3, 10 and 12 (fonts, tight spacing, line breaks, Thank-you page).
+  - The JB proposal (17 pages) and the Bodhis picture PDF come through as their pictures, with the client name editable and seamless.
+  - Scripts in the scratchpad: `live-crm/imp-one.mjs`, `shot-one.mjs`, `pdf2png.mjs`, `../pdf-render.mjs`, `imp-debug.mjs`, `cmap-test.mjs`.
+- **Not done:**
+  - Templates imported before this keep their old Poppins boxes: import them again.
+  - A typeface for text inside pictures is only approximated (Poppins).
+  - A client name with letters missing from a subset font is set in the fallback face.
+
 ## Status (2026-11-10): Templates → View
 - **Owner:** "in templates i need a view option". Each template card has **View** (clicking the preview opens it too): `viewTemplate()` in app.js opens the dialog with class `viewer` (1180 px wide; `modal()` removes the class) showing every page from `/api/design/templates/:id/preview?all=1` for the sample client, each sized to fit the window height, with "Page n of N", Close and "Use this template" (→ `#/<kind>/new` with the template chosen). Styles `.tv-*` / `dialog.viewer` at the end of styles.css.
 - **Tested** in headless Edge on a throwaway DB (scratchpad `live-crm/tv-test.mjs`): Precision 12 pages, Default Proposal 11 A4 pages (one whole page fits), Mono at 390 px width (no page scroll), dark and light, Esc closes, Use goes to the New form, a later dialog keeps its normal 680 px, no console errors.
@@ -27,6 +53,15 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
 - **Tested** (scratchpad `fb-test.mjs`, throwaway DB, stand-in GitHub / OpenRouter / Anthropic): 14 checks: limit, held, failed checks, dispatch failure, late GitHub error, timeout, no budget, budget back, Anthropic refusal (gives up, no loop), fallback off.
 - **Live settings:** `claude.engines` for script / brochure / proposal cleared (all follow `claude.engine = github`), `claude.fallback_engine = anthropic` (Opus 5.5, $15/day limit).
 - **Watch:** brochures on GitHub take longer than on the API (about 2-5 min vs 2.7 min) and use the subscription; the Usage page shows which engine ran each job.
+
+## Status (2026-11-10, latest): "Codeace Business Website" brochure template (local, not committed, not live)
+- **Owner:** "can u create a new default template for bussiness website plan? downloads/Digital Growth Solutions for Bodhis LUXE.pdf" (12 slides, 960×540; text is outlined, so its fonts are unknown).
+- **Built:** `src/design/growth.js` `growthDesign(data)` (design id `growth`, template source `builtin-growth`, name "Codeace Business Website", seeded once like the Signature rows, same duplicate clean-up). Lavender grid paper, Codeace blue #2b45d6, ink #0a0f2c, Inter Bold headlines (new font `IB7`), JetBrains Mono eyebrows (`JM5`, OFL file added), white cards with a soft shadow image, photo cards with a floating badge, blue→violet CTA, "Thank you." close. Slides: cover → about → insight (verified stats only) → gaps (lead SWOT) → how we help (cards) → one per service → why us → CTA → thank you.
+  - Assets `assets/brochure/growth/` (paper.jpg, cta.jpg, glow.png, shadow.png, sphere.png; drawn in headless Edge). New icons: chat, search, dashboard, like, users, shield, cart, calendar, bolt, growth, play, code.
+  - `TYPE_TEMPLATES['business-website']` = `builtin-growth` (was Precision); live has no per-type template pinned, so it applies as soon as this is deployed. The general default template is unchanged.
+  - `writeDeck`: gaps from the SWOT also for `growth`; the sample stylist cover is dropped unless the lead is a salon/beauty business (the layout then shows the website mockup); `about.more` = the second About paragraph. Claude gets a `<design_system>` section for this design.
+- **Tested:** the reference content rebuilt and compared with the PDF slide by slide; a sample lead with 2/3/4 gaps; throwaway-DB e2e (business-website → this template; automatic doc ready, 13 pages, gaps from SWOT, no stylist; Claude-shaped answer ready, invented stat removed); editor in headless Edge (fonts load, no console errors); Signature looks still render. **Not seen:** a real Claude run, real stock photos.
+- **Next:** owner reviews the sample PDFs; commit + push (deploys live) when the owner says so.
 
 ## Status (2026-11-10, newest): Codeace Signature brochure designs + website package popup (LIVE)
 - **Owner:** a folder of agency brochures (`Downloads/brochure samples`: Quadcubes, Andrija Designs, ColorWhistle, b:web, Angular Minds, WeDoWebApps, AscentSpark): "we need like this. can u make it as our templates? or plan it", then "also complete our plan" and "category selection on intrest also pls finish".

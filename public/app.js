@@ -1306,7 +1306,7 @@ async function renderIntegrations(section) {
     <div class="form-grid">${field('automation.auto_template.brochure', 'Automatic brochures use', 'select', tplOpts('brochure'))}${field('automation.auto_template.proposal', 'Automatic proposals use', 'select', tplOpts('proposal'))}</div>
     <h3>Brochure template per website type</h3>
     <p class="small muted">When a lead turns Interested, the CRM asks which website the client wants. The brochure uses the template set here for that type (and Claude writes it around that build). "The default template" falls back to the choice above.</p>
-    <div class="form-grid">${Object.entries(st.templates.website_types || {}).map(([k, n]) => field(`automation.website_templates.brochure.${k}`, n, 'select', [[0, `Automatic: ${({ 'business-website': 'Codeace Precision', 'ecommerce-store': 'Codeace Bold', 'shopify-store': 'Codeace Commerce', 'landing-page': 'Codeace Mono' })[k] || 'the default template'}`], ...tplOpts('brochure').slice(1)])).join('')}</div>
+    <div class="form-grid">${Object.entries(st.templates.website_types || {}).map(([k, n]) => field(`automation.website_templates.brochure.${k}`, n, 'select', [[0, `Automatic: ${({ 'business-website': 'Codeace Business Website', 'ecommerce-store': 'Codeace Bold', 'shopify-store': 'Codeace Commerce', 'landing-page': 'Codeace Mono' })[k] || 'the default template'}`], ...tplOpts('brochure').slice(1)])).join('')}</div>
     <p class="small muted" style="margin-top:8px">Pitch scripts have no template. <a href="#/designs">Manage templates</a></p></div>
 
   <div class="card" id="i-crm"><div class="sec-h"><h2>Team CRM (Atomic CRM on Supabase)</h2><span class="spacer"></span><button class="btn sm" data-test="crm"><span class="mi">network_check</span>Test</button><button class="btn sm" id="intCrmSync"><span class="mi">sync</span>Read the CRM now</button></div>
@@ -1673,7 +1673,7 @@ async function viewTemplate(kind, id, name) {
 
 function importDialog(kind) {
   const d = modal('Import a template from PDF', `
-    <p class="small muted">Works best with PDFs exported from Canva, Figma, PowerPoint or Word. Each page's artwork becomes the background and every piece of text becomes an editable text box. Fonts are swapped for Poppins, so check the spacing after importing.</p>
+    <p class="small muted">Works best with PDFs exported from Canva, Figma, PowerPoint or Word. Each page's artwork becomes the background and every piece of text becomes an editable text box in the PDF's own font (the same font from Google Fonts, or the copy inside the PDF). Pages that are pictures, like scans or screenshots, stay exactly as they are; only the client name below is made editable on them.</p>
     <div class="form-grid">
       <label>Type<select id="impKind"><option value="brochure" ${kind === 'brochure' ? 'selected' : ''}>Brochure</option><option value="proposal" ${kind === 'proposal' ? 'selected' : ''}>Proposal</option></select></label>
       <label>Template name<input id="impName" placeholder="e.g. Blue salon brochure"></label>
@@ -1685,16 +1685,18 @@ function importDialog(kind) {
     const f = $('#impFile').files[0];
     if (!f) throw new Error('Choose a PDF file');
     if (f.size > 60e6) throw new Error('PDF is too large (max 60 MB)');
-    const pages = await pdfToTemplate(f, (n, total) => { $('#impStatus').textContent = `Reading page ${n} of ${total}…`; });
+    const pages = await pdfToTemplate(f, (n, total) => { $('#impStatus').textContent = `Reading page ${n} of ${total}…`; }, { api, sampleCompany: $('#impClient').value.trim() });
+    const st = pages.stats || {};
     for (const [i, p] of pages.entries()) { // one request per page image (hosting caps request size)
       $('#impStatus').textContent = `Uploading page ${i + 1} of ${pages.length}…`;
       if (p.bg) p.bg = (await api('/design/images', { body: { image: p.bg } })).src;
+      for (const e of p.elements) if (e.type === 'image' && e.src?.startsWith('data:')) e.src = (await api('/design/images', { body: { image: e.src } })).src; // client-name patches
     }
     $('#impStatus').textContent = 'Saving template…';
     const k = $('#impKind').value;
     await api('/design/templates/import', { body: { kind: k, name: $('#impName').value || f.name, sample_company: $('#impClient').value, pages } });
     d.close();
-    toast(`Imported ${pages.length} page${pages.length === 1 ? '' : 's'}`);
+    toast(`Imported ${pages.length} page${pages.length === 1 ? '' : 's'}: ${st.boxes || 0} editable text box${st.boxes === 1 ? '' : 'es'}${st.kept ? `; ${st.kept} text${st.kept === 1 ? ' is' : 's are'} part of the page pictures and kept as they are${st.named ? ` (the client name made editable in ${st.named} place${st.named === 1 ? '' : 's'})` : ''}` : ''}`);
     renderDesigns(k);
   });
 }
