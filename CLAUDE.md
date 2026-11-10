@@ -13,6 +13,17 @@ The team's main CRM is **Twenty**, set up by a co-worker and run by the **teleca
 
 Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATABASE_URL` and `pg`; embedded PGlite in `data/pg` when `DATABASE_URL` is empty), Vercel Blob for uploads (`data/uploads` locally), nodemailer, `@anthropic-ai/sdk` (Claude, `claude-opus-5-5`), and a vanilla-JS admin SPA in `public/`. There is no build step. Code map: see README. The old SQLite file `data/crm.db` is kept only as a backup/migration source.
 
+## Status (2026-11-10, latest): every tool on Claude Code (GitHub) first, the API key as fallback
+- **Owner:** "for all use claude code on github. if usage limit reaches or any errors then use API".
+- **Code** (`src/claude-worker.js`): setting `claude.fallback_engine` (default `anthropic`; '' = no fallback, the old wait-for-reset behaviour). `fallbackFor('github')` = that engine when its key is set and today's AI spend is under `ai.daily_budget_usd` (`budgetLeft()` in `src/ai/claude.js`).
+  - **When a GitHub job moves to the API:** usage-limit answer (no try used; `claude_hold` still set, so later jobs skip GitHub until the reset), any other error answer (next try), a failed dispatch (at once), no answer in time (`retryStale`, even on the last try), and jobs held for the limit (next sweep).
+  - Once moved, a job stays on the API for its remaining tries (`input.claude.fell_back` = why). An older GitHub run that reports an error afterwards is ignored (API answers carry `body.engine`); a late GitHub answer that worked is still taken.
+  - API spend limit reached during a fallback → the job goes back to GitHub (waits for the reset if held).
+  - Integrations → Claude: "If GitHub fails or hits the usage limit" select; Last jobs shows an "API" / "API fallback" tag (hover = why).
+- **Tested** (scratchpad `fb-test.mjs`, throwaway DB, stand-in GitHub / OpenRouter / Anthropic): 14 checks: limit, held, failed checks, dispatch failure, late GitHub error, timeout, no budget, budget back, Anthropic refusal (gives up, no loop), fallback off.
+- **Live settings:** `claude.engines` for script / brochure / proposal cleared (all follow `claude.engine = github`), `claude.fallback_engine = anthropic` (Opus 5.5, $15/day limit).
+- **Watch:** brochures on GitHub take longer than on the API (about 2-5 min vs 2.7 min) and use the subscription; the Usage page shows which engine ran each job.
+
 ## Status (2026-11-10, newest): Codeace Signature brochure designs + website package popup (LIVE)
 - **Owner:** a folder of agency brochures (`Downloads/brochure samples`: Quadcubes, Andrija Designs, ColorWhistle, b:web, Angular Minds, WeDoWebApps, AscentSpark): "we need like this. can u make it as our templates? or plan it", then "also complete our plan" and "category selection on intrest also pls finish".
 - **Built** (AxiFlow commit e53fe2f, on top of 9035969 = the website type engine work):

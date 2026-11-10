@@ -49,6 +49,7 @@ export async function integrationsStatus() {
       engines: cw.ENGINES,
       by_tool: Object.fromEntries(cw.TOOLS.map((t) => [t, cw.engineFor(t, s)])), // the engine each tool really uses
       in_use: cw.enginesInUse(s),
+      fallback: cw.fallbackEngine(s), // the usable fallback engine for GitHub jobs (its key set), or null
       model: cw.engineModel(s),
       mode: !!s.claude?.mode,
       on: cw.claudeOn(s),
@@ -64,7 +65,7 @@ export async function integrationsStatus() {
         let c = {}, review = null;
         try { c = JSON.parse(d.input_json).claude || {}; } catch { /* old row */ }
         try { review = JSON.parse(d.content_json || 'null')?.review || null; } catch { /* old row */ }
-        return { review, engine: c.engine || 'github', id: d.id, kind: d.kind, title: d.title, status: d.status, error: d.error, attempts: c.attempts || 0, run_url: c.run_url || null, job: c.job?.kind || null, waiting: !!c.waiting, done: !!c.done, dispatched_at: c.dispatched_at || null, updated_at: d.updated_at };
+        return { review, engine: c.engine || 'github', fell_back: c.fell_back || null, id: d.id, kind: d.kind, title: d.title, status: d.status, error: d.error, attempts: c.attempts || 0, run_url: c.run_url || null, job: c.job?.kind || null, waiting: !!c.waiting, done: !!c.done, dispatched_at: c.dispatched_at || null, updated_at: d.updated_at };
       }),
     },
     templates: {

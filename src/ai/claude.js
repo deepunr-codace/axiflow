@@ -60,6 +60,8 @@ export async function aiStatus() {
   };
 }
 
+/** True while today's AI spend is under the daily limit (the Claude mode fallback checks it before switching to the API). */
+export const budgetLeft = async (s = getSettings()) => (await spentToday(s)) < s.ai.daily_budget_usd;
 async function spentToday(s) {
   const { date } = tzParts(new Date(), s.schedule.timezone);
   const since = zonedToUtc(date, '00:00', s.schedule.timezone);

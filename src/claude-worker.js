@@ -12,6 +12,7 @@ import { recordUsage } from './usage.js';
  * The doc stays "working" until then; the result goes through the same post-processing and layout as the
  * in-app path, then the usual CRM writes (announce) and follow-ups run.
  * No in-app fallback (owner's choice): a missing answer is retried, then the doc shows an error to retry by hand.
+ * Since 2026-11-10 a failed GitHub job is retried on the owner's API key (claude.fallback_engine; see fallbackFor).
  */
 const EVENT = 'axiflow-generate';
 
@@ -43,6 +44,24 @@ export const engineFor = (kind, s = getSettings()) => {
   return ENGINES[e] ? e : engineOf(s);
 };
 export const enginesInUse = (s = getSettings()) => [...new Set(TOOLS.map((t) => engineFor(t, s)))];
+
+/*
+ * Fallback (owner, 2026-11-10: "for all use claude code on github. if usage limit reaches or any errors then use API"):
+ * a GitHub job that hits the Claude usage limit, cannot be dispatched, fails or does not answer in time goes to
+ * claude.fallback_engine ('anthropic' by default; '' = no fallback). It only switches when that engine's key is set
+ * and today's AI spend is under the daily limit; otherwise the job waits for GitHub as before.
+ */
+export const fallbackEngine = (s = getSettings()) => {
+  const f = s.claude?.fallback_engine;
+  return ENGINES[f] && f !== 'github' && !missingFor(f, s).length ? f : null;
+};
+async function fallbackFor(engine) {
+  if (engine !== 'github') return null;
+  const f = fallbackEngine();
+  if (!f) return null;
+  const { budgetLeft } = await import('./ai/claude.js');
+  return (await budgetLeft().catch(() => false)) ? f : null;
+}
 
 /** What is still needed before Claude mode can be switched on (for every engine the tools use). */
 export function claudeMissing() {
@@ -142,15 +161,26 @@ async function dispatch(doc, claude) {
  * Sends a document's job to Claude Code. ctx = what the post-processing needs later (audit, brief, design…).
  * Records the attempt on the doc (input.claude); a failed dispatch is retried by retryStale().
  */
-export async function dispatchJob(doc, job, ctx = {}, { attempt = 1 } = {}) {
+export async function dispatchJob(doc, job, ctx = {}, { attempt = 1, engine: forced = null, fellBack = null } = {}) {
   const claude = { waiting: true, job, ctx, attempts: attempt, dispatched_at: nowISO(), last_error: null, run_url: null };
-  const engine = engineFor(job.kind);
+  let engine = forced || engineFor(job.kind);
+  if (fellBack) claude.fell_back = String(fellBack).slice(0, 200);
+  let hold = engine === 'github' ? await getState('claude_hold') : null;
+  if (hold && !(new Date(hold.until) > new Date())) hold = null;
+  if (hold) { // the subscription limit is still on: straight to the fallback engine when there is one
+    const f = await fallbackFor(engine);
+    if (f) { engine = f; claude.fell_back = `Claude usage limit (${hold.why})`.slice(0, 200); hold = null; }
+  }
   const missing = missingFor(engine);
-  claude.engine = engine;
-  const hold = engine === 'github' ? await getState('claude_hold') : null;
   if (missing.length) claude.last_error = `Claude mode is on but this server is missing: ${missing.join('; ')}`;
-  else if (hold && new Date(hold.until) > new Date()) { claude.hold_until = hold.until; claude.last_error = `Waiting for the Claude usage limit to reset (${hold.why})`.slice(0, 300); }
-  else if (engine === 'github') try { claude.run_url = await dispatch(doc, claude); } catch (e) { claude.last_error = e.message; }
+  else if (hold) { claude.hold_until = hold.until; claude.last_error = `Waiting for the Claude usage limit to reset (${hold.why})`.slice(0, 300); }
+  else if (engine === 'github') {
+    try { claude.run_url = await dispatch(doc, claude); } catch (e) {
+      const f = await fallbackFor(engine);
+      if (f) { engine = f; claude.fell_back = `GitHub dispatch failed: ${e.message}`.slice(0, 200); } else claude.last_error = e.message;
+    }
+  }
+  claude.engine = engine;
   await saveClaude(doc.id, { ...doc.input, claude });
   if (claude.hold_until) return claude;
   if (!missing.length && engine !== 'github') {
@@ -158,12 +188,12 @@ export async function dispatchJob(doc, job, ctx = {}, { attempt = 1 } = {}) {
     background(async () => {
       let body;
       const since = nowISO(), t0 = Date.now();
-      try { body = { doc_id: doc.id, token: doc.token, output: await runOnApi(doc, claude, engine) }; } catch (e) { body = { doc_id: doc.id, token: doc.token, error: `${ENGINES[engine]}: ${e.message}` }; }
+      try { body = { doc_id: doc.id, token: doc.token, engine, output: await runOnApi(doc, claude, engine) }; } catch (e) { body = { doc_id: doc.id, token: doc.token, engine, error: `${ENGINES[engine]}: ${e.message}` }; }
       body.usage = await apiUsage(doc, since, Date.now() - t0).catch(() => null); // for the Usage page, like the GitHub runs
       await acceptResult(body).catch(() => {});
     }, `claude-${engine}`);
   }
-  await logEvent(doc.lead_id ?? null, 'claude', job.kind, claude.last_error ? 'error' : 'ok', claude.last_error || `doc #${doc.id} sent to Claude Code (try ${attempt})`);
+  await logEvent(doc.lead_id ?? null, 'claude', job.kind, claude.last_error ? 'error' : 'ok', claude.last_error || `doc #${doc.id} sent to ${ENGINES[engine]} (try ${attempt})${claude.fell_back && engine !== 'github' ? `, fallback after: ${claude.fell_back}` : ''}`.slice(0, 500));
   return claude;
 }
 const saveClaude = (id, input) => update('docs', id, { input_json: input, updated_at: nowISO() });
@@ -176,6 +206,9 @@ export async function acceptResult(body) {
   const c = doc.input?.claude;
   if (doc.status !== 'working' || !c?.waiting) { await recordUsage(doc, body, 'late'); return { status: 409, error: 'This document is not waiting for Claude' }; }
   if (body.run_url) c.run_url = String(body.run_url).slice(0, 300);
+  // An older GitHub run reporting a failure after the job already moved to the API: that run is finished with.
+  // (A late GitHub answer that worked is still taken; the API run's answer then arrives late and is ignored.)
+  if ((body.error || !body.output) && !body.engine && c.engine && c.engine !== 'github') { await recordUsage(doc, body, 'late'); return { status: 200, error: 'An older GitHub run failed; the job now runs on the API' }; }
   if (body.error || !body.output) {
     const why = String(body.error || 'Claude returned no result').slice(0, 300);
     await recordUsage(doc, { ...body, error: why }, LIMIT_RE.test(why) ? 'limit' : 'error');
@@ -248,9 +281,20 @@ function resetAt(why) {
 async function retry(doc, why) {
   const s = getSettings();
   const c = doc.input.claude;
-  if (LIMIT_RE.test(why) && (c.engine || 'github') === 'github') {
-    const until = resetAt(why);
-    await setState('claude_hold', { until, why: why.slice(0, 200) });
+  const onGithub = (c.engine || 'github') === 'github';
+  const limit = LIMIT_RE.test(why) && onGithub;
+  if (limit) await setState('claude_hold', { until: resetAt(why), why: why.slice(0, 200) }); // later jobs skip GitHub until the reset
+  const f = onGithub ? await fallbackFor('github') : null;
+  if (f) { // GitHub failed (limit or any error): the same job on the API now; a usage limit does not use up a try
+    await dispatchJob(doc, c.job, c.ctx, { attempt: limit ? c.attempts || 1 : (c.attempts || 1) + 1, engine: f, fellBack: why });
+    return { status: 200, error: why };
+  }
+  if (!onGithub && c.fell_back && /Daily AI budget/i.test(why)) { // the API spend limit is reached: back to GitHub (waits for its reset if held)
+    await dispatchJob(doc, c.job, c.ctx, { attempt: c.attempts || 1, engine: 'github' });
+    return { status: 200, error: why };
+  }
+  if (limit) {
+    const until = (await getState('claude_hold'))?.until || resetAt(why);
     await saveClaude(doc.id, { ...doc.input, claude: { ...c, waiting: true, hold_until: until, last_error: `Waiting for the Claude usage limit to reset (${why})`.slice(0, 300) } });
     await logEvent(doc.lead_id ?? null, 'claude', c.job?.kind || doc.kind, 'ok', `doc #${doc.id}: Claude usage limit, waits until ${until}`);
     return { status: 200, error: why };
@@ -262,7 +306,7 @@ async function retry(doc, why) {
     await giveUp(doc, why);
     return { status: 200, error: why };
   }
-  await dispatchJob(doc, c.job, c.ctx, { attempt: (c.attempts || 1) + 1 });
+  await dispatchJob(doc, c.job, c.ctx, { attempt: (c.attempts || 1) + 1, engine: c.fell_back ? c.engine : null, fellBack: c.fell_back });
   return { status: 200, error: why };
 }
 async function giveUp(doc, why) {
@@ -287,7 +331,8 @@ export async function retryStale({ force = false } = {}) {
     if (!c?.waiting) continue;
     if (c.hold_until) { // waiting for the usage limit: send again after the reset, with the same try
       // ...unless its tool now runs on an API key (engine per tool): then the subscription limit does not apply
-      if (new Date(c.hold_until) > new Date() && engineFor(c.job?.kind || doc.kind) === 'github') continue;
+      // ...or the fallback engine can take it now (owner, 2026-11-10: usage limit → API)
+      if (new Date(c.hold_until) > new Date() && engineFor(c.job?.kind || doc.kind) === 'github' && !await fallbackFor('github')) continue;
       await dispatchJob(doc, c.job, c.ctx, { attempt: c.attempts || 1 });
       n++;
       continue;
@@ -298,8 +343,12 @@ export async function retryStale({ force = false } = {}) {
     const late = Date.now() - new Date(c.dispatched_at).getTime() > wait;
     if (!late && !c.last_error) continue; // still within its time and the dispatch worked
     if (c.last_error && !late && Date.now() - new Date(c.dispatched_at).getTime() < 120000) continue; // a failed dispatch: wait 2 min before trying again
-    if ((c.attempts || 1) >= (s.claude?.max_attempts || 3)) await giveUp(doc, c.last_error || `no answer within ${s.claude?.timeout_minutes || 20} minutes`);
-    else await dispatchJob(doc, c.job, c.ctx, { attempt: (c.attempts || 1) + 1 });
+    // no answer in time (or a failed dispatch): a GitHub job goes to the fallback engine when there is one,
+    // even on its last try; a job already moved to the API stays there
+    const f = (c.engine || 'github') === 'github' ? await fallbackFor('github') : null;
+    if (f) await dispatchJob(doc, c.job, c.ctx, { attempt: (c.attempts || 1) + 1, engine: f, fellBack: c.last_error || 'no answer from GitHub in time' });
+    else if ((c.attempts || 1) >= (s.claude?.max_attempts || 3)) await giveUp(doc, c.last_error || `no answer within ${s.claude?.timeout_minutes || 20} minutes`);
+    else await dispatchJob(doc, c.job, c.ctx, { attempt: (c.attempts || 1) + 1, engine: c.fell_back ? c.engine : null, fellBack: c.fell_back });
     n++;
   }
   return n;
