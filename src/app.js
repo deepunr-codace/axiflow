@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'node:path';
+import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { ready } from './db.js';
@@ -38,6 +39,15 @@ app.get('/fonts.css', async (_req, res) => {
 });
 app.use('/fonts', express.static(path.join(ROOT, 'assets', 'fonts'), { maxAge: '7d' }));
 app.use(express.static(path.join(ROOT, 'public')));
+// AxiCore 2.0: the same tools app on the team CRM's own address (the CRM proxies /axicore-app/ here), signed in with
+// the CRM login. `embedded` switches app.js to the CRM token and adds the way back to the CRM.
+app.get(['/axicore-app', '/axicore-app/', '/axicore-app/index.html'], (_req, res) => {
+  const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8')
+    .replace('<html', '<html class="embedded"').replace('href="/styles.css"', 'href="/axicore-app/styles.css"').replace('src="/app.js"', 'src="/axicore-app/app.js"')
+    .replace('<title>AxiFlow</title>', '<title>AxiCore 2.0</title>').replace('<span class="crumb-app">AxiFlow</span>', '<span class="crumb-app">AxiCore 2.0</span>').replace('<div class="p-name">AxiFlow</div>', '<div class="p-name">AxiCore 2.0</div>');
+  res.set('cache-control', 'no-store').type('html').send(html);
+});
+app.use('/axicore-app', express.static(path.join(ROOT, 'public')));
 
 app.use(async (req, res, next) => {
   try { await boot(); await loadSettings(); await loadKeys(); next(); } catch (e) {

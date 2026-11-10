@@ -1247,3 +1247,23 @@ html[data-theme="light"] .how-opt > input { accent-color: #18181B; }
 .sw-threats { box-shadow: inset 3px 0 0 #d9486b; }
 .sc-list .sc-row.sw-sol { grid-template-columns: 160px 1fr 1.4fr 1fr auto; }
 @media (max-width: 900px) { .sc-list .sc-row.sw-sol { grid-template-columns: 1fr; } }
+
+/* AxiCore 2.0: the tools app on its own page of the team CRM (/axicore-app/, signed in with the CRM login).
+   It keeps its own menu; the CRM handles signing in and out, so the log-out buttons are hidden. */
+html.embedded #logoutBtn, html.embedded [data-act="logout"] { display: none !important; }
+html.embedded .login-card p { margin: 0; color: var(--muted); line-height: 1.5; }
+/* the way back to the CRM: flush at the bottom of the sidebar, inverted like the AxiCore tile in the CRM */
+html.embedded .panel { padding-bottom: 0; }
+.axc-crm { position: relative; display: flex; align-items: center; gap: 12px; margin: 10px -8px 0 -10px; padding: 16px 16px 16px 18px; background: #0c0c0e; color: #FAFAFA; border-top: 1px solid rgba(255, 255, 255, .08); text-decoration: none; overflow: hidden; }
+.axc-crm-mark { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px; background: #FAFAFA; color: #0A0A0B; flex: none; }
+.axc-crm:hover { background: #141417; }
+.axc-crm-mark .mi { font-size: 19px; }
+.axc-crm b { display: block; font-size: 14px; font-weight: 600; line-height: 1.2; }
+.axc-crm small { display: block; font-size: 12px; opacity: .6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.axc-crm .grow { min-width: 0; }
+.axc-crm-go { font-size: 18px; opacity: .6; transition: transform .2s; }
+.axc-crm:hover .axc-crm-go { transform: translate(2px, -2px); }
+.axc-crm::after { content: ""; position: absolute; inset: -20%; background: linear-gradient(105deg, transparent 40%, rgba(255, 255, 255, .08) 50%, transparent 60%); transform: translateX(-120%); pointer-events: none; }
+.axc-crm:hover::after { transition: transform .6s cubic-bezier(.65, 0, .35, 1); transform: translateX(120%); }
+@media (prefers-reduced-motion: reduce) { .axc-crm:hover::after { transition: none; } }
+

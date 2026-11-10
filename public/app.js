@@ -10,6 +10,27 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const view = $('#view');
 let META = null;
 
+// AxiCore 2.0 (these tools on the team CRM's own address, /axicore-app/): the CRM's login goes with every API call
+const EMBEDDED = document.documentElement.classList.contains('embedded');
+if (EMBEDDED) {
+  const crmToken = () => {
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (/^sb-.+-auth-token$/.test(k)) return JSON.parse(localStorage.getItem(k))?.access_token || null;
+      }
+    } catch { /* storage blocked */ }
+    return null;
+  };
+  const plainFetch = window.fetch.bind(window);
+  window.fetch = (input, init = {}) => {
+    const url = typeof input === 'string' ? input : input.url;
+    const t = url.startsWith('/api/') ? crmToken() : null;
+    if (t) { const h = new Headers(init.headers || {}); h.set('authorization', `Bearer ${t}`); init = { ...init, headers: h }; }
+    return plainFetch(input, init);
+  };
+}
+
 // ---------------------------------------------------------------- helpers
 async function api(path, opts = {}) {
   const res = await fetch('/api' + path, {
@@ -87,9 +108,10 @@ function formData(form) {
 }
 
 // ------------------------------------------------------------------ auth
-function showLogin() {
+function showLogin(text) {
   $('#shell').classList.add('hidden');
   $('#login').classList.remove('hidden');
+  if (EMBEDDED) $('#loginForm').innerHTML = `<div class="brand"><span class="rail-logo">A</span> AxiCore 2.0</div><p>${esc(text || 'Sign in to the CRM to use the tools.')}</p><p><a href="/">Open the CRM</a></p>`;
 }
 $('#loginForm').onsubmit = async (e) => {
   e.preventDefault();
@@ -252,7 +274,14 @@ async function boot() {
   if (!me.authed) return showLogin();
   META = await api('/meta');
   $('#shell').classList.remove('hidden');
-  const who = (typeof META.agency === 'string' && META.agency) || 'Codeace';
+  if (EMBEDDED && !me.axicore) return showLogin('AxiCore 2.0 is only for CRM admins. Ask an admin to give you the admin role in the CRM (Users).');
+  const who = (EMBEDDED && me.user?.name) || (typeof META.agency === 'string' && META.agency) || 'Codeace';
+  if (EMBEDDED && !$('.axc-crm')) { // on the CRM's own address: the way back sits at the bottom of the sidebar
+    $('.p-name').textContent = 'AxiCore 2.0';
+    document.title = 'AxiCore 2.0';
+    $('.panel').insertAdjacentHTML('beforeend', '<a class="axc-crm" href="/" title="Back to the CRM"><span class="axc-crm-mark"><span class="mi">dashboard</span></span><span class="grow"><b>CRM</b><small>Back to the CRM</small></span><span class="mi axc-crm-go">arrow_outward</span></a>');
+    const logo = $('.rail-logo'); if (logo) { logo.href = '/'; logo.title = 'Back to the CRM'; }
+  }
   $('#whoName').textContent = who;
   $('#avName').textContent = who;
   $('#avBtn').textContent = who.trim().charAt(0).toUpperCase() || 'A';

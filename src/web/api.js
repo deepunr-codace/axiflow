@@ -15,7 +15,7 @@ import { schedulerInfo, refreshBriefing } from '../scheduler.js';
 import { aiStatus } from '../ai/claude.js';
 import { planNextAction } from '../ai/manager.js';
 import { crmConfigured, flushOutbox } from '../crm-sync.js';
-import { login, logout, requireAuth, isAuthed } from './auth.js';
+import { login, logout, requireAuth, isAuthed, currentUser, axicoreRoles } from './auth.js';
 import { seedDemo } from '../seed.js';
 import * as tools from '../tools.js';
 import { VERTICALS, LANGUAGES } from '../ai/script.js';
@@ -30,7 +30,10 @@ export const api = express.Router();
 
 api.post('/login', login);
 api.post('/logout', logout);
-api.get('/me', (req, res) => res.json({ authed: isAuthed(req) }));
+api.get('/me', async (req, res) => {
+  const user = await currentUser(req).catch(() => null);
+  res.json({ authed: !!user, user, axicore: !!user && axicoreRoles().includes(user.role) });
+});
 api.use(requireAuth);
 api.use((_req, _res, next) => { atomic.pollSoon(background); next(); }); // CRM data stays fresh while the app is used
 
@@ -363,6 +366,13 @@ api.get('/atomic/leads/:key', async (req, res) => { try { res.json(await crmLead
 api.post('/demo/seed', (_req, res) => res.status(410).json({ error: 'Demo leads are off: leads come only from the team CRM' })); // owner 2026-11-05
 
 // ------------------------------------------------- AI Brochure / Proposal tools
+// Documents panel on a CRM company page (AxiCore 2.0 in the team CRM; open to every signed-in CRM user)
+api.get('/axicore/company/:id/docs', async (req, res) => {
+  const lead = await get(`SELECT id, company, crm_brochure_state, crm_proposal_state FROM leads WHERE external_id = :ext AND crm_removed_at IS NULL`, { ext: `atomic:co:${Number(req.params.id)}` });
+  if (!lead) return res.json({ lead: null, docs: [] });
+  const docs = await all(`SELECT id, kind, title, status, source, updated_at, token FROM docs WHERE lead_id = :id ORDER BY id DESC LIMIT 30`, { id: lead.id });
+  res.json({ lead: { id: lead.id, company: lead.company, brochure_state: lead.crm_brochure_state, proposal_state: lead.crm_proposal_state }, docs: docs.map((d) => ({ ...d, pdf: d.status === 'ready' ? `/pdf/doc/${d.token}.pdf` : null, token: undefined })) });
+});
 api.get('/tools/options', async (req, res) => {
   const s = getSettings();
   const kind = tools.KINDS.includes(req.query.kind) ? req.query.kind : 'brochure';

@@ -42,9 +42,57 @@ export function isAuthed(req) {
   return !!sig && safeEqual(sig, sign(exp)) && Number(exp) > Date.now();
 }
 
-export function requireAuth(req, res, next) {
+/*
+ * AxiCore 2.0 inside the live team CRM (owner, 2026-11-10: "move our axiflow to crm app like in our combined system").
+ * The CRM (atomic-crm-flame.vercel.app) proxies /api, /axicore-app, /pdf … to this app, so the tools run on the CRM's
+ * own address. The CRM login is the login there: the tools page sends the user's CRM Supabase access token
+ * (Authorization: Bearer); we ask the CRM's Supabase who it is and read the role from its sales table.
+ * Roles in AXICORE_ROLES (default "admin": the live CRM has admin / manager / bde, no new role is added) get the
+ * tools, settings and keys; every other active CRM user may only read documents (OPEN_ROUTES).
+ * The AxiFlow password login (cookie) keeps working as before.
+ */
+const crmConf = () => ({
+  url: (process.env.CRM_SUPABASE_URL || '').replace(/\/+$/, ''),
+  key: process.env.CRM_SUPABASE_SECRET_KEY || '',
+  pub: process.env.CRM_SUPABASE_PUBLISHABLE_KEY || process.env.CRM_SUPABASE_SECRET_KEY || '',
+});
+export const axicoreRoles = () => String(process.env.AXICORE_ROLES || 'admin').split(',').map((x) => x.trim()).filter(Boolean);
+const userCache = new Map();
+async function crmUser(token) {
+  const hit = userCache.get(token);
+  if (hit && hit.at > Date.now() - 60000) return hit.user;
+  const { url, pub, key } = crmConf();
+  if (!url || !pub || !key) return null;
+  const r = await fetch(`${url}/auth/v1/user`, { headers: { apikey: pub, authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(8000) });
+  if (!r.ok) return null;
+  const u = await r.json();
+  if (!u?.id) return null;
+  const s = await fetch(`${url}/rest/v1/sales?select=id,first_name,last_name,email,role,administrator,disabled&user_id=eq.${encodeURIComponent(u.id)}`, { headers: { apikey: key, authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(8000) });
+  const sale = s.ok ? (await s.json())[0] : null;
+  const user = sale && !sale.disabled ? { sale_id: sale.id, name: `${sale.first_name || ''} ${sale.last_name || ''}`.trim() || sale.email, email: sale.email, role: sale.role || (sale.administrator ? 'admin' : 'manager') } : null;
+  userCache.set(token, { at: Date.now(), user });
+  if (userCache.size > 500) userCache.clear();
+  return user;
+}
+
+/** Who is calling: { name, role, sale_id? } or null. */
+export async function currentUser(req) {
+  if (isAuthed(req)) return { name: 'AxiFlow admin', role: axicoreRoles()[0] || 'admin', legacy: true };
+  const token = (req.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  if (token && token.split('.').length === 3) { try { const u = await crmUser(token); if (u) return u; } catch { /* CRM unreachable */ } }
+  return null;
+}
+
+/** Routes every signed-in CRM user may use (documents on their leads). Everything else needs an AxiCore role. */
+const OPEN_ROUTES = [/^GET \/me$/, /^GET \/axicore\/company\/\d+\/docs$/, /^GET \/tools\/docs\/\d+\/pdf$/];
+export async function requireAuth(req, res, next) {
   if (isAuthed(req)) return next();
-  res.status(401).json({ error: 'Not logged in' });
+  const user = await currentUser(req).catch(() => null);
+  if (!user) return res.status(401).json({ error: 'Not logged in' });
+  req.user = user;
+  const open = OPEN_ROUTES.some((re) => re.test(`${req.method} ${req.path}`));
+  if (!open && !axicoreRoles().includes(user.role)) return res.status(403).json({ error: 'AxiCore 2.0 is only for CRM admins' });
+  next();
 }
 
 /** Constant-time check of a shared secret sent in a header. */
