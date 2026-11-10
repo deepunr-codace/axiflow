@@ -13,9 +13,9 @@ The team's main CRM is **Twenty**, set up by a co-worker and run by the **teleca
 
 Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATABASE_URL` and `pg`; embedded PGlite in `data/pg` when `DATABASE_URL` is empty), Vercel Blob for uploads (`data/uploads` locally), nodemailer, `@anthropic-ai/sdk` (Claude, `claude-opus-5-5`), and a vanilla-JS admin SPA in `public/`. There is no build step. Code map: see README. The old SQLite file `data/crm.db` is kept only as a backup/migration source.
 
-## Status (2026-11-10, newest): Codeace Signature brochure designs (built, committed locally, NOT pushed)
+## Status (2026-11-10, newest): Codeace Signature brochure designs + website package popup (LIVE)
 - **Owner:** a folder of agency brochures (`Downloads/brochure samples`: Quadcubes, Andrija Designs, ColorWhistle, b:web, Angular Minds, WeDoWebApps, AscentSpark): "we need like this. can u make it as our templates? or plan it", then "also complete our plan" and "category selection on intrest also pls finish".
-- **Built** (AxiFlow commit e53fe2f, on top of 9035969 = the website type engine work; both local only):
+- **Built** (AxiFlow commit e53fe2f, on top of 9035969 = the website type engine work):
   - `src/design/signature.js`: one type-led slide system, four looks (`SIGNATURE_STYLES`): **precision** (white grid paper, royal blue + charcoal two-tone headlines, ghost word), **mono** (black / white, upper-case Franklin, one coral accent), **bold** (upper-case Archivo, red panels), **commerce** (deep green + warm yellow, soft corners). Palette and typefaces are fixed per look (Claude's theme is ignored). The generic sample images are never used; a photo shows only when it is `stock:` / `upload:`.
   - Slides: cover (panel "Prepared for <client>" + services) → about → **gaps** ("where the client loses customers today") → insight (only with verified stats) → approach (services as contents with page numbers) → one per service (text + colour panel "What you get", sides alternate) → why us (2×2 figures) → CTA → closing with contact rows.
   - New optional `gaps` { heading, highlight, note, items[{title, text}] } in the deck schema, parse, `toBrochureData`, `normalizeData`, limits and the task line (`PROMPT_VERSION` 2026-11-10.1). The classic and editorial designs ignore it.
@@ -23,7 +23,10 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - Templates seeded once: Codeace Precision / Mono / Bold / Commerce (`builtin-signature-*`), default unchanged. Assets `assets/brochure/sig/` (dark logo `codeace-ink.png`, `grid.png`).
 - **Tested:** four looks rendered to PDF and checked page by page (scratchpad `samples/sig/*.pdf`, script `samples/sig-test.mjs`); throwaway-DB e2e `samples/sig-e2e.mjs` (template per type, `<swot>` + `<design_system>` + `<website_type>` in the job, invented stat removed, doc ready, 9-page PDF); classic + editorial regression and an 8-service stress case. **Not checked:** the browser editor on a Signature doc, a real Claude run, real stock photos.
 - **CRM popup:** checked in the demo CRM in headless Edge (list-view stage → dialog, Cancel keeps the stage, pick → POST with deal, company and package); committed locally as 26db527a on top of adcb0629.
-- **Not live:** pushing either repo was blocked by the permission check (production deploy). Order when the owner allows it: AxiFlow `main` first (9035969 + e53fe2f), then the CRM (adcb0629 + 26db527a).
+- **Live** (owner: "make it live", 2026-11-10): AxiFlow `main` pushed first (9035969, e53fe2f, then 52085d2), then the CRM `main` (adcb0629 bigger collapsed rail + 26db527a popup).
+  - **Found live and fixed (52085d2):** two server instances starting together each added the template rows (Precision, Mono, Bold twice). `seedTemplates` now keeps the oldest row of each `builtin-signature-*` source and moves documents to it. Tested on the throwaway DB; the live list is clean.
+  - **Checked live:** AxiFlow health 200, package endpoint 401 without login and 400 for a bad type, the four templates and four website types in Integrations; CRM (owner login, headless Edge): list-view stage New → Interested opens the dialog with the four choices, Cancel keeps the stage, no write sent; collapsed rail is the wider one.
+  - **Not yet seen live:** a real lead marked Interested with a package, and the Claude brochure that follows in its look.
 - **Still open from the plan:** visual check by Claude after layout, golden set of 8 leads, proof bank, rejection reasons, real photos per vertical (Pexels / Unsplash keys).
 
 ## Status (2026-11-10, latest): website type popup + premium brochure plan
