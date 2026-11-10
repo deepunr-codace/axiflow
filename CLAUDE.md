@@ -27,6 +27,14 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - **Found live and fixed (52085d2):** two server instances starting together each added the template rows (Precision, Mono, Bold twice). `seedTemplates` now keeps the oldest row of each `builtin-signature-*` source and moves documents to it. Tested on the throwaway DB; the live list is clean.
   - **Checked live:** AxiFlow health 200, package endpoint 401 without login and 400 for a bad type, the four templates and four website types in Integrations; CRM (owner login, headless Edge): list-view stage New → Interested opens the dialog with the four choices, Cancel keeps the stage, no write sent; collapsed rail is the wider one.
   - **Not yet seen live:** a real lead marked Interested with a package, and the Claude brochure that follows in its look.
+- **Re-check (owner: "check everything again", same day; fixes live in 62e1d8c):**
+  - **Editor:** all four looks opened in the editor on a throwaway DB (headless Edge): fonts Archivo / Libre Franklin / Inter load, the grid background shows, no console errors, slides match the PDFs.
+  - **Popup entry points in the demo CRM:** list-view stage, Leads board drag (keyboard drag; Cancel leaves the card, pick posts deal + company + package and moves it) and the deal form (Cancel restores the stage; the package row shows and saves). The call-result dialog could not be exercised (the demo has no call lists): typecheck only.
+  - **Live package call through the CRM address** with the owner's CRM token: bad package 400, no ids 400, no login 401 (proxy, token login and the open route all work; nothing stored).
+  - **Gap found and fixed:** `deals.categories` is not in the sync hash, so a package changed alone in the deal form never reached AxiFlow. `syncLead` now reads it before the "unchanged" return (tested: same deal, only the package changed → lead updated; package removed → kept).
+  - **Worker:** `claude-worker/post.mjs` treats `gaps` problems as soft (a missing gaps key on the GitHub engine would have caused a paid retry); validator run on a sample answer.
+  - **Small:** gaps rows spread over the page (3 rows no longer leave the bottom empty); Integrations per-type select says "Automatic: <its look>".
+  - **Still not seen:** a real Claude brochure in a Signature look, the call-result dialog with a real call, a manager / BDE login.
 - **Still open from the plan:** visual check by Claude after layout, golden set of 8 leads, proof bank, rejection reasons, real photos per vertical (Pexels / Unsplash keys).
 
 ## Status (2026-11-10, latest): website type popup + premium brochure plan
