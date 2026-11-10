@@ -1267,3 +1267,14 @@ html.embedded .panel { padding-bottom: 0; }
 .axc-crm:hover::after { transition: transform .6s cubic-bezier(.65, 0, .35, 1); transform: translateX(120%); }
 @media (prefers-reduced-motion: reduce) { .axc-crm:hover::after { transition: none; } }
 
+
+/* Template viewer (Templates → View): every page large, scrolls inside the dialog */
+dialog.viewer { width: min(1180px, calc(100% - 24px)); }
+dialog.viewer .modal-b { max-height: calc(92vh - 140px); padding: 6px 22px 10px; }
+dialog.viewer .modal-f { align-items: center; }
+.tv-pages { display: grid; gap: 22px; }
+.tv-page { margin: 0; display: grid; justify-items: center; gap: 8px; }
+.tv-page .dthumb { border-radius: 8px; overflow: hidden; box-shadow: 0 0 0 1px rgba(255, 255, 255, .07), 0 8px 24px rgba(0, 0, 0, .35); }
+html[data-theme="light"] .tv-page .dthumb { box-shadow: 0 0 0 1px rgba(0, 0, 0, .08), 0 8px 24px rgba(0, 0, 0, .1); }
+.tpl-card .tpl-thumb { cursor: zoom-in; }
+@media (max-width: 640px) { dialog.viewer .modal-b { padding: 6px 12px 10px; } }

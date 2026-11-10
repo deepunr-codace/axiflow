@@ -85,7 +85,7 @@ async function busy(btn, fn) {
 }
 
 function modal(title, body, actions = '') {
-  $('#modal').classList.remove('pal');
+  $('#modal').classList.remove('pal', 'viewer');
   $('#modalBody').innerHTML = `<div class="modal-h">${esc(title)}<button class="btn ghost sm icon-only" data-close aria-label="Close"><span class="mi">close</span></button></div><div class="modal-b">${body}</div>${actions ? `<div class="modal-f">${actions}</div>` : ''}`;
   const d = $('#modal');
   if (!d.open) d.showModal();
@@ -1614,6 +1614,7 @@ async function renderDesigns(arg) {
     <div class="tpl-body"><div class="row"><b class="grow">${esc(t.name)}</b>${t.is_default ? '<span class="tag green">Default</span>' : ''}</div>
     <div class="small muted">${t.mode === 'smart' ? 'Built-in · layout adapts to the content' : t.source === 'pdf' ? 'Imported from PDF' : 'Saved from a document'}</div>
     <div class="row" style="margin-top:10px;gap:6px">
+      <button class="btn sm" data-a="view"><span class="mi">visibility</span>View</button>
       <button class="btn sm primary" data-a="use">Use</button>
       ${t.is_default ? '' : '<button class="btn sm" data-a="default">Make default</button>'}
       <button class="btn sm ghost" data-a="rename">Rename</button>
@@ -1630,14 +1631,44 @@ async function renderDesigns(arg) {
       if (pg) box.append(thumb(pg, Math.min(box.clientWidth || 300, 360 * pg.w / pg.h), [{ name: 'Design', price: 30000 }, { name: 'Development', price: 60000 }]));
     }).catch(() => { $('.tpl-thumb', card).innerHTML = '<div class="muted small">No preview</div>'; });
     card.onclick = async (e) => {
-      const a = e.target.closest('[data-a]')?.dataset.a;
+      const a = e.target.closest('[data-a]')?.dataset.a || (e.target.closest('.tpl-thumb') ? 'view' : null);
       const id = card.dataset.id;
+      if (a === 'view') viewTemplate(kind, id, $('b', card).textContent);
       if (a === 'use') { sessionStorage.setItem(`tpl-${kind}`, id); location.hash = `#/${kind}/new`; }
       if (a === 'default') { await api(`/design/templates/${id}/default`, { body: {} }); toast('Default template changed'); renderDesigns(kind); }
       if (a === 'rename') { const n = prompt('Template name', $('b', card).textContent); if (n) { await api(`/design/templates/${id}`, { method: 'PUT', body: { name: n } }); renderDesigns(kind); } }
       if (a === 'delete') { if (!confirm('Delete this template? Documents already made with it are kept.')) return; await api(`/design/templates/${id}`, { method: 'DELETE' }); renderDesigns(kind); }
     };
   }
+}
+
+/** Every page of a template, large, in a viewer (sample client "Your Client"); Use opens the New form with it. */
+async function viewTemplate(kind, id, name) {
+  const d = modal(name, '<div class="tv-pages"><p class="muted small">Loading pages…</p></div>', `<span class="small muted grow" id="tvCount"></span><button class="btn" data-close-2>Close</button><button class="btn primary" id="tvUse">Use this template</button>`);
+  d.classList.add('viewer');
+  d.addEventListener('close', () => d.classList.remove('viewer'), { once: true });
+  $('[data-close-2]', d).onclick = () => d.close();
+  $('#tvUse', d).onclick = () => { d.close(); sessionStorage.setItem(`tpl-${kind}`, id); location.hash = `#/${kind}/new`; };
+  try {
+    const t = await api(`/design/templates/${id}/preview?all=1`);
+    const box = $('.tv-pages', d);
+    if (!d.open || !box) return;
+    const pages = t.pages || [];
+    box.innerHTML = pages.length ? '' : '<p class="muted small">This template has no pages.</p>';
+    $('#tvCount', d).textContent = `${pages.length} page${pages.length === 1 ? '' : 's'} · shown for a sample client`;
+    const w = Math.max(280, box.clientWidth);
+    for (const [i, pg] of pages.entries()) {
+      const fig = document.createElement('figure');
+      fig.className = 'tv-page';
+      // as wide as the viewer, but never taller than the screen, so one whole page is visible (A4 proposals too)
+      fig.append(thumb(pg, Math.min(w, Math.max(240, window.innerHeight - 230) * pg.w / pg.h), [{ name: 'Design', price: 30000 }, { name: 'Development', price: 60000 }]));
+      const cap = document.createElement('figcaption');
+      cap.className = 'small muted';
+      cap.textContent = `Page ${i + 1} of ${pages.length}`;
+      fig.append(cap);
+      box.append(fig);
+    }
+  } catch (err) { $('.tv-pages', d).innerHTML = `<p class="small muted">Could not load the pages: ${esc(err.message)}</p>`; }
 }
 
 function importDialog(kind) {

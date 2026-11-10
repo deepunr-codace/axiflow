@@ -13,6 +13,10 @@ The team's main CRM is **Twenty**, set up by a co-worker and run by the **teleca
 
 Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATABASE_URL` and `pg`; embedded PGlite in `data/pg` when `DATABASE_URL` is empty), Vercel Blob for uploads (`data/uploads` locally), nodemailer, `@anthropic-ai/sdk` (Claude, `claude-opus-5-5`), and a vanilla-JS admin SPA in `public/`. There is no build step. Code map: see README. The old SQLite file `data/crm.db` is kept only as a backup/migration source.
 
+## Status (2026-11-10): Templates → View
+- **Owner:** "in templates i need a view option". Each template card has **View** (clicking the preview opens it too): `viewTemplate()` in app.js opens the dialog with class `viewer` (1180 px wide; `modal()` removes the class) showing every page from `/api/design/templates/:id/preview?all=1` for the sample client, each sized to fit the window height, with "Page n of N", Close and "Use this template" (→ `#/<kind>/new` with the template chosen). Styles `.tv-*` / `dialog.viewer` at the end of styles.css.
+- **Tested** in headless Edge on a throwaway DB (scratchpad `live-crm/tv-test.mjs`): Precision 12 pages, Default Proposal 11 A4 pages (one whole page fits), Mono at 390 px width (no page scroll), dark and light, Esc closes, Use goes to the New form, a later dialog keeps its normal 680 px, no console errors.
+
 ## Status (2026-11-10, latest): every tool on Claude Code (GitHub) first, the API key as fallback
 - **Owner:** "for all use claude code on github. if usage limit reaches or any errors then use API".
 - **Code** (`src/claude-worker.js`): setting `claude.fallback_engine` (default `anthropic`; '' = no fallback, the old wait-for-reset behaviour). `fallbackFor('github')` = that engine when its key is set and today's AI spend is under `ai.daily_budget_usd` (`budgetLeft()` in `src/ai/claude.js`).
