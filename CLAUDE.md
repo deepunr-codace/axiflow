@@ -13,7 +13,14 @@ The team's main CRM is **Twenty**, set up by a co-worker and run by the **teleca
 
 Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATABASE_URL` and `pg`; embedded PGlite in `data/pg` when `DATABASE_URL` is empty), Vercel Blob for uploads (`data/uploads` locally), nodemailer, `@anthropic-ai/sdk` (Claude, `claude-opus-5-5`), and a vanilla-JS admin SPA in `public/`. There is no build step. Code map: see README. The old SQLite file `data/crm.db` is kept only as a backup/migration source.
 
-## Status (2026-11-09, latest): Claude usage tracking (live AxiFlow + AWC)
+## Status (2026-11-10, latest): AxiCore 2.0 inside the live team CRM (no replacement)
+- **Owner:** "they dont want replacemnt … add our builded system to live without affecting existing datas", then "move our axiflow to crm app like in our combined system in vercel". Live CRM = https://atomic-crm-flame.vercel.app (repo `karuncodeace/atomic-crm`, co-worker's Vercel account, hash routing, no vercel.json before); engine = live AxiFlow.
+- **Design:** the CRM proxies `/api`, `/axicore-app`, `/pdf`, `/d`, `/fonts`, `/fonts.css`, `/brand` to https://axiflow-v1.vercel.app (Vercel external rewrites). No CRM database, schema, role or migration change; AxiFlow keeps its own DB. Roles: `admin` opens the tools (no `axicore` role in the live CRM).
+- **AxiFlow side (live, 4fdbf39):** `auth.js` `currentUser` / `crmUser` (CRM Supabase `/auth/v1/user` + `sales` role; apikey = `CRM_SUPABASE_PUBLISHABLE_KEY`, else the secret key), `AXICORE_ROLES` default `admin`, `OPEN_ROUTES` for other CRM users; password cookie unchanged. `/api/me` returns user + axicore; `GET /api/axicore/company/:id/docs`; `/axicore-app/` = index.html with `class="embedded"` (app.js sends the CRM token from `sb-*-auth-token`, "Back to the CRM" tile `.axc-crm`). vercel.json includeFiles `{assets,public}/**`. Checked live with the owner's CRM admin login: me = admin/axicore, tools API 200, no-login 401.
+- **CRM side (NOT pushed):** commit 667c76fe on branch `feature/axicore-tools` in the scratchpad clone `live-crm`, patch `0001-Add-AxiCore-2.0-…patch` in the scratchpad. Ported from AWC: `src/components/atomic-crm/axicore/*` (default role admin, "SWOT" label), sidebar tile (`AxiCoreFooter`), `canAccess` resource axicore, company `CompanyDocuments`, `/axicore/*` route, flat `.axc-*` styles, `vercel.json` rewrites, PWA `navigateFallbackDenylist`. Typecheck, prettier and `vite build` pass. Pushing to the co-worker's repo was blocked by the permission check: the owner decides (push branch + PR for the co-worker, or allow the push).
+- **Next:** push the branch / PR → Vercel preview → test the tile, tools page and Documents panel with a real login → merge to main (goes live on the CRM).
+
+## Status (2026-11-09): Claude usage tracking (live AxiFlow + AWC)
 - **Owner's request:** "shall we add a setup to track usage?"; chose Claude token usage, in live AxiFlow + AWC.
 - **How it works:**
   - `claude-worker/post.mjs` sends `usage` (turns, tokens, cache, cost-equivalent, ms, web searches, per model) with every answer;
