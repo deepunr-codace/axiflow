@@ -50,6 +50,10 @@ export async function seedTemplates() {
     const now = nowISO();
     await insert('design_templates', { kind: 'brochure', name, mode: 'smart', source, is_default: 0, created_at: now, updated_at: now });
   }
+  // Two server instances starting together both added the rows (seen live, 2026-11-10): keep the oldest of each.
+  await run(`UPDATE docs SET template_id = (SELECT MIN(k.id) FROM design_templates k WHERE k.source = (SELECT d.source FROM design_templates d WHERE d.id = docs.template_id))
+    WHERE template_id IN (SELECT a.id FROM design_templates a JOIN design_templates b ON b.source = a.source AND b.id < a.id WHERE a.source LIKE 'builtin-signature-%')`);
+  await run(`DELETE FROM design_templates WHERE source LIKE 'builtin-signature-%' AND id NOT IN (SELECT MIN(id) FROM design_templates WHERE source LIKE 'builtin-signature-%' GROUP BY source)`);
   for (const kind of ['brochure', 'proposal']) {
     if (!await get(`SELECT 1 FROM design_templates WHERE kind = :kind AND mode = 'smart' AND source = 'builtin'`, { kind })) {
       const now = nowISO();

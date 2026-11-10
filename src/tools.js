@@ -237,7 +237,7 @@ export async function autoTemplate(kind, websiteType = null) {
   if (isReal(typed)) return typed;
   // no template set for the type: its Signature look (brochures only)
   if (kind === 'brochure' && TYPE_TEMPLATES[websiteType]) {
-    const row = await get(`SELECT id FROM design_templates WHERE kind = 'brochure' AND source = :source LIMIT 1`, { source: TYPE_TEMPLATES[websiteType] });
+    const row = await get(`SELECT id FROM design_templates WHERE kind = 'brochure' AND source = :source ORDER BY id LIMIT 1`, { source: TYPE_TEMPLATES[websiteType] });
     const t = row ? await getTemplate(row.id) : null;
     if (isReal(t)) return t;
   }
