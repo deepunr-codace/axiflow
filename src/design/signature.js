@@ -178,7 +178,7 @@ export function signatureDesign(input, style = 'precision') {
       return { t, p, h: 30 + t.h + 8 + p.h + 30 };
     });
     const free = 740 - rows.reduce((a, r) => a + r.h, 0);
-    const pad = Math.max(0, Math.min(26, Math.floor(free / rows.length)));
+    const pad = Math.max(0, Math.min(64, Math.floor(free / rows.length)));
     let y = 210;
     for (const r of rows) {
       els.push(R({ x, y, w, h: 1.5, fill: tn.line }), R({ x, y: y + 30 + pad / 2 + 14, w: 14, h: 14, fill: tn.hl }), Object.assign(r.t, { y: y + 30 + pad / 2 }), Object.assign(r.p, { y: y + 30 + pad / 2 + r.t.h + 8 }));

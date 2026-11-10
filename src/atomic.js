@@ -151,10 +151,12 @@ export async function syncLead(co, ct, deal, { engine, twenty, budget, useCallLo
   }
   if (lead && born && !lead.crm_created_at) await update('leads', lead.id, { crm_created_at: born });
   const hash = hashOf(deal, co, ct);
-  if (lead && lead.crm_sync_hash === hash) return 'unchanged';
-  // Website type chosen in the CRM when the lead turned Interested (deal categories): known before any brochure starts
+  // Website type chosen in the CRM when the lead turned Interested (deal categories): known before any brochure starts.
+  // Checked before the "unchanged" return: the categories are not in the hash, so a package changed later in the
+  // deal form (stage already Interested) would otherwise never arrive.
   const wt = websiteTypeOf(deal?.categories);
   if (wt && wt !== lead?.website_type) await rememberWebsiteType({ dealId: deal?.id, companyId: co?.id, type: wt, by: 'crm deal' }).catch(() => {});
+  if (lead && lead.crm_sync_hash === hash) return 'unchanged';
   const links = { crm_deal_id: deal?.id ?? null, crm_company_id: co?.id ?? null, crm_contact_id: ct?.id ?? null, crm_sales_id: deal?.sales_id ?? co?.sales_id ?? ct?.sales_id ?? null };
   const input = dealInput(deal, co, ct, s);
   const stageKey = deal ? deal.stage : '';
