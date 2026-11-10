@@ -7,7 +7,7 @@ import { PAIRING_IDS, pairingGuide } from '../design/fonts.js';
  * worker on GitHub (claude-worker/validate.mjs), so both run exactly the same rules.
  * Ported from the owner's template package (Downloads/files (1)/brochure-template/components/brochure/ai), 2026-11-05.
  */
-export const PROMPT_VERSION = 'brochure-prompt/2026-11-05.1';
+export const PROMPT_VERSION = 'brochure-prompt/2026-11-10.1';
 
 // =============================================================== prompt layers
 const section = (tag, body) => `<${tag}>\n${String(body).trim()}\n</${tag}>`;
@@ -73,6 +73,7 @@ export function layoutContractLayer() {
 - about.heading ≤ ${L.aboutHeading}; about.body ≤ ${L.aboutBody}
 - insight.heading ≤ ${L.insightHeading}; stat value ≤ ${L.statValue}; stat label ≤ ${L.statLabel}; insight.statement ≤ ${L.statement}
 - approach.heading ≤ ${L.approachHeading}; approach.body ≤ ${L.approachBody}
+- gaps.heading ≤ ${L.gapsHeading}; gaps.note ≤ ${L.gapsNote}; 3–${L.gaps} items, each title ≤ ${L.gapTitle} and text ≤ ${L.gapText}
 - each service: slideTitle lines ≤ ${L.serviceTitleLine}; summary ≤ ${L.serviceSummary}; lead ≤ ${L.serviceLead}; body ≤ ${L.serviceBody}; exactly ${L.benefits} benefits, each ≤ ${L.benefit}
 - whyUs.heading ≤ ${L.whyHeading}; whyUs.body ≤ ${L.whyBody}; whyUs.stats ≤ ${L.whyStats}
 - cta.heading ≤ ${L.ctaHeading}; cta.body ≤ ${L.ctaBody}; cta.buttonLabel ≤ 28, an action (“Book a strategy call”)
@@ -122,7 +123,7 @@ export const conceptLayer = (concept) => section('concept', `Build the whole bro
 export function taskLayer(stage) {
   return section('task', {
     concepts: 'Study the client in <brief>: who walks through their door, what those customers worry about, what a great day looks like, the words and objects of their trade. Then propose three concepts that frame the agency’s services through the client’s world.',
-    brochure: 'Write and art-direct the full brochure as one story: cover (the promise) → about (why this agency) → insight (why now) → approach (the plan) → one slide per service (how) → why us (proof) → call to action (the next step). Before answering, check every line against <craft>, <guardrails> and <layout_contract> and rewrite what fails.',
+    brochure: 'Write and art-direct the full brochure as one story: cover (the promise) → about (why this agency) → gaps (where this client loses customers today) → insight (why now) → approach (the plan) → one slide per service (how) → why us (proof) → call to action (the next step). Before answering, check every line against <craft>, <guardrails> and <layout_contract> and rewrite what fails.',
     critique: 'Review the brochure in <draft> against the brief, the concept and the rubric. Be specific about fields.',
     repair: 'Apply the feedback in <feedback> to your previous brochure.',
   }[stage]);
@@ -179,6 +180,7 @@ export const BROCHURE_SCHEMA = obj({
   theme: obj({ primary: str, ink: str, paper: str, accent: str, fonts: { type: 'string', enum: PAIRING_IDS } }),
   cover: obj({ tag: nstr, title: str, highlight: nstr, subtitle: str, heroImage: image, badge: nstr, chips: strs }),
   about: nullable(obj({ heading: str, highlight: nstr, body: str, image, credential: nullable(obj({ title: str, text: str })), tags: strs })),
+  gaps: nullable(obj({ heading: str, highlight: nstr, note: nstr, items: { type: 'array', items: obj({ title: str, text: str }) } })),
   insight: nullable(obj({ eyebrow: nstr, heading: str, highlight: nstr, stats: { type: 'array', items: stat }, statement: nstr, image })),
   approach: nullable(obj({ eyebrow: nstr, heading: str, highlight: nstr, body: str, image })),
   services: { type: 'array', items: obj({ name: str, slideTitle: nstr, summary: str, lead: str, body: str, benefits: strs, image, accentImage: image, visual: { type: 'string', enum: ['wide', 'wide-low', 'square', 'portrait'] } }) },
@@ -239,6 +241,7 @@ export function parseModelOutput(o) {
     theme: isObj(o.theme) ? o.theme : {},
     cover: { tag: null, highlight: null, heroImage: null, badge: null, subtitle: '', ...o.cover, chips: arr(o.cover.chips).map(String) },
     about: isObj(o.about) ? { highlight: null, image: null, credential: null, ...o.about, tags: arr(o.about.tags).map(String) } : null,
+    gaps: isObj(o.gaps) && arr(o.gaps.items).length ? { highlight: null, note: null, ...o.gaps, heading: String(o.gaps.heading ?? ''), items: arr(o.gaps.items).filter((g) => isObj(g) && typeof g.title === 'string').map((g) => ({ title: g.title, text: String(g.text ?? '') })) } : null,
     insight: isObj(o.insight) ? { eyebrow: null, highlight: null, statement: null, image: null, ...o.insight, stats: arr(o.insight.stats) } : null,
     approach: isObj(o.approach) ? { eyebrow: null, highlight: null, image: null, ...o.approach } : null,
     services: arr(o.services).filter(isObj).map((s) => ({ slideTitle: null, summary: '', lead: '', body: '', image: null, accentImage: null, ...s, name: String(s.name ?? ''), benefits: arr(s.benefits).map(String), visual: VIS.includes(s.visual) ? s.visual : 'wide' })),
@@ -285,6 +288,7 @@ export function toBrochureData(out, brief) {
     theme: out.theme,
     cover: { tag: optText(out.cover.tag), title: out.cover.title, highlight: hl('cover', out.cover.title, out.cover.highlight), subtitle: out.cover.subtitle, heroImage: pick('cover.heroImage', out.cover.heroImage), badge: optText(out.cover.badge), chips: out.cover.chips },
     about: out.about ? { heading: out.about.heading, highlight: hl('about', out.about.heading, out.about.highlight), body: out.about.body, image: pick('about.image', out.about.image), credential: out.about.credential ? { title: String(out.about.credential.title ?? ''), text: String(out.about.credential.text ?? '') } : undefined, tags: out.about.tags } : undefined,
+    gaps: out.gaps && out.gaps.items.length ? { heading: out.gaps.heading, highlight: hl('gaps', out.gaps.heading, out.gaps.highlight), note: optText(out.gaps.note), items: out.gaps.items } : undefined,
     insight: out.insight && insightStats.length ? { eyebrow: optText(out.insight.eyebrow), heading: out.insight.heading, highlight: hl('insight', out.insight.heading, out.insight.highlight), stats: insightStats, statement: optText(out.insight.statement), image: pick('insight.image', out.insight.image) } : undefined,
     approach: out.approach ? { eyebrow: optText(out.approach.eyebrow), heading: out.approach.heading, highlight: hl('approach', out.approach.heading, out.approach.highlight), body: out.approach.body, image: pick('approach.image', out.approach.image) } : undefined,
     services: out.services.map((s, i) => ({ name: s.name, slideTitle: optText(s.slideTitle), summary: s.summary, lead: s.lead, body: s.body, benefits: s.benefits, image: pick(`services.${i}.image`, s.image), accentImage: pick(`services.${i}.accentImage`, s.accentImage), visual: s.visual })),

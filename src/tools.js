@@ -1,5 +1,5 @@
 import { addColumns, get, all, insert, update, run } from './db.js';
-import { isWebsiteType, websiteTypeFor, websiteTypeSection } from './website-type.js';
+import { isWebsiteType, websiteTypeFor, websiteTypeSection, websiteTypeLabel } from './website-type.js';
 import { background } from './background.js';
 import { writeScript, scriptJob, VERTICALS, LANGUAGES, SERVICES, swotText } from './ai/script.js';
 import { scriptPdf } from './pdf/script.js';
@@ -14,6 +14,7 @@ import { chatEdit } from './ai/design-ai.js';
 import { brochureDesign, proposalDesign } from './design/layouts.js';
 import { classicDesign } from './design/deck.js';
 import { editorialDesign } from './design/editorial.js';
+import { signatureDesign, isSignature, signatureStyle } from './design/signature.js';
 import { contentToData } from './design/brochure-data.js';
 import { buildBrief, deckJob } from './ai/brochure-deck.js';
 import { claudeOn, claudeBroken, dispatchJob, claudeState } from './claude-worker.js';
@@ -23,9 +24,11 @@ import { claudeScriptJob, claudeProposalJob } from './ai/claude-jobs.js';
  * Built-in brochure layouts by template source: 'builtin-deck' = Codeace Growth Deck (classic design),
  * 'builtin-editorial' = Codeace Editorial (owner's template package, 2026-11-05), else the classic 12-page layout.
  */
-const DECK_DESIGNS = { 'builtin-deck': 'classic', 'builtin-editorial': 'editorial', 'builtin-claude': 'editorial' }; // "Claude designs" without Claude = Editorial
+const DECK_DESIGNS = { 'builtin-deck': 'classic', 'builtin-editorial': 'editorial', 'builtin-claude': 'editorial', 'builtin-signature-precision': 'signature-precision', 'builtin-signature-mono': 'signature-mono', 'builtin-signature-bold': 'signature-bold', 'builtin-signature-commerce': 'signature-commerce' }; // "Claude designs" without Claude = Editorial
 const deckOf = (tpl) => DECK_DESIGNS[tpl?.source] || null;
-const drawDeck = (design, data) => (design === 'editorial' ? editorialDesign(data) : classicDesign(data));
+const drawDeck = (design, data) => (isSignature(design) ? signatureDesign(data, signatureStyle(design)) : design === 'editorial' ? editorialDesign(data) : classicDesign(data));
+/** The Signature look for each website type chosen in the CRM (used when no template is set for the type). */
+const TYPE_TEMPLATES = { 'business-website': 'builtin-signature-precision', 'ecommerce-store': 'builtin-signature-bold', 'shopify-store': 'builtin-signature-commerce', 'landing-page': 'builtin-signature-mono' };
 // fonts.brochure: a fixed pairing wins, "template" keeps the design's fonts, "auto" uses the one Claude chose (theme.fonts)
 const withPairing = (data, s) => ({ ...data, theme: { ...(data.theme || {}), fonts: resolvePairing(s.fonts?.brochure, data.theme?.fonts) } });
 const brochureLayout = (tpl, content, s, company) => {
@@ -37,8 +40,50 @@ const brochureLayout = (tpl, content, s, company) => {
 /** Deck brochures without Claude: the agency copy mapped onto the deck data contract (no AI). */
 async function writeDeck(doc, design, research, s) {
   const w = await writeBrochure(doc.input, doc.input.services, research);
-  return { content: { ...w.content, deck: { design, data: contentToData(w.content, s, { company: doc.input.company, design }) } }, source: w.source };
+  const data = contentToData(w.content, s, { company: doc.input.company, design });
+  if (isSignature(design)) {
+    // the lead's SWOT weaknesses become the "where you lose customers today" slide
+    const sw = await leadSwot(doc.lead_id);
+    const items = (sw?.swot?.weaknesses || []).slice(0, 4).map((x) => {
+      const t = String(x).trim().replace(/\.$/, ''), cut = t.search(/[:,;]/);
+      return cut >= 12 && cut <= 56 ? { title: t.slice(0, cut), text: t.slice(cut + 1).trim().replace(/^./, (c) => c.toUpperCase()) + '.' } : { title: t, text: '' };
+    });
+    if (items.length) data.gaps = { heading: `Where ${doc.input.company} loses customers today`, note: 'From our check of your website and online presence.', items };
+    data.cover.tag = websiteTypeLabel(doc.input.website_type) ? `${websiteTypeLabel(doc.input.website_type)} plan` : data.cover.tag;
+  }
+  return { content: { ...w.content, deck: { design, data } }, source: w.source };
 }
+/** The lead's SWOT (its latest ready call-script document): the evidence for the brochure's gaps slide. */
+async function leadSwot(leadId) {
+  if (!leadId) return null;
+  const row = await get(`SELECT content_json FROM docs WHERE lead_id = :id AND kind = 'script' AND status = 'ready' ORDER BY id DESC LIMIT 1`, { id: leadId }).catch(() => null);
+  let c = row?.content_json;
+  if (typeof c === 'string') { try { c = JSON.parse(c); } catch { c = null; } }
+  return c?.swot ? { swot: c.swot, solutions: Array.isArray(c.solutions) ? c.solutions : [] } : null;
+}
+function swotSection(sw) {
+  if (!sw) return '';
+  const list = (k) => (sw.swot[k] || []).map((x) => `  - ${x}`).join('\n');
+  const sol = sw.solutions.map((x) => `  - ${x.service}: ${x.problem} → ${x.how} → ${x.outcome}`).join('\n');
+  return `<swot>
+Our own SWOT of this business (the sales team already has it). The weaknesses and threats are the evidence for the gaps slide; the solutions are the reason for each service slide. Say them from the client's side (customers they are missing), never as criticism, and keep "to confirm" points out.
+Weaknesses:
+${list('weaknesses')}
+Threats:
+${list('threats')}
+Opportunities:
+${list('opportunities')}${sol ? `
+How we solve it:
+${sol}` : ''}
+</swot>`;
+}
+const designSection = (design, websiteType) => (isSignature(design) ? `<design_system>
+This brochure is laid out in the Codeace Signature design ("${signatureStyle(design)}"): type-led, with a fixed palette and fixed typefaces (your theme is ignored).
+- Images: set every image field to null unless a stock photo in the brief clearly shows this kind of business; then use it for cover.heroImage or a service image only.
+- gaps: 3–4 concrete places where this client loses customers today. Each must be backed by the brief (website check, <swot>, CRM notes or your research); no invented figures. title = the gap in a few plain words, text = one sentence on what it costs them.
+- cover.tag: the package in 2–4 words${websiteTypeLabel(websiteType) ? ` ("${websiteTypeLabel(websiteType)} plan")` : ''}. about.tags: the agency's service lines (at most 5). cover.chips: the services in this brochure.
+- Headlines are set large in one sans-serif face: keep them short and concrete.
+</design_system>` : '');
 import { renderDesignPdf } from './design/render-pdf.js';
 import { cleanDesign, cloneDesign, fillTokens } from './design/model.js';
 import { getTemplate, defaultTemplate } from './design/templates.js';
@@ -190,6 +235,12 @@ export async function autoTemplate(kind, websiteType = null) {
   const byType = Number(getSettings().automation?.website_templates?.[kind]?.[websiteType]) || 0;
   const typed = byType ? await getTemplate(byType) : null;
   if (isReal(typed)) return typed;
+  // no template set for the type: its Signature look (brochures only)
+  if (kind === 'brochure' && TYPE_TEMPLATES[websiteType]) {
+    const row = await get(`SELECT id FROM design_templates WHERE kind = 'brochure' AND source = :source LIMIT 1`, { source: TYPE_TEMPLATES[websiteType] });
+    const t = row ? await getTemplate(row.id) : null;
+    if (isReal(t)) return t;
+  }
   const pick = Number(getSettings().automation?.auto_template?.[kind]) || 0;
   const chosen = pick ? await getTemplate(pick) : await defaultTemplate(kind);
   if (isReal(chosen)) return chosen;
@@ -324,7 +375,7 @@ export async function buildClaudeJob(doc, s = getSettings()) {
       ]).catch(() => ({ assets: [], map: {} }));
       if (stock.assets.length) brief.assets = [...stock.assets, ...brief.assets.map((a) => ({ ...a, description: `${a.description} (generic sample image: use only if nothing better fits)` }))];
       if (tpl.source === 'builtin-claude') { job = freeformJob(brief, dossier); ctx = { stock: stock.map }; } // no template: Claude lays out every slide
-      else { job = deckJob(brief); ctx = { brief, design, stock: stock.map }; }
+      else { job = deckJob(brief); ctx = { brief, design, stock: stock.map }; job.prompt = [job.prompt, swotSection(await leadSwot(doc.lead_id)), designSection(design, doc.input.website_type)].filter(Boolean).join('\n\n'); }
     }
   }
   // Every job: the vertical's playbook, the lead's agreed strategy (so call, brochure and proposal tell one story),

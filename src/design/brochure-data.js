@@ -10,7 +10,7 @@
  * Data comes from the AI pipeline (src/ai/brochure-deck.js) or, without AI, from contentToData()
  * (the brochure copy written by src/ai/brochure.js plus the agency defaults).
  */
-export const DESIGNS = ['classic', 'editorial'];
+export const DESIGNS = ['classic', 'editorial', 'signature-precision', 'signature-mono', 'signature-bold', 'signature-commerce'];
 export const THEMES = {
   classic: { primary: '#2d4bd8', ink: '#0b1033', paper: '#f3f4f9', accent: '#d7ff3f' },
   editorial: { primary: '#2d4bd8', ink: '#121a4a', paper: '#f4f1fb', accent: '#ffb8cc' },
@@ -23,6 +23,7 @@ export const LIMITS = {
   approachHeading: 30, approachBody: 160, servicesMin: 1, servicesMax: 8, serviceTitleLine: 16,
   serviceSummary: 60, serviceLead: 120, serviceBody: 200, benefits: 4, benefit: 50,
   whyHeading: 60, whyBody: 260, whyStats: 4, ctaHeading: 60, ctaBody: 130, closingHeadingLine: 6,
+  gapsHeading: 48, gapsNote: 110, gaps: 4, gapTitle: 44, gapText: 130,
 };
 
 const IMG = (f) => `asset:brochure/deck/${f}`;
@@ -103,6 +104,8 @@ export function normalizeData(d) {
       chips: (d.cover?.chips ?? services.map((s) => s.name)).slice(0, LIMITS.coverChips),
     },
     about: d.about && { ...d.about, image: safeImage(d.about.image), credential: d.about.credential && { ...d.about.credential, logo: safeImage(d.about.credential.logo) || safeImage(d.brand?.logo) } },
+    // where the client loses customers today (Signature designs; from the lead's SWOT)
+    gaps: d.gaps && (d.gaps.items || []).some((g) => g && g.title) ? { ...d.gaps, items: d.gaps.items.filter((g) => g && g.title).slice(0, LIMITS.gaps).map((g) => ({ title: String(g.title), text: String(g.text || '') })) } : undefined,
     insight: d.insight && (d.insight.stats || []).length ? { ...d.insight, stats: d.insight.stats.slice(0, 4), image: safeImage(d.insight.image) } : undefined,
     approach: d.approach && { ...d.approach, image: safeImage(d.approach.image) },
     services,
@@ -126,6 +129,7 @@ export function validateData(d) {
     max('insight.heading', d.insight.heading, LIMITS.insightHeading); max('insight.statement', d.insight.statement, LIMITS.statement);
     (d.insight.stats || []).forEach((s, i) => { max(`insight.stats.${i}.value`, s.value, LIMITS.statValue); max(`insight.stats.${i}.label`, s.label, LIMITS.statLabel); });
   }
+  if (d.gaps) { max('gaps.heading', d.gaps.heading, LIMITS.gapsHeading); max('gaps.note', d.gaps.note, LIMITS.gapsNote); (d.gaps.items || []).forEach((g, i) => { max(`gaps.items.${i}.title`, g.title, LIMITS.gapTitle); max(`gaps.items.${i}.text`, g.text, LIMITS.gapText); }); }
   if (d.approach) { max('approach.heading', d.approach.heading, LIMITS.approachHeading); max('approach.body', d.approach.body, LIMITS.approachBody); }
   if (!(d.services || []).length) err('services', 'Add at least one service.');
   (d.services || []).forEach((s, i) => {

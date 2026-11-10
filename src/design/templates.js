@@ -44,6 +44,12 @@ export async function seedTemplates() {
     const now = nowISO();
     await insert('design_templates', { kind: 'brochure', name: 'Claude designs (no template)', mode: 'smart', source: 'builtin-claude', is_default: 0, created_at: now, updated_at: now });
   }
+  // Codeace Signature (owner, 2026-11-10: premium brochures, one look per website package): added once, default unchanged.
+  for (const [source, name] of [['builtin-signature-precision', 'Codeace Precision'], ['builtin-signature-mono', 'Codeace Mono'], ['builtin-signature-bold', 'Codeace Bold'], ['builtin-signature-commerce', 'Codeace Commerce']]) {
+    if (await get(`SELECT 1 FROM design_templates WHERE kind = 'brochure' AND source = :source`, { source })) continue;
+    const now = nowISO();
+    await insert('design_templates', { kind: 'brochure', name, mode: 'smart', source, is_default: 0, created_at: now, updated_at: now });
+  }
   for (const kind of ['brochure', 'proposal']) {
     if (!await get(`SELECT 1 FROM design_templates WHERE kind = :kind AND mode = 'smart' AND source = 'builtin'`, { kind })) {
       const now = nowISO();
