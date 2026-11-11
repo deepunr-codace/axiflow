@@ -1,6 +1,7 @@
 import { openEditor, thumb, loadMeta, pdfToTemplate } from './editor.js';
 import { setupPlans, homePlanCard, wirePlanButtons, renderPlans, renderPlan, renderPlanEdit } from './plans.js';
 import { setupScripts, renderScripts } from './scripts.js';
+import { setupHtmlDocs, renderHtmlDoc, framePages } from './html-docs.js';
 import { setupCrmLeads, renderCrmLeads } from './crm-leads.js';
 import { autoEnhanceSelects } from './select.js';
 // AxiFlow: single-page admin. No build step; talks to /api.
@@ -95,6 +96,7 @@ function modal(title, body, actions = '') {
 
 setupPlans({ $, $$, api, esc, money, toast, busy, modal, get view() { return view; } });
 setupScripts({ $, $$, api, esc, toast, busy, modal, docList: (...a) => docList(...a), get view() { return view; } });
+setupHtmlDocs({ $, api, toast, busy, modal, get view() { return view; } });
 setupCrmLeads({ $, $$, api, esc, toast, busy, fmtDate, fmtDay, money, simplePill, groupItems: (el) => groupItems(el), get view() { return view; } });
 
 function formData(form) {
@@ -1561,6 +1563,7 @@ async function renderToolDoc(kind, id) {
     toolTimer = setTimeout(() => { if (location.hash === `#/${kind}/${id}`) renderToolDoc(kind, id); }, 2500);
     return;
   }
+  if (d.status === 'ready' && d.content?.html) { activeEditor = await renderHtmlDoc(kind, d, TOOL[kind].noun); return; } // Codeace HTML templates
   if (d.status === 'error' || !d.design) {
     view.innerHTML = `<p><a class="back-link" href="#/${kind}"><span class="mi">arrow_back</span>All ${TOOL[kind].noun}s</a></p><div class="card"><h2 class="bad">Could not create it</h2><p class="muted">${esc(d.error || 'No design')}</p><button class="btn primary" id="retry">Try again</button></div>`;
     $('#retry').onclick = (e) => busy(e.target, async () => { await api(`/tools/docs/${id}/regenerate`, { body: {} }); renderToolDoc(kind, id); });
@@ -1612,13 +1615,13 @@ async function renderDesigns(arg) {
   <div class="tpl-grid">${list.map((t) => `<div class="card tpl-card" data-id="${t.id}">
     <div class="tpl-thumb"><div class="muted small">Loading preview…</div></div>
     <div class="tpl-body"><div class="row"><b class="grow">${esc(t.name)}</b>${t.is_default ? '<span class="tag green">Default</span>' : ''}</div>
-    <div class="small muted">${t.mode === 'smart' ? 'Built-in · layout adapts to the content' : t.source === 'pdf' ? 'Imported from PDF' : 'Saved from a document'}</div>
+    <div class="small muted">${t.mode === 'html' ? 'Built-in · Codeace design, words written for each client' : t.mode === 'smart' ? 'Built-in · layout adapts to the content' : t.source === 'pdf' ? 'Imported from PDF' : 'Saved from a document'}</div>
     <div class="row" style="margin-top:10px;gap:6px">
       <button class="btn sm" data-a="view"><span class="mi">visibility</span>View</button>
       <button class="btn sm primary" data-a="use">Use</button>
       ${t.is_default ? '' : '<button class="btn sm" data-a="default">Make default</button>'}
       <button class="btn sm ghost" data-a="rename">Rename</button>
-      ${t.mode === 'smart' ? '' : '<button class="btn sm ghost danger" data-a="delete">Delete</button>'}
+      ${t.mode === 'smart' || t.mode === 'html' ? '' : '<button class="btn sm ghost danger" data-a="delete">Delete</button>'}
     </div></div></div>`).join('')}</div>`;
   $$('[data-k]', view).forEach((b) => (b.onclick = () => (location.hash = `#/designs/${b.dataset.k}`)));
   $('#importBtn').onclick = () => importDialog(kind);
@@ -1628,7 +1631,8 @@ async function renderDesigns(arg) {
       box.innerHTML = '';
       const pg = d.pages?.[0];
       // full card width, but never taller than 360px (portrait A4 proposals are shown centred)
-      if (pg) box.append(thumb(pg, Math.min(box.clientWidth || 300, 360 * pg.w / pg.h), [{ name: 'Design', price: 30000 }, { name: 'Development', price: 60000 }]));
+      if (d.html) box.append(framePages(d.html, d.size, Math.min(box.clientWidth || 300, 360 * d.size.width / d.size.height), { only: 1 })); // HTML templates
+      else if (pg) box.append(thumb(pg, Math.min(box.clientWidth || 300, 360 * pg.w / pg.h), [{ name: 'Design', price: 30000 }, { name: 'Development', price: 60000 }]));
     }).catch(() => { $('.tpl-thumb', card).innerHTML = '<div class="muted small">No preview</div>'; });
     card.onclick = async (e) => {
       const a = e.target.closest('[data-a]')?.dataset.a || (e.target.closest('.tpl-thumb') ? 'view' : null);
@@ -1653,6 +1657,13 @@ async function viewTemplate(kind, id, name) {
     const t = await api(`/design/templates/${id}/preview?all=1`);
     const box = $('.tv-pages', d);
     if (!d.open || !box) return;
+    if (t.html) { // HTML templates: their own pages, shown with the Nirapara sample they were made from
+      const n = (t.html.match(/data-page="/g) || []).length;
+      box.innerHTML = '';
+      $('#tvCount', d).textContent = `${n} pages · shown with the Nirapara sample`;
+      box.append(framePages(t.html, t.size, Math.min(Math.max(280, box.clientWidth), Math.max(240, window.innerHeight - 230) * t.size.width / t.size.height)));
+      return;
+    }
     const pages = t.pages || [];
     box.innerHTML = pages.length ? '' : '<p class="muted small">This template has no pages.</p>';
     $('#tvCount', d).textContent = `${pages.length} page${pages.length === 1 ? '' : 's'} · shown for a sample client`;

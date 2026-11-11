@@ -18,7 +18,7 @@ import { seedTemplates } from './design/templates.js';
  */
 let booted = null;
 export function boot() {
-  if (!booted) booted = (async () => { await ready(); await seedDefaults(); await seedTemplates(); })().catch((e) => { booted = null; throw e; });
+  if (!booted) booted = (async () => { await ready(); await seedDefaults(); await seedTemplates(); await (await import('./html-docs/index.js')).seedHtmlTemplates(); })().catch((e) => { booted = null; throw e; });
   return booted;
 }
 

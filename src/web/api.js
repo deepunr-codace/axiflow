@@ -398,6 +398,35 @@ api.get('/tools/options', async (req, res) => {
 api.get('/tools/prefill/:leadId', async (req, res) => res.json(await tools.leadPrefill(Number(req.params.leadId)) || {}));
 api.get('/tools/docs', async (req, res) => res.json(await tools.listDocs(tools.KINDS.includes(req.query.kind) ? req.query.kind : 'brochure')));
 api.post('/tools/docs/:id/use-for-lead', async (req, res) => res.json(await tools.useScriptForLead(Number(req.params.id))));
+// Codeace HTML-template documents (src/html-docs): the pages as HTML, for the page view and for a live preview of edits
+api.get('/tools/docs/:id/html', async (req, res) => {
+  const h = await import('../html-docs/index.js');
+  const d = await tools.getDoc(Number(req.params.id));
+  if (!d || !h.isHtmlDoc(d)) return res.status(404).json({ error: 'Not an HTML document' });
+  res.json({ html: await h.htmlDocHtml(d), size: h.HTML_TEMPLATES[d.content.html.template].size, data: d.content.html.data, template: d.content.html.template });
+});
+// An HTML template's sample (the Nirapara reference) as a PDF: no document, no CRM write (also proves Chromium works)
+api.get('/design/templates/:id/sample.pdf', async (req, res) => {
+  const h = await import('../html-docs/index.js');
+  const t = await templates.getTemplate(Number(req.params.id));
+  if (!h.isHtmlTemplate(t)) return res.status(404).json({ error: 'Only the Codeace HTML templates have a sample PDF' });
+  const { NIRAPARA_ITEMS } = await import('../html-docs/samples/nirapara-proposal.js');
+  const { NIRAPARA_PROPOSAL } = await import('../html-docs/samples/nirapara-proposal.js');
+  const { NIRAPARA_BROCHURE } = await import('../html-docs/samples/nirapara-brochure.js');
+  const brochure = t.source === 'builtin-html-brochure';
+  const doc = { id: 0, kind: t.kind, title: 'Nirapara sample', input: { company: 'Nirapara' }, status: 'ready', created_at: new Date().toISOString(),
+    items: brochure ? null : NIRAPARA_ITEMS.map((name) => ({ name, price: 0 })),
+    content: { html: { template: t.source, data: brochure ? NIRAPARA_BROCHURE : { ...NIRAPARA_PROPOSAL, doc_type: 'Shopify Store Proposal' }, split: {} } } };
+  const pdf = await h.htmlDocPdf(doc);
+  res.set({ 'content-type': 'application/pdf', 'content-disposition': `inline; filename="${t.kind}-sample.pdf"` }).send(pdf);
+});
+api.post('/tools/docs/:id/html-preview', express.json({ limit: '2mb' }), async (req, res) => {
+  const h = await import('../html-docs/index.js');
+  const d = await tools.getDoc(Number(req.params.id));
+  if (!d || !h.isHtmlDoc(d)) return res.status(404).json({ error: 'Not an HTML document' });
+  const data = h.sanitizeEdit(req.body?.data ?? d.content.html.data);
+  res.json({ html: await h.htmlDocHtml({ ...d, content: { ...d.content, html: { ...d.content.html, data, split: {} } } }) });
+});
 api.post('/tools/:kind', async (req, res) => res.json({ id: await tools.createDoc(req.params.kind, req.body || {}) }));
 api.get('/tools/docs/:id', async (req, res) => {
   const d = await tools.getDoc(Number(req.params.id));
@@ -440,11 +469,16 @@ api.get('/design/templates', async (req, res) => res.json(await templates.listTe
 api.get('/design/templates/:id/preview', async (req, res) => {
   const d = await tools.templatePreview(Number(req.params.id));
   if (!d) return res.status(404).json({ error: 'Not found' });
-  res.json(req.query.all ? d : { pages: d.pages.slice(0, 1) });
+  res.json(req.query.all || d.html ? d : { pages: d.pages.slice(0, 1) }); // HTML templates: the card shows page 1 of the whole HTML
 });
 api.post('/design/templates/:id/default', async (req, res) => { await templates.setDefault(Number(req.params.id)); res.json({ ok: true }); });
 api.put('/design/templates/:id', async (req, res) => { await templates.renameTemplate(Number(req.params.id), req.body?.name); res.json({ ok: true }); });
-api.delete('/design/templates/:id', async (req, res) => { await templates.deleteTemplate(Number(req.params.id)); res.json({ ok: true }); });
+api.delete('/design/templates/:id', async (req, res) => {
+  const t = await templates.getTemplate(Number(req.params.id));
+  if (t?.mode === 'html') return res.status(400).json({ error: 'The built-in template cannot be deleted' }); // Codeace HTML templates
+  await templates.deleteTemplate(Number(req.params.id));
+  res.json({ ok: true });
+});
 // Page images are uploaded one by one first (Vercel caps request bodies at 4.5 MB), so this body is small.
 api.post('/design/templates/import', express.json({ limit: '4mb' }), async (req, res) => res.json({ id: await templates.importTemplate(req.body || {}) }));
 

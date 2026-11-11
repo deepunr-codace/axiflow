@@ -10,7 +10,7 @@
   "functions": {
     "api/index.js": {
       "maxDuration": 300,
-      "includeFiles": "{assets,public}/**"
+      "includeFiles": "{assets,public,node_modules/@sparticuz/chromium/bin}/**"
     }
   },
   "rewrites": [

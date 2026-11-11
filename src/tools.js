@@ -86,6 +86,7 @@ This brochure is laid out in the Codeace Signature design ("${signatureStyle(des
 </design_system>` : '');
 import { renderDesignPdf } from './design/render-pdf.js';
 import { cleanDesign, cloneDesign, fillTokens } from './design/model.js';
+import * as htmlDocs from './html-docs/index.js';
 import { getTemplate, defaultTemplate } from './design/templates.js';
 import { freeformJob } from './ai/claude-freeform.js';
 import { verticalFor as verticalOf, playbookFor, playbookSection } from './ai/verticals.js';
@@ -187,7 +188,8 @@ export async function resumeDocs({ staleMinutes = 0 } = {}) {
   for (const d of await all(`SELECT id FROM docs WHERE status = 'working' AND updated_at <= :before AND (input_json IS NULL OR input_json NOT LIKE '%"waiting":true%')`, { before })) await generate(d.id);
   // Documents made before the editor existed: lay out their saved copy with the built-in template (no AI).
   const s = getSettings();
-  for (const { id } of await all(`SELECT id FROM docs WHERE status = 'ready' AND kind <> 'script' AND design_json IS NULL AND content_json IS NOT NULL`)) { // scripts have no page design
+  // (HTML-template documents have no design on purpose: they are left alone)
+  for (const { id } of await all(`SELECT id FROM docs WHERE status = 'ready' AND kind <> 'script' AND design_json IS NULL AND content_json IS NOT NULL AND content_json NOT LIKE '%"html":{"template":"builtin-html-%'`)) { // scripts have no page design
     try {
       const d = await getDoc(id);
       const design = d.kind === 'brochure' ? brochureLayout(null, d.content, s, d.input.company) : proposalDesign(d.content, d.items, s, { preparedFor: d.input.company });
@@ -231,6 +233,10 @@ export function defaultItems(input) {
  */
 export async function autoTemplate(kind, websiteType = null) {
   const isReal = (t) => t && t.kind === kind && t.source !== 'builtin-claude';
+  // the Codeace HTML templates as the default (owner, 2026-11-11: "next generations should use this as default") win over
+  // the per-type looks, unless a template is set for the website type or for automatic documents
+  const def = await defaultTemplate(kind);
+  if (htmlDocs.isHtmlTemplate(def) && !(Number(getSettings().automation?.website_templates?.[kind]?.[websiteType]) || 0) && !(Number(getSettings().automation?.auto_template?.[kind]) || 0)) return def;
   // a template set for the lead's website type (owner, 2026-11-10) wins over the general one
   const byType = Number(getSettings().automation?.website_templates?.[kind]?.[websiteType]) || 0;
   const typed = byType ? await getTemplate(byType) : null;
@@ -359,8 +365,11 @@ export async function buildClaudeJob(doc, s = getSettings()) {
     ctx = { audit };
   } else {
     const tpl = await getTemplate(doc.template_id) || await defaultTemplate(doc.kind);
-    if (!tpl || tpl.mode !== 'smart') return null;
-    if (doc.kind === 'proposal') job = claudeProposalJob(base, doc.items || [], research, dossier); // their own site structure; prices stay ours
+    if (htmlDocs.isHtmlTemplate(tpl)) { // the Codeace HTML templates: Claude writes the content of the fixed design
+      job = htmlDocs.htmlJob(tpl.source, { input: base, dossier, research, swot: await leadSwot(doc.lead_id), settings: s, items: doc.items });
+      ctx = { html: tpl.source };
+    } else if (!tpl || tpl.mode !== 'smart') return null;
+    else if (doc.kind === 'proposal') job = claudeProposalJob(base, doc.items || [], research, dossier); // their own site structure; prices stay ours
     else {
       // Brochures are built from scratch by Claude: concept, copy, palette, images and layout (the deck job).
       // A Growth Deck / Editorial template fixes the design; with the classic template Claude chooses it.
@@ -420,7 +429,7 @@ export async function completeDoc(id, { content, source }) {
   const doc = await getDoc(id);
   const s = getSettings();
   const patch = { content_json: content, source, status: 'ready', error: null, updated_at: nowISO() };
-  if (doc.kind !== 'script') {
+  if (doc.kind !== 'script' && !content?.html) { // HTML-template documents have no design: their content is printed as is
     const tpl = await getTemplate(doc.template_id) || await defaultTemplate(doc.kind);
     const design = doc.kind === 'brochure' ? brochureLayout(tpl, content, s, doc.input.company) : proposalDesign(content, doc.items, s, { preparedFor: doc.input.company });
     patch.design_json = cleanDesign(design);
@@ -445,6 +454,10 @@ export async function generate(id, { wait = false } = {}) {
     }
     const tpl = await getTemplate(doc.template_id) || await defaultTemplate(doc.kind);
     const research = await researchFor(doc);
+    if (htmlDocs.isHtmlTemplate(tpl)) { // without Claude: the template's general Codeace copy for this lead
+      await update('docs', id, { design_json: null, content_json: htmlDocs.htmlContent(tpl.source, htmlDocs.fallbackData(tpl.source, doc.input, s)), source: 'template', updated_at: nowISO() });
+      return;
+    }
     let design, content = null, source;
     if (tpl.mode === 'smart') {
       const r = doc.kind === 'brochure'
@@ -492,8 +505,9 @@ export async function saveDoc(id, { design, items, title, content }) {
   if (!doc) throw new Error('Not found');
   const patch = { updated_at: nowISO() };
   if (content !== undefined) {
-    if (doc.kind !== 'script') throw new Error('Only scripts are saved as text');
-    patch.content_json = cleanScript(content || {});
+    if (htmlDocs.isHtmlDoc(doc)) patch.content_json = { ...doc.content, html: { ...doc.content.html, data: htmlDocs.sanitizeEdit(content?.html?.data ?? {}), split: {} } };
+    else if (doc.kind !== 'script') throw new Error('Only scripts are saved as text');
+    else patch.content_json = cleanScript(content || {});
   }
   if (design !== undefined) patch.design_json = cleanDesign(design);
   const designEdited = design !== undefined;
@@ -548,6 +562,10 @@ export function docPdf(d) {
     if (d.status !== 'ready' || !d.content) throw new Error('Script is not ready yet');
     return scriptPdf(d.content, d.input, s);
   }
+  if (htmlDocs.isHtmlDoc(d)) { // printed by Chromium (src/html-docs)
+    if (d.status !== 'ready') throw new Error('Document is not ready yet');
+    return htmlDocs.htmlDocPdf(d);
+  }
   if (d.status !== 'ready' || !d.design) throw new Error('Document is not ready yet');
   return renderDesignPdf(d.design, { title: `${d.title} ${d.kind}`, author: s.agency.name, items: d.items, settings: s });
 }
@@ -563,6 +581,7 @@ export async function docSummary(d) {
 export async function templatePreview(id) {
   const t = await getTemplate(id);
   if (!t) return null;
+  if (htmlDocs.isHtmlTemplate(t)) return htmlDocs.templatePreviewHtml(t); // { html, size }: shown in an iframe
   if (t.mode !== 'smart') return t.design;
   const s = getSettings();
   const input = { company: 'Your Client', industry: 'Business', package: s.packages[0].id };

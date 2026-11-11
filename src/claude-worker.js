@@ -246,6 +246,11 @@ async function postProcess(doc, output) {
   if (kind === 'script') return { content: (await import('./ai/script.js')).postScript(output, doc.input, ctx.audit || null), source: 'claude' };
   if (kind === 'proposal') return { content: (await import('./ai/proposal-doc.js')).postProposal(output, doc.input, doc.items || []), source: 'claude' };
   if (kind === 'brochure') return { content: (await import('./ai/brochure.js')).postBrochure(output, doc.input, doc.input.services || []), source: 'claude' };
+  if (kind === 'html') { // the Codeace HTML templates (src/html-docs): the content of the fixed design
+    const h = await import('./html-docs/index.js');
+    const template = ctx.html || doc.input.claude.job.template;
+    return { content: h.htmlContent(template, h.cleanHtmlData(template, output)), source: 'claude' };
+  }
   const { materializeStock } = await import('./images.js'); // the stock photos Claude chose: downloaded and saved now
   if (kind === 'free') {
     const r = (await import('./ai/claude-freeform.js')).postFreeform(output, ctx.stock);

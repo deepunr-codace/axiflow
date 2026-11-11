@@ -12,7 +12,7 @@ const parse = (j) => { try { return j ? JSON.parse(j) : null; } catch { return n
 /** A lead's brochure PDF: its designed brochure (Brochure tool) when there is one, else the built-in layout. */
 export async function buildBrochureFor(lead) {
   const doc = await tools.latestLeadDoc('brochure', lead.id);
-  if (doc?.design) return tools.docPdf(doc);
+  if (doc?.design || doc?.content?.html) return tools.docPdf(doc);
   const audit = parse(lead.audit_json);
   return brochurePdf({
     lead, audit,
@@ -27,7 +27,7 @@ export async function buildBrochureFor(lead) {
 export async function buildProposalFor(proposal) {
   if (proposal.doc_id) {
     const doc = await tools.getDoc(proposal.doc_id);
-    if (doc?.status === 'ready' && doc.design) return tools.docPdf(doc);
+    if (doc?.status === 'ready' && (doc.design || doc.content?.html)) return tools.docPdf(doc);
   }
   const lead = await get(`SELECT * FROM leads WHERE id = :id`, { id: proposal.lead_id });
   const content = parse(proposal.content_json) || fallbackProposalContent(lead, JSON.parse(proposal.items_json));
