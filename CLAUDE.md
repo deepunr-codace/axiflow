@@ -13,6 +13,17 @@ The team's main CRM is **Twenty**, set up by a co-worker and run by the **teleca
 
 Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATABASE_URL` and `pg`; embedded PGlite in `data/pg` when `DATABASE_URL` is empty), Vercel Blob for uploads (`data/uploads` locally), nodemailer, `@anthropic-ai/sdk` (Claude, `claude-opus-5-5`), and a vanilla-JS admin SPA in `public/`. There is no build step. Code map: see README. The old SQLite file `data/crm.db` is kept only as a backup/migration source.
 
+## Status (2026-11-12): AxiCore for CRM managers too; search box in long dropdowns
+- **Owner:** "give axicore access to manager also", then "add search option too" (screenshot of the long "CRM lead" picker).
+- **Managers:**
+  - AxiFlow `src/web/auth.js` `AXICORE_ROLES` default is now `admin,manager` (not set on Vercel, so the default applies); `public/app.js` login text.
+  - CRM `axicore/axicore.ts` `VITE_AXICORE_ROLES` default `admin,manager` (sidebar tile, `/axicore` route, canAccess); `AxiCorePage.tsx` text; comments in canAccess, CrmSidebar, CompanyDocuments. BDEs still see only the company Documents panel.
+- **Search:** `public/select.js` adds a search box at the top of every dropdown with more than 8 options (`SEARCH_FROM`; `<select data-search>` forces it).
+  - It gets focus when the menu opens. Every typed word must appear in the option (case and accents ignored, the icon name is not searched).
+  - Empty group headings hide, and "No matches" shows when nothing fits. Arrows / Enter / Esc still work while typing.
+  - Styles `.xsel-search`, `.xsel-none` (dark and light).
+- **Tested** in headless Edge on a throwaway DB with 12 CRM-style leads (scratchpad `live-crm/search-ui.mjs`): "kottayam int" → the 4 Kottayam interior firms, ArrowDown + Enter picks and fills the form, no-match message, Backspace restores the list, Esc closes and stays on the page, light theme, phone width, no console errors.
+
 ## Status (2026-11-11): the Claude-web brochure and proposal are the default templates, printed exactly (HTML engine)
 - **Owner:** "i generated brochure and proposal from claude web. can u convert this exactly to our system. next generations should use this as default. but it should be same as exactly without any difference" (`Downloads/Nirapara Ecom Growth Brochure - Premium (source).html` = the brochure made in this session, and `Downloads/Nirapara Shopify Store Proposal — CodeAce.html`, a Claude design bundle: `__bundler` manifests of gzipped pages, each page a design-canvas file of static HTML with inline styles, Manrope, logos, WebP photos).
 - **Why a new engine:** the pdfkit design model cannot reproduce CSS exactly, so these two documents are kept as HTML and printed by Chromium (`src/html-docs/`):

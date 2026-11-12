@@ -276,7 +276,7 @@ async function boot() {
   if (!me.authed) return showLogin();
   META = await api('/meta');
   $('#shell').classList.remove('hidden');
-  if (EMBEDDED && !me.axicore) return showLogin('AxiCore 2.0 is only for CRM admins. Ask an admin to give you the admin role in the CRM (Users).');
+  if (EMBEDDED && !me.axicore) return showLogin('AxiCore 2.0 is for CRM admins and managers. Ask an admin to change your role in the CRM (Users).');
   const who = (EMBEDDED && me.user?.name) || (typeof META.agency === 'string' && META.agency) || 'Codeace';
   if (EMBEDDED && !$('.axc-crm')) { // on the CRM's own address: the way back sits at the bottom of the sidebar
     $('.p-name').textContent = 'AxiCore 2.0';

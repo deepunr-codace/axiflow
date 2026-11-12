@@ -82,6 +82,14 @@ function open(sel, btn) {
   el.className = 'xsel-menu';
   el.setAttribute('role', 'listbox');
   const opts = [...sel.options];
+  // long lists (the CRM lead picker…) get a search box at the top (owner, 2026-11-12: "add search option too")
+  const searchable = opts.length > SEARCH_FROM || sel.hasAttribute('data-search');
+  let search = null;
+  if (searchable) {
+    el.classList.add('has-search');
+    el.insertAdjacentHTML('beforeend', '<div class="xsel-search"><span class="mi" aria-hidden="true">search</span><input type="text" autocomplete="off" spellcheck="false" placeholder="Search" aria-label="Search the list"></div><div class="xsel-none" hidden>No matches</div>');
+    search = el.querySelector('.xsel-search input');
+  }
   for (const it of options(sel)) {
     if (it.group !== undefined) { el.insertAdjacentHTML('beforeend', `<div class="xsel-group"></div>`); el.lastChild.textContent = it.group; continue; }
     const i = opts.indexOf(it.o);
@@ -100,7 +108,27 @@ function open(sel, btn) {
   btn.setAttribute('aria-expanded', 'true');
   btn.closest('.xsel').classList.add('open');
 
-  const rows = () => [...el.querySelectorAll('.xsel-opt:not(.disabled)')];
+  const rows = () => [...el.querySelectorAll('.xsel-opt:not(.disabled):not([hidden])')];
+  // every word typed must appear somewhere in the option (case and accents ignored)
+  const norm = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const filter = () => {
+    const words = norm(search.value).split(/\s+/).filter(Boolean);
+    let shown = 0;
+    for (const r of el.querySelectorAll('.xsel-opt')) {
+      const text = norm(r.querySelector('.xsel-text').textContent); // not the row's icon name
+      const hit = !words.length || words.every((w) => text.includes(w));
+      r.hidden = !hit;
+      if (hit) shown++;
+    }
+    // a group heading shows only while one of its options does
+    for (const g of el.querySelectorAll('.xsel-group')) {
+      let n = g.nextElementSibling, any = false;
+      while (n && !n.classList.contains('xsel-group')) { if (n.classList.contains('xsel-opt') && !n.hidden) any = true; n = n.nextElementSibling; }
+      g.hidden = !any;
+    }
+    el.querySelector('.xsel-none').hidden = shown > 0;
+    setActive(rows()[0] || null);
+  };
   const setActive = (row) => {
     el.querySelectorAll('.xsel-opt.active').forEach((r) => r.classList.remove('active'));
     if (row) { row.classList.add('active'); row.scrollIntoView({ block: 'nearest' }); }
@@ -110,6 +138,8 @@ function open(sel, btn) {
   const onKey = (e) => {
     const list = rows();
     const at = list.indexOf(menu.active);
+    // typing in the search box: letters, space, Backspace, Home/End… edit the text, they do not pick an option
+    if (search && e.target === search && !['ArrowDown', 'ArrowUp', 'Enter', 'Escape', 'Tab'].includes(e.key)) return;
     if (['ArrowDown', 'ArrowUp', 'Home', 'End', 'Enter', ' ', 'Escape'].includes(e.key)) e.stopPropagation();
     if (e.key === 'ArrowDown') { e.preventDefault(); setActive(list[Math.min(list.length - 1, at + 1)] || list[0]); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(list[Math.max(0, at - 1)] || list[0]); }
@@ -135,7 +165,12 @@ function open(sel, btn) {
   window.addEventListener('resize', close);
   menu = { el, sel, btn, active: null, onKey, onDown, onScroll };
   setActive(el.querySelector('.xsel-opt.selected:not(.disabled)') || rows()[0]);
+  if (search) {
+    search.addEventListener('input', filter);
+    search.focus({ preventScroll: true });
+  }
 }
+const SEARCH_FROM = 8; // more options than this → a search box
 
 function place(el, btn) {
   const r = btn.getBoundingClientRect();

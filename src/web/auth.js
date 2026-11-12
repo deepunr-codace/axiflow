@@ -47,7 +47,8 @@ export function isAuthed(req) {
  * The CRM (atomic-crm-flame.vercel.app) proxies /api, /axicore-app, /pdf … to this app, so the tools run on the CRM's
  * own address. The CRM login is the login there: the tools page sends the user's CRM Supabase access token
  * (Authorization: Bearer); we ask the CRM's Supabase who it is and read the role from its sales table.
- * Roles in AXICORE_ROLES (default "admin": the live CRM has admin / manager / bde, no new role is added) get the
+ * Roles in AXICORE_ROLES (default "admin,manager": the live CRM has admin / manager / bde, no new role is added; managers
+ * since 2026-11-12, owner: "give axicore access to manager also") get the
  * tools, settings and keys; every other active CRM user may only read documents (OPEN_ROUTES).
  * The AxiFlow password login (cookie) keeps working as before.
  */
@@ -56,7 +57,7 @@ const crmConf = () => ({
   key: process.env.CRM_SUPABASE_SECRET_KEY || '',
   pub: process.env.CRM_SUPABASE_PUBLISHABLE_KEY || process.env.CRM_SUPABASE_SECRET_KEY || '',
 });
-export const axicoreRoles = () => String(process.env.AXICORE_ROLES || 'admin').split(',').map((x) => x.trim()).filter(Boolean);
+export const axicoreRoles = () => String(process.env.AXICORE_ROLES || 'admin,manager').split(',').map((x) => x.trim()).filter(Boolean);
 const userCache = new Map();
 async function crmUser(token) {
   const hit = userCache.get(token);
@@ -91,7 +92,7 @@ export async function requireAuth(req, res, next) {
   if (!user) return res.status(401).json({ error: 'Not logged in' });
   req.user = user;
   const open = OPEN_ROUTES.some((re) => re.test(`${req.method} ${req.path}`));
-  if (!open && !axicoreRoles().includes(user.role)) return res.status(403).json({ error: 'AxiCore 2.0 is only for CRM admins' });
+  if (!open && !axicoreRoles().includes(user.role)) return res.status(403).json({ error: 'AxiCore 2.0 is only for CRM admins and managers' });
   next();
 }
 
