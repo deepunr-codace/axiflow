@@ -25,6 +25,16 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - **Kept, unused:** GitHub repo deepunr-codace/axilume-web-crm and Supabase `hzxtdianyucccuogeygw`. Its `axicore-tick` workflow now pings a dead address and fails harmlessly.
   - Do not port changes to AWC. The AWC notes further down are history.
 
+## Status (2026-11-12): Delete on every template card (local, not committed, not live)
+- **Owner:** "add delete option for each template". Every card in Templates now has Delete, built-ins included (smart and HTML).
+- **How it works:**
+  - Imported and saved templates are removed, as before.
+  - Built-ins are hidden instead (new column `design_templates.hidden_at`). The seeding re-adds missing built-in rows at every start, so a real delete would not stick. Hidden rows are left out of `listTemplates`, `defaultTemplate`, `autoTemplate` (per-type looks and fallback) and the Integrations list. Documents made with them keep their template.
+  - Deleting the default makes another one the default (HTML first, then built-in, then oldest).
+  - The last template of a kind cannot be deleted (400 with the reason, shown as a toast).
+- **No restore button yet:** to bring one back, `UPDATE design_templates SET hidden_at = NULL WHERE id = …`.
+- **Tested** on a throwaway DB (scratchpad `tpl-del/t.mjs`): deleted the HTML default, then deleted growth (business-website falls back to the default); a reboot does not re-add them; the last proposal template is refused.
+
 ## Status (2026-11-12): AxiCore for CRM managers too; search box in long dropdowns
 - **Owner:** "give axicore access to manager also", then "add search option too" (screenshot of the long "CRM lead" picker).
 - **Managers:**

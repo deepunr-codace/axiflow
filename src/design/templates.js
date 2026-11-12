@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { registerSchema, get, all, insert, update, run } from '../db.js';
+import { registerSchema, addColumns, get, all, insert, update, run } from '../db.js';
 import { nowISO } from '../util.js';
 import { cleanDesign, cloneDesign, saveDataUrl, newId, UPLOADS } from './model.js';
 
@@ -23,6 +23,9 @@ CREATE TABLE IF NOT EXISTS design_templates (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );`);
+// Deleted built-in templates are hidden, not removed (owner, 2026-11-12: "add delete option for each template"):
+// the seeding re-adds a missing built-in row at every start, and documents made with it keep their template.
+addColumns('design_templates', { hidden_at: 'TEXT' });
 
 const parse = (j) => { try { return j ? JSON.parse(j) : null; } catch { return null; } };
 
@@ -64,7 +67,7 @@ export async function seedTemplates() {
 }
 
 export const listTemplates = async (kind) => await all(
-  `SELECT id, kind, name, mode, source, is_default, sample_company, created_at, updated_at FROM design_templates WHERE kind = :kind ORDER BY is_default DESC, id`, { kind },
+  `SELECT id, kind, name, mode, source, is_default, sample_company, created_at, updated_at FROM design_templates WHERE kind = :kind AND hidden_at IS NULL ORDER BY is_default DESC, id`, { kind },
 );
 
 export async function getTemplate(id) {
@@ -73,12 +76,12 @@ export async function getTemplate(id) {
 }
 
 export async function defaultTemplate(kind) {
-  return await getTemplate((await get(`SELECT id FROM design_templates WHERE kind = :kind ORDER BY is_default DESC, id LIMIT 1`, { kind }))?.id);
+  return await getTemplate((await get(`SELECT id FROM design_templates WHERE kind = :kind AND hidden_at IS NULL ORDER BY is_default DESC, id LIMIT 1`, { kind }))?.id);
 }
 
 export async function setDefault(id) {
   const t = await getTemplate(id);
-  if (!t) throw new Error('Template not found');
+  if (!t || t.hidden_at) throw new Error('Template not found');
   await run(`UPDATE design_templates SET is_default = CASE WHEN id = :id THEN 1 ELSE 0 END WHERE kind = :kind`, { id, kind: t.kind });
 }
 
@@ -90,14 +93,20 @@ export async function renameTemplate(id, name) {
 
 export async function deleteTemplate(id) {
   const t = await getTemplate(id);
-  if (!t) return;
-  if (t.mode === 'smart') throw new Error('The built-in template cannot be deleted');
-  await run(`DELETE FROM design_templates WHERE id = :id`, { id });
-  fs.rmSync(path.join(UPLOADS, 'templates', String(id)), { recursive: true, force: true });
+  if (!t || t.hidden_at) return;
+  const left = await get(`SELECT COUNT(*)::int AS n FROM design_templates WHERE kind = :kind AND hidden_at IS NULL AND id <> :id`, { kind: t.kind, id });
+  if (!left?.n) throw new Error(`This is the last ${t.kind} template: add or import another one first`);
+  if (t.mode === 'fixed') {
+    await run(`DELETE FROM design_templates WHERE id = :id`, { id });
+    fs.rmSync(path.join(UPLOADS, 'templates', String(id)), { recursive: true, force: true });
+  } else {
+    // built-in (smart / html): hidden, so it is not seeded again and its documents keep their layout
+    await run(`UPDATE design_templates SET hidden_at = :now, is_default = 0 WHERE id = :id`, { id, now: nowISO() });
+  }
   if (t.is_default) await seedDefaultAfterDelete(t.kind);
 }
 async function seedDefaultAfterDelete(kind) {
-  const first = await get(`SELECT id FROM design_templates WHERE kind = :kind ORDER BY mode = 'smart' DESC, id LIMIT 1`, { kind });
+  const first = await get(`SELECT id FROM design_templates WHERE kind = :kind AND hidden_at IS NULL ORDER BY mode = 'html' DESC, mode = 'smart' DESC, id LIMIT 1`, { kind });
   if (first) await setDefault(first.id);
 }
 

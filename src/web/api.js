@@ -490,9 +490,7 @@ api.get('/design/templates/:id/preview', async (req, res) => {
 api.post('/design/templates/:id/default', async (req, res) => { await templates.setDefault(Number(req.params.id)); res.json({ ok: true }); });
 api.put('/design/templates/:id', async (req, res) => { await templates.renameTemplate(Number(req.params.id), req.body?.name); res.json({ ok: true }); });
 api.delete('/design/templates/:id', async (req, res) => {
-  const t = await templates.getTemplate(Number(req.params.id));
-  if (t?.mode === 'html') return res.status(400).json({ error: 'The built-in template cannot be deleted' }); // Codeace HTML templates
-  await templates.deleteTemplate(Number(req.params.id));
+  try { await templates.deleteTemplate(Number(req.params.id)); } catch (e) { return res.status(400).json({ error: e.message }); }
   res.json({ ok: true });
 });
 // Page images are uploaded one by one first (Vercel caps request bodies at 4.5 MB), so this body is small.

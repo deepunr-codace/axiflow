@@ -232,7 +232,7 @@ export function defaultItems(input) {
  * template)" is only for documents made by hand, so the automation then falls back to the first real template.
  */
 export async function autoTemplate(kind, websiteType = null) {
-  const isReal = (t) => t && t.kind === kind && t.source !== 'builtin-claude';
+  const isReal = (t) => t && t.kind === kind && t.source !== 'builtin-claude' && !t.hidden_at; // hidden = deleted by the owner
   // the Codeace HTML templates as the default (owner, 2026-11-11: "next generations should use this as default") win over
   // the per-type looks, unless a template is set for the website type or for automatic documents
   const def = await defaultTemplate(kind);
@@ -243,14 +243,14 @@ export async function autoTemplate(kind, websiteType = null) {
   if (isReal(typed)) return typed;
   // no template set for the type: its Signature look (brochures only)
   if (kind === 'brochure' && TYPE_TEMPLATES[websiteType]) {
-    const row = await get(`SELECT id FROM design_templates WHERE kind = 'brochure' AND source = :source ORDER BY id LIMIT 1`, { source: TYPE_TEMPLATES[websiteType] });
+    const row = await get(`SELECT id FROM design_templates WHERE kind = 'brochure' AND source = :source AND hidden_at IS NULL ORDER BY id LIMIT 1`, { source: TYPE_TEMPLATES[websiteType] });
     const t = row ? await getTemplate(row.id) : null;
     if (isReal(t)) return t;
   }
   const pick = Number(getSettings().automation?.auto_template?.[kind]) || 0;
   const chosen = pick ? await getTemplate(pick) : await defaultTemplate(kind);
   if (isReal(chosen)) return chosen;
-  const row = await get(`SELECT id FROM design_templates WHERE kind = :kind AND COALESCE(source, '') <> 'builtin-claude' ORDER BY is_default DESC, (COALESCE(source, '') = 'builtin-editorial') DESC, id LIMIT 1`, { kind });
+  const row = await get(`SELECT id FROM design_templates WHERE kind = :kind AND COALESCE(source, '') <> 'builtin-claude' AND hidden_at IS NULL ORDER BY is_default DESC, (COALESCE(source, '') = 'builtin-editorial') DESC, id LIMIT 1`, { kind });
   return row ? getTemplate(row.id) : null;
 }
 

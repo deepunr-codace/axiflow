@@ -1624,7 +1624,7 @@ async function renderDesigns(arg) {
       <button class="btn sm primary" data-a="use">Use</button>
       ${t.is_default ? '' : '<button class="btn sm" data-a="default">Make default</button>'}
       <button class="btn sm ghost" data-a="rename">Rename</button>
-      ${t.mode === 'smart' || t.mode === 'html' ? '' : '<button class="btn sm ghost danger" data-a="delete">Delete</button>'}
+      <button class="btn sm ghost danger" data-a="delete"><span class="mi">delete</span>Delete</button>
     </div></div></div>`).join('')}</div>`;
   $$('[data-k]', view).forEach((b) => (b.onclick = () => (location.hash = `#/designs/${b.dataset.k}`)));
   $('#importBtn').onclick = () => importDialog(kind);
@@ -1644,7 +1644,11 @@ async function renderDesigns(arg) {
       if (a === 'use') { sessionStorage.setItem(`tpl-${kind}`, id); location.hash = `#/${kind}/new`; }
       if (a === 'default') { await api(`/design/templates/${id}/default`, { body: {} }); toast('Default template changed'); renderDesigns(kind); }
       if (a === 'rename') { const n = prompt('Template name', $('b', card).textContent); if (n) { await api(`/design/templates/${id}`, { method: 'PUT', body: { name: n } }); renderDesigns(kind); } }
-      if (a === 'delete') { if (!confirm('Delete this template? Documents already made with it are kept.')) return; await api(`/design/templates/${id}`, { method: 'DELETE' }); renderDesigns(kind); }
+      if (a === 'delete') {
+        if (!confirm(`Delete "${$('b', card).textContent}"? Documents already made with it are kept.${$('.tag.green', card) ? ' Another template becomes the default.' : ''}`)) return;
+        try { await api(`/design/templates/${id}`, { method: 'DELETE' }); toast('Template deleted'); } catch (err) { toast(err.message || 'Could not delete the template'); }
+        renderDesigns(kind);
+      }
     };
   }
 }

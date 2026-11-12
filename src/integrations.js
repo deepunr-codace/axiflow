@@ -29,7 +29,7 @@ export async function integrationsStatus() {
   const { aiStatus } = await import('./ai/claude.js');
   const { channelStatus } = await import('./pipeline/channels.js');
   const claudeDocs = await all(`SELECT id, kind, title, status, error, input_json, content_json, updated_at FROM docs WHERE input_json LIKE '%"claude":%' ORDER BY id DESC LIMIT 8`).catch(() => []);
-  const tpl = await all(`SELECT id, kind, name, source, is_default FROM design_templates ORDER BY kind, is_default DESC, id`).catch(() => []);
+  const tpl = await all(`SELECT id, kind, name, source, is_default FROM design_templates WHERE hidden_at IS NULL ORDER BY kind, is_default DESC, id`).catch(() => []);
   const storage = set('SUPABASE_URL') && (set('SUPABASE_SECRET_KEY') || set('SUPABASE_SERVICE_ROLE_KEY')) ? 'supabase' : set('BLOB_READ_WRITE_TOKEN') ? 'blob' : 'local';
   const outbox = await get(`SELECT COUNT(*)::int AS n FROM crm_outbox WHERE status IN ('pending', 'failed')`).catch(() => ({ n: 0 }));
   return {
