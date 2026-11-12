@@ -94,6 +94,27 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   2. Live check with a real save: Integrations shows "From the CRM app".
   3. Then parts 2 and 3.
 
+## Status (2026-11-12): classic editor always for the HTML templates, same PDF structure and styles (2c2a43e)
+- **Owner:** "use clasic editor always. but i need my same pdf structure and styles".
+- **How:** when an HTML-template document is ready (`tools.completeDoc` Claude path, `generate` no-Claude path), `tools.classicDesignOf(doc)` → `src/html-docs/to-design.js` `htmlToDesign()`:
+  1. `fitPlan()` (index.js; the fit check + saved split, shared with `htmlDocPdf`) gives the HTML;
+  2. Chromium renders it at 2× and runs `public/html-convert.js` `convertPages()` in the page;
+  3. fonts go through `resolveFont` (Google Fonts by family + weight), and pictures are saved with `saveDataUrl(…, 'images', <sha16>)`.
+  - The document gets `design_json` and opens in the classic editor. `docPdf` prints the design (HTML only when there is no design).
+  - `content.html` is kept (Write it again, the fact check, re-layout when words come in through the API: `saveDoc` re-converts).
+  - Older HTML documents without a design are converted when opened (`POST /api/tools/docs/:id/to-design`; app.js shows "Opening … in the editor"); if that fails, the page view is the fallback.
+- **Converter** (`public/html-convert.js`, shared by the server and the admin's "Open in classic editor"):
+  - boxes (fill, linear / radial-approximated gradients, outline, single-side rules), CSS `::before` decorations with empty content (bullets, rules, dots, circles), photos and `<img>` (re-encoded PNG / JPEG), inline SVG icons (as pictures);
+  - texts: wrapped texts keep the browser's width, single-line ones get 3 % + 6 px of room; a bold or coloured phrase becomes `**…**` with `hl` + the new text option `hlf` (font of the highlighted words, in `model.js`, `render-pdf.js` `tokenFont`, `editor.js`; `preloadUserFonts` loads it); non-breaking hyphens become plain ones;
+  - a box with overflow hidden whose `::before` sticks out (Growth Plan CTA circle) becomes a server screenshot (`data-ax-shot`; the browser path leaves the decoration out);
+  - the proposal's price table (`data-pricing` in proposal-codeace.js) becomes a live `pricing` element with `look: 'codeace'` (fonts `font` / `fontm` / `fontb`; `editor.js` `pricingCodeace`, `render-pdf.js` `drawPricingCodeace`), so the Prices dialog updates it.
+- **Fidelity:** pixel diff of the classic PDF against the HTML PDF: CodeAce Growth Brochure 3-4.7 % per page, CodeAce Proposal 3.6-7.6 %, Shopify Store Template (old Growth Plan) 5-7.5 %: text edges and photo re-encoding. **Known gaps:**
+  - italic Manrope does not exist on Google (the proposal's italic note is upright);
+  - Fraunces' optical size is lost in the old Growth Plan (big serif headings a bit heavier);
+  - a clipped decoration is only captured on the server.
+- **Tested:** `bps/classic-unit.mjs` (3 templates convert in 1-3 s and print), e2e 35 checks (4 website types + Claude doc converted, long content → 17 design pages), browser `bps/cl-ui.mjs` (8: older doc converted on open, new proposal opens in the classic editor, CodeAce table, Prices dialog changes it, saved, PDF, no console errors). All on an export of the staged commit.
+- **Not checked live:** the conversion on Vercel. Live has no HTML-template documents yet, and making one writes to the CRM. The first real lead's brochure / proposal is the first live run: check the doc opens in the classic editor (if conversion failed: event `tools / to-design / error`).
+
 ## Status (2026-11-12): drag and drop on the HTML documents; brochures researched and fact-checked per lead (abbdf67)
 - **Owner:** "i need my editor. its just content editor. where is my drag n drop editor?" (chose "Both": drag and drop on the real pages + "Open in classic editor"), then "for each brochure generation, the contents should be generated separately according to the lead details and SWOT. we research and update each and every content. also verify they are correct".
 - **Design mode** (default; Words / Design switch on the document page, remembered in `localStorage axf-hd-mode`): `public/html-design.js` `mountDesign()`.
