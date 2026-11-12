@@ -20,6 +20,7 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - **AxiCore = this repo:** https://axiflow-v1.vercel.app; Supabase `urjgjuleerifdvuxcmoa`. The CRM proxies the tool paths here.
 - **AWC (Axilume Web CRM):**
   - **Removed:** the local folder `Axilume Web CRM/` was deleted (2026-11-12; git was clean and matched GitHub).
+  - **Vercel project `axiflow-v1` deleted** (owner: "why two axiflow? delete unused"): the duplicate made by mistake at the first setup (axiflow-v1-alpha.vercel.app, rebuilt on every push). Live AxiFlow is the project **`axiflow`**, which serves axiflow-v1.vercel.app; this folder's `.vercel/` is linked to it.
   - **Vercel project `axilume-web-crm` deleted** (owner, same day; `vercel project rm --yes`; the address now gives 404 DEPLOYMENT_NOT_FOUND).
   - **Kept, unused:** GitHub repo deepunr-codace/axilume-web-crm and Supabase `hzxtdianyucccuogeygw`. Its `axicore-tick` workflow now pings a dead address and fails harmlessly.
   - Do not port changes to AWC. The AWC notes further down are history.
