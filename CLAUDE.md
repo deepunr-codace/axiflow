@@ -25,7 +25,8 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - **Kept, unused:** GitHub repo deepunr-codace/axilume-web-crm and Supabase `hzxtdianyucccuogeygw`. Its `axicore-tick` workflow now pings a dead address and fails harmlessly.
   - Do not port changes to AWC. The AWC notes further down are history.
 
-## Status (2026-11-12): Delete on every template card (local, not committed, not live)
+## Status (2026-11-12): Delete on every template card (LIVE, 449ccbb); only 2 templates left live
+- **Live templates now** (owner: "keep first proposal and remove next", "in brochure - delete all except Shopify Store Template"): brochure **Shopify Store Template** (id 20, the HTML brochure renamed by the owner) and proposal **CodeAce Proposal** (id 22), both default. Hidden on live: ids 1, 4, 5, 7, 9, 11, 13, 15 (brochures) and 2 (Codeace Default Proposal). When the uncommitted "Codeace Business Website" work is deployed, its seed adds a new visible `builtin-growth` row: hide it too if the owner still wants only one.
 - **Owner:** "add delete option for each template". Every card in Templates now has Delete, built-ins included (smart and HTML).
 - **How it works:**
   - Imported and saved templates are removed, as before.
