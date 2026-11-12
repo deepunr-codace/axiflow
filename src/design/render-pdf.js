@@ -77,12 +77,18 @@ function richTokens(p) {
   }
   return out;
 }
+/** The font of a token: highlighted words may have their own (hlf: a bold phrase); an unusable one falls back. */
+function tokenFont(doc, e, tk) {
+  if (tk.hl && e.hlf) { try { doc.font(e.hlf); return; } catch { /* not loaded */ } }
+  doc.font(e.font);
+}
 function richLines(doc, e, p) {
   doc.font(e.font).fontSize(e.size);
   const sp = doc.widthOfString(' ') + (e.ls || 0);
   const lines = [];
   let line = [], lw = 0;
   for (const tk of richTokens(p)) {
+    tokenFont(doc, e, tk);
     const w = doc.widthOfString(tk.t, { characterSpacing: e.ls }) + (e.ls || 0);
     const add = (line.length && tk.gap ? sp : 0) + w;
     if (line.length && lw + add > e.w + 0.5) { lines.push({ tokens: line, w: lw }); line = []; lw = 0; }
@@ -102,6 +108,7 @@ function drawRich(doc, e) {
       let x = e.x + (e.align === 'center' ? (e.w - ln.w) / 2 : e.align === 'right' ? e.w - ln.w : 0);
       ln.tokens.forEach((tk, i) => {
         if (i && tk.gap) x += sp;
+        tokenFont(doc, e, tk);
         doc.fillColor(tk.hl ? e.hl : e.color).text(tk.t, x, y, { lineBreak: false, characterSpacing: e.ls });
         x += tk.w;
       });
@@ -289,7 +296,38 @@ export function pricingRows(items, settings) {
     { label: 'Total', value: `${money(total, cur).replace('₹', '')} + ${settings.billing.tax_label}`, total: true },
   ];
 }
+/** The CodeAce proposal's price table (look 'codeace'); the same sizes as public/editor.js pricingCodeace. */
+function drawPricingCodeace(doc, e, items, settings) {
+  const s = e.size || 11.25, k = s / 11.25, col = 127.5 * k, px = 15 * k, lh = 1.366;
+  const cur = settings.billing.currency;
+  const money = (n) => (cur === 'INR' || !cur ? `₹ ${Math.round(Number(n) || 0).toLocaleString('en-IN')}` : `${cur} ${Math.round(Number(n) || 0).toLocaleString('en-US')}`);
+  const font = (code, d) => { try { doc.font(code); return code; } catch { doc.font(d); return d; } };
+  const total = (items || []).reduce((a, i) => a + Number(i.price || 0), 0);
+  const rows = [
+    { a: 'Module / Component', b: `Cost (${cur || 'INR'})`, bg: '#111111', ink: '#FFFFFF', pad: 11.25 * k, fa: e.fontb, fb: e.fontb, size: s, line: false },
+    ...(items || []).map((i, n) => ({ a: i.name, b: money(i.price), bg: n % 2 ? '#F7F7F7' : null, ink: '#111111', pad: 10.5 * k, fa: e.fontm, fb: e.font, size: s, line: true })),
+    { a: 'Total', b: `${money(total)}${settings.billing.tax_label ? ` + ${settings.billing.tax_label}` : ''}`, bg: '#D7261E', ink: '#FFFFFF', pad: 12 * k, fa: e.fontb, fb: e.fontb, size: s * 16 / 15, line: false },
+  ];
+  // row heights: the label may wrap in its column
+  const hs = rows.map((r) => { font(r.fa, 'PB'); doc.fontSize(r.size); return Math.max(lh * r.size, doc.heightOfString(clean(r.a), { width: e.w - col - 2 * px })) + 2 * r.pad + (r.line ? 0.75 : 0); });
+  const H = hs.reduce((a, b) => a + b, 0);
+  doc.save();
+  doc.roundedRect(e.x, e.y, e.w, H, 12 * k).clip();
+  let y = e.y;
+  rows.forEach((r, i) => {
+    if (r.bg) doc.rect(e.x, y, e.w, hs[i]).fill(r.bg);
+    if (r.line) doc.rect(e.x, y, e.w, 0.75).fill('#E2E2E2');
+    const ty = y + (r.line ? 0.75 : 0) + r.pad;
+    font(r.fa, 'PB'); doc.fontSize(r.size).fillColor(r.ink).text(clean(r.a), e.x + px, ty, { width: e.w - col - 2 * px });
+    font(r.fb, 'PR'); doc.fontSize(r.size).fillColor(r.ink).text(clean(r.b), e.x + e.w - col, ty, { width: col - px, align: 'right', lineBreak: false });
+    y += hs[i];
+  });
+  doc.restore();
+  doc.roundedRect(e.x + 0.375, e.y + 0.375, e.w - 0.75, H - 0.75, 12 * k).lineWidth(0.75).strokeColor('#E2E2E2').stroke();
+}
+
 function drawPricing(doc, e, items, settings) {
+  if (e.look === 'codeace') return drawPricingCodeace(doc, e, items, settings);
   const P = PRICING;
   const c1 = e.w * P.col;
   let y = e.y;

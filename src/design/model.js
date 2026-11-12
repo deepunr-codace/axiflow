@@ -70,15 +70,19 @@ export function cleanElement(e) {
   if (e.locked) base.locked = true;
   switch (e.type) {
     case 'text':
-      return { ...base, text: str(e.text, 8000), font: FONTS.includes(e.font) || /^X[0-9a-f]{8}$/.test(e.font) ? e.font : 'PR' /* X…: a font of an imported PDF (user-fonts.js) */, size: num(e.size, 4, 400, 16), color: color(e.color, '#141413'), align: ['left', 'center', 'right'].includes(e.align) ? e.align : 'left', lh: num(e.lh, 0.7, 3, 1.4), ls: num(e.ls, -20, 40, 0), list: ['', 'dot', 'icon'].includes(e.list) ? e.list : '', gap: num(e.gap, 0, 200, 8), outline: num(e.outline, 0, 20, 0), rot: num(e.rot, -180, 180, 0), hl: e.hl ? color(e.hl, '') : '', arc: num(e.arc, 0, 2000, 0) };
+      return { ...base, text: str(e.text, 8000), font: FONTS.includes(e.font) || /^X[0-9a-f]{8}$/.test(e.font) ? e.font : 'PR' /* X…: a font of an imported PDF (user-fonts.js) */, size: num(e.size, 4, 400, 16), color: color(e.color, '#141413'), align: ['left', 'center', 'right'].includes(e.align) ? e.align : 'left', lh: num(e.lh, 0.7, 3, 1.4), ls: num(e.ls, -20, 40, 0), list: ['', 'dot', 'icon'].includes(e.list) ? e.list : '', gap: num(e.gap, 0, 200, 8), outline: num(e.outline, 0, 20, 0), rot: num(e.rot, -180, 180, 0), hl: e.hl ? color(e.hl, '') : '', arc: num(e.arc, 0, 2000, 0),
+        ...(FONTS.includes(e.hlf) || /^X[0-9a-f]{8}$/.test(e.hlf || '') ? { hlf: e.hlf } : {}) }; // hlf: the font of the **highlighted** words (a bold phrase in a sentence)
     case 'image':
       return { ...base, src: SRC_RE.test(e.src || '') ? e.src : '', fit: ['cover', 'contain', 'fill'].includes(e.fit) ? e.fit : 'cover', radius: num(e.radius, 0, 1000, 0), ha: ['left', 'center', 'right'].includes(e.ha) ? e.ha : 'center', va: ['top', 'center', 'bottom'].includes(e.va) ? e.va : 'center' };
     case 'shape':
       return { ...base, shape: ['ellipse', 'line'].includes(e.shape) ? e.shape : 'rect', dash: e.dash === 'dot' ? 'dot' : '', fill: e.fill === 'none' ? 'none' : color(e.fill, '#2d4bd8'), stroke: e.stroke && e.stroke !== 'none' ? color(e.stroke, '#ffffff') : 'none', sw: num(e.sw, 0, 50, 1), radius: num(e.radius, 0, 1000, 0), gradient: cleanGradient(e.gradient) };
     case 'icon':
       return { ...base, name: ICONS[e.name] ? e.name : 'star4', color: color(e.color, '#ffffff') };
-    case 'pricing':
-      return { ...base };
+    case 'pricing': { // look 'codeace' = the CodeAce proposal's table (dark head, red total, rounded frame) in its fonts
+      if (e.look !== 'codeace') return { ...base };
+      const f = (v, d) => (FONTS.includes(v) || /^X[0-9a-f]{8}$/.test(v || '') ? v : d);
+      return { ...base, look: 'codeace', size: num(e.size, 6, 40, 11.25), font: f(e.font, 'IR'), fontm: f(e.fontm, 'IS'), fontb: f(e.fontb, 'IS') };
+    }
     default:
       return null;
   }

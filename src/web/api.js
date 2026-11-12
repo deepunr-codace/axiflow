@@ -436,6 +436,18 @@ api.get('/design/templates/:id/sample.pdf', async (req, res) => {
   const pdf = await h.htmlDocPdf(h.sampleDoc(t.source));
   res.set({ 'content-type': 'application/pdf', 'content-disposition': `inline; filename="${t.kind}-sample.pdf"` }).send(pdf);
 });
+// An HTML document made before the classic editor was the rule (owner, 2026-11-12): its pages converted on the server
+// into its own classic design, then it opens in the classic editor
+api.post('/tools/docs/:id/to-design', async (req, res) => {
+  const h = await import('../html-docs/index.js');
+  const d = await tools.getDoc(Number(req.params.id));
+  if (!d || !h.isHtmlDoc(d)) return res.status(404).json({ error: 'Not an HTML document' });
+  if (d.design) return res.json({ ok: true });
+  const design = await tools.classicDesignOf(d);
+  if (!design) return res.status(500).json({ error: 'The pages could not be converted' });
+  await update('docs', d.id, { design_json: design, updated_at: nowISO() });
+  res.json({ ok: true });
+});
 // "Open in classic editor": the browser converts the HTML pages into the design model (boxes, texts, images, fonts)
 // and a copy is saved as a new document of the same lead, opened in the drag-and-drop editor; the original stays
 api.post('/tools/docs/:id/classic', express.json({ limit: '3mb' }), async (req, res) => {

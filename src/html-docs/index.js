@@ -123,7 +123,16 @@ const docArgs = (doc) => ({ client: doc.input?.company || doc.title || 'Client',
  * saved with the document so the page view shows the same pages.
  */
 export async function htmlDocPdf(doc) {
-  const { withPage, overflowCheck, htmlToPdf } = await import('./chrome.js');
+  const { htmlToPdf } = await import('./chrome.js');
+  const { html } = await fitPlan(doc);
+  return htmlToPdf(html, HTML_TEMPLATES[doc.content.html.template].size);
+}
+/**
+ * The page plan that fits (checked in Chromium, saved with the document) and the HTML with it. Used before printing
+ * and before the conversion for the classic editor, so both get the split pages.
+ */
+export async function fitPlan(doc) {
+  const { withPage, overflowCheck } = await import('./chrome.js');
   const h = doc.content.html;
   const t = HTML_TEMPLATES[h.template];
   let split = h.split || {};
@@ -140,7 +149,7 @@ export async function htmlDocPdf(doc) {
   if (doc.id && JSON.stringify(split) !== JSON.stringify(h.split || {})) {
     await run(`UPDATE docs SET content_json = :c WHERE id = :id`, { c: JSON.stringify({ ...doc.content, html: { ...h, split } }), id: doc.id }).catch(() => {});
   }
-  return htmlToPdf(html, t.size);
+  return { html, split };
 }
 function replan(kind, data, split, over) {
   if (kind === 'proposal') {

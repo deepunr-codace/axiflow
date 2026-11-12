@@ -1540,7 +1540,13 @@ async function renderToolDoc(kind, id) {
     toolTimer = setTimeout(() => { if (location.hash === `#/${kind}/${id}`) renderToolDoc(kind, id); }, 2500);
     return;
   }
-  if (d.status === 'ready' && d.content?.html) { activeEditor = await renderHtmlDoc(kind, d, TOOL[kind].noun); return; } // Codeace HTML templates
+  // Codeace HTML templates open in the classic editor too (owner, 2026-11-12: "use classic editor always"): a document
+  // made before that is converted once; the page view stays only as a fallback if the conversion fails
+  if (d.status === 'ready' && d.content?.html && !d.design) {
+    view.innerHTML = `<div class="card empty"><h2>Opening ${esc(d.title)} in the editor…</h2><p class="muted">Turning the pages into editable boxes (once).</p><div class="bar" style="max-width:320px;margin:16px auto 0"><div class="indet"></div></div></div>`;
+    try { await api(`/tools/docs/${id}/to-design`, { body: {} }); return renderToolDoc(kind, id); }
+    catch { activeEditor = await renderHtmlDoc(kind, d, TOOL[kind].noun); return; }
+  }
   if (d.status === 'error' || !d.design) {
     view.innerHTML = `<p><a class="back-link" href="#/${kind}"><span class="mi">arrow_back</span>All ${TOOL[kind].noun}s</a></p><div class="card"><h2 class="bad">Could not create it</h2><p class="muted">${esc(d.error || 'No design')}</p><button class="btn primary" id="retry">Try again</button></div>`;
     $('#retry').onclick = (e) => busy(e.target, async () => { await api(`/tools/docs/${id}/regenerate`, { body: {} }); renderToolDoc(kind, id); });

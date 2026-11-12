@@ -149,7 +149,7 @@ function investment(ctx, n, v) {
   const R = 'display: grid; grid-template-columns: minmax(0, 1fr) 170px';
   const rows = ctx.items.map((it, i) => `<div style="${R};${i % 2 ? ' background: #F7F7F7;' : ''} border-top: 1px solid #E2E2E2"><div style="padding: 14px 20px; font-weight: 600">${esc(it.name)}</div><div style="padding: 14px 20px; text-align: right">${esc(ctx.money(it.price))}</div></div>`).join('\n');
   return page(ctx, n, v.eyebrow || 'Pricing', v.title || 'Investment', `${v.intro ? para(v.intro) : ''}
-<div data-fit style="width: 100%; font-size: 15px; line-height: normal; border: 1px solid #E2E2E2; border-radius: 16px; overflow: hidden">
+<div data-fit data-pricing style="width: 100%; font-size: 15px; line-height: normal; border: 1px solid #E2E2E2; border-radius: 16px; overflow: hidden">
 <div style="${R}; background: #111111; color: #FFFFFF"><div style="text-align: left; padding: 15px 20px; font-weight: 700">Module / Component</div><div style="text-align: right; padding: 15px 20px; font-weight: 700">Cost (${esc(ctx.currency)})</div></div>
 ${rows}
 <div style="${R}; background: #D7261E; color: #FFFFFF"><div style="padding: 16px 20px; font-weight: 700; font-size: 16px">Total</div><div style="padding: 16px 20px; text-align: right; font-weight: 700; font-size: 16px">${esc(ctx.money(ctx.total))}${ctx.taxNote ? ` + ${esc(ctx.taxNote)}` : ''}</div></div>

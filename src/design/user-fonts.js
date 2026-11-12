@@ -242,7 +242,11 @@ const LOADED = new Map(); // code → { buf, row }
 /** Loads the imported fonts a design uses (before the synchronous drawing). */
 export async function preloadUserFonts(design) {
   const codes = new Set();
-  for (const p of design?.pages || []) for (const e of p.elements || []) if (e.type === 'text' && isUserFont(e.font) && !LOADED.has(e.font)) codes.add(e.font);
+  for (const p of design?.pages || []) for (const e of p.elements || []) {
+    if (e.type === 'text' && isUserFont(e.font) && !LOADED.has(e.font)) codes.add(e.font);
+    if (e.type === 'text' && isUserFont(e.hlf) && !LOADED.has(e.hlf)) codes.add(e.hlf); // highlighted words' own font
+    if (e.type === 'pricing') for (const c of [e.font, e.fontm, e.fontb]) if (isUserFont(c) && !LOADED.has(c)) codes.add(c); // the CodeAce price table
+  }
   await Promise.all([...codes].map(async (code) => {
     const r = await get(`SELECT * FROM design_fonts WHERE code = :code`, { code }).catch(() => null);
     const buf = r ? await readUpload(r.file).catch(() => null) : null;

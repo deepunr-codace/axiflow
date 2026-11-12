@@ -6,6 +6,7 @@
  * (src/html-docs/edits.js) and the PDF is printed from the same HTML, so what you see is what is sent.
  * convertToDesign() turns the rendered pages into the classic editor's design model ("Open in classic editor").
  */
+import { convertPages, finish, fontName, reencode } from './html-convert.js';
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const rgbHex = (c) => {
@@ -333,158 +334,14 @@ export async function mountDesign(host, panel, { doc, api, toast, size, onSaved,
   };
 }
 
-/** A picture → a JPEG (or PNG when it has transparency) data URL no wider than max px. */
-async function reencode(url, max = 2400) {
-  const img = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = url; });
-  const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
-  const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(img.naturalWidth * k)); c.height = Math.max(1, Math.round(img.naturalHeight * k));
-  const g = c.getContext('2d'); g.drawImage(img, 0, 0, c.width, c.height);
-  const png = /^data:image\/png/.test(url) && (() => { const d = g.getImageData(0, 0, c.width, c.height).data; for (let i = 3; i < d.length; i += 4 * 97) if (d[i] < 250) return true; return false; })();
-  return png ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', 0.88);
-}
-
-// ==================================================================== HTML pages → classic design model
-const PT = 0.75; // CSS px → the design model's points
-const WEIGHT_NAME = { 100: 'Thin', 200: 'ExtraLight', 300: 'Light', 400: 'Regular', 500: 'Medium', 600: 'SemiBold', 700: 'Bold', 800: 'ExtraBold', 900: 'Black' };
-function splitTop(s) { const out = []; let d = 0, cur = ''; for (const ch of s) { if (ch === '(') d++; if (ch === ')') d--; if (ch === ',' && d === 0) { out.push(cur.trim()); cur = ''; } else cur += ch; } if (cur.trim()) out.push(cur.trim()); return out; }
-/** "linear-gradient(155deg, rgb(..) 0%, …)" / radial (approximated) → { angle, stops: [[pos, hex, alpha]] } */
-function gradientOf(layer) {
-  const m = /^(linear|radial)-gradient\((.*)\)$/s.exec(layer.trim());
-  if (!m) return null;
-  const parts = splitTop(m[2]);
-  let angle = 180;
-  if (m[1] === 'linear') {
-    if (/^-?[\d.]+deg$/.test(parts[0])) angle = parseFloat(parts.shift());
-    else if (/^to /.test(parts[0])) angle = ({ 'to top': 0, 'to right': 90, 'to bottom': 180, 'to left': 270, 'to top right': 45, 'to bottom right': 135, 'to bottom left': 225, 'to top left': 315 })[parts.shift()] ?? 180;
-  } else { if (!/^rgb|^#|^transparent/.test(parts[0])) parts.shift(); angle = 215; } // radial: a diagonal from the bright corner
-  const stops = parts.map((p, i) => { const c = rgbHex(p); const pm = /([\d.]+)%\s*$/.exec(p); return [pm ? parseFloat(pm[1]) / 100 : parts.length > 1 ? i / (parts.length - 1) : 0, c.hex || '#000000', c.a]; });
-  return stops.length >= 2 ? { angle, stops: stops.slice(0, 6) } : null;
-}
 /**
- * Walks the rendered pages and builds { pages: [{ w, h, bg, elements }] }: boxes (fill, gradient, border, corners) as
- * shapes, background photos and <img> as pictures (uploaded), texts with their font, size, colour, spacing and line
- * height. Fonts come in through the font importer (Google Fonts by name and weight), so the editor and the PDF have them.
+ * The rendered pages → the classic design model (public/html-convert.js), with the fonts brought in through the font
+ * importer and the pictures uploaded, ready for POST /api/tools/docs/:id/classic.
  */
-export async function convertToDesign(fdoc, { api, onProgress = () => {} }) {
-  const win = fdoc.defaultView;
-  const fontCodes = new Map(), srcs = new Map();
-  const fontKey = (cs) => { const fam = cs.fontFamily.split(',')[0].replace(/["']/g, '').trim(); const w = Math.round(Number(cs.fontWeight) / 100) * 100 || 400; return `${fam}|${w}|${cs.fontStyle === 'italic' ? 1 : 0}`; };
-  const pages = [];
-  const pageEls = [...fdoc.querySelectorAll('[data-page]')];
-  const pending = [];
-  for (const [pi, pg] of pageEls.entries()) {
-    onProgress(pi + 1, pageEls.length);
-    const pr = pg.getBoundingClientRect();
-    const X = (v) => Math.round((v - pr.left) * PT * 10) / 10, Y = (v) => Math.round((v - pr.top) * PT * 10) / 10, S = (v) => Math.round(v * PT * 10) / 10;
-    const pcs = win.getComputedStyle(pg);
-    const elements = [];
-    const pageBg = rgbHex(pcs.backgroundColor);
-    const boxOf = (el, cs, r) => {
-      const out = [];
-      const radius = S(parseFloat(cs.borderTopLeftRadius) || 0);
-      const bg = rgbHex(cs.backgroundColor);
-      const base = { x: X(r.left), y: Y(r.top), w: S(r.width), h: S(r.height) };
-      if (el !== pg && bg.a > 0.01) out.push({ type: 'shape', shape: 'rect', ...base, fill: bg.hex, opacity: bg.a, radius });
-      const layers = cs.backgroundImage && cs.backgroundImage !== 'none' ? splitTop(cs.backgroundImage) : [];
-      const url = layers.find((l) => /^url\(/.test(l));
-      if (url) {
-        const src = /^url\(["']?(.*?)["']?\)$/s.exec(url)?.[1];
-        const pos = cs.backgroundPosition.split(' ');
-        const ha = /100%|right/.test(pos[0]) ? 'right' : /^0%|left/.test(pos[0]) ? 'left' : 'center';
-        const va = /100%|bottom/.test(pos[1] || '') ? 'bottom' : /^0%|top/.test(pos[1] || '') ? 'top' : 'center';
-        if (src) { const e = { type: 'image', ...base, src, fit: cs.backgroundSize === 'contain' ? 'contain' : 'cover', radius, ha, va }; out.push(e); pending.push(e); }
-      }
-      for (const l of layers.filter((x) => !/^url\(/.test(x)).reverse()) { const g = gradientOf(l); if (g) out.push({ type: 'shape', shape: 'rect', ...base, fill: g.stops[0][1], gradient: g, radius }); }
-      // borders: all sides alike → an outline; single sides (row rules) → thin bars
-      const sides = ['Top', 'Right', 'Bottom', 'Left'].map((s) => ({ s, w: parseFloat(cs[`border${s}Width`]) || 0, c: rgbHex(cs[`border${s}Color`]), st: cs[`border${s}Style`] }));
-      const live = sides.filter((x) => x.w > 0 && x.st !== 'none' && x.c.a > 0.01);
-      if (live.length === 4 && live.every((x) => x.w === live[0].w && x.c.hex === live[0].c.hex)) out.push({ type: 'shape', shape: 'rect', ...base, fill: 'none', stroke: live[0].c.hex, sw: S(live[0].w), radius });
-      else for (const x of live) {
-        const bw = S(x.w);
-        const bar = x.s === 'Top' ? { x: base.x, y: base.y, w: base.w, h: bw } : x.s === 'Bottom' ? { x: base.x, y: base.y + base.h - bw, w: base.w, h: bw } : x.s === 'Left' ? { x: base.x, y: base.y, w: bw, h: base.h } : { x: base.x + base.w - bw, y: base.y, w: bw, h: base.h };
-        out.push({ type: 'shape', shape: 'rect', ...bar, fill: x.c.hex, opacity: x.c.a, radius: 0 });
-      }
-      return out;
-    };
-    const textOf = (el, cs) => {
-      const up = cs.textTransform === 'uppercase';
-      let hl = '';
-      const parts = [];
-      for (const n of el.childNodes) {
-        if (n.nodeType === 3) parts.push(n.textContent.replace(/\s+/g, ' '));
-        else if (n.nodeName === 'BR') parts.push('\n');
-        else if (n.nodeType === 1) {
-          const t = n.innerText.replace(/\s+/g, ' ');
-          const c = rgbHex(win.getComputedStyle(n).color).hex;
-          if (/^(B|STRONG)$/.test(n.nodeName) && c && c !== rgbHex(cs.color).hex) { hl = c; parts.push(`**${t}**`); } else parts.push(t);
-        }
-      }
-      let t = parts.join('').replace(/ *\n */g, '\n').trim();
-      if (up) t = t.toUpperCase();
-      return { t, hl };
-    };
-    const walk = (el) => {
-      const cs = win.getComputedStyle(el);
-      if (cs.display === 'none' || cs.visibility === 'hidden' || el.classList?.contains('hdd-sel')) return;
-      const r = el.getBoundingClientRect();
-      if (!r.width && !r.height) return;
-      elements.push(...boxOf(el, cs, r));
-      if (el.tagName === 'IMG') {
-        const parent = el.parentElement, pcs2 = win.getComputedStyle(parent);
-        const radius = S(parseFloat(cs.borderTopLeftRadius) || (pcs2.overflow === 'hidden' ? parseFloat(pcs2.borderTopLeftRadius) : 0) || 0);
-        const e = { type: 'image', x: X(r.left), y: Y(r.top), w: S(r.width), h: S(r.height), src: el.currentSrc || el.src, fit: cs.objectFit === 'contain' ? 'contain' : 'cover', radius };
-        elements.push(e); pending.push(e);
-        return;
-      }
-      if (el.tagName === 'svg' || el instanceof win.SVGElement) return;
-      const hasText = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
-      if (hasText) {
-        const { t, hl } = textOf(el, cs);
-        if (!t) return;
-        const size = parseFloat(cs.fontSize);
-        const lhPx = cs.lineHeight === 'normal' ? size * 1.36 : parseFloat(cs.lineHeight);
-        const bl = parseFloat(cs.borderLeftWidth) || 0, bt = parseFloat(cs.borderTopWidth) || 0;
-        let x = r.left + bl + parseFloat(cs.paddingLeft), y = r.top + bt + parseFloat(cs.paddingTop);
-        let w = r.width - bl - (parseFloat(cs.borderRightWidth) || 0) - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-        let align = /center/.test(cs.textAlign) ? 'center' : /right|end/.test(cs.textAlign) ? 'right' : 'left';
-        const rg = fdoc.createRange(); rg.selectNodeContents(el);
-        const tr = rg.getBoundingClientRect();
-        if (/flex/.test(cs.display)) { // flex boxes with a text (the asterisk tile): place by the text itself
-          y = tr.top - (lhPx - tr.height) / 2;
-          if (/center/.test(cs.justifyContent)) align = 'center';
-        }
-        // room to spare: the classic editor measures with its own copy of the font, a hair wider than the browser's,
-        // so a box exactly as wide as its text would wrap one word early
-        const lineW = Math.max(0, ...[...rg.getClientRects()].map((q) => q.width));
-        const lines = Math.round(tr.height / lhPx), given = t.split('\n').length;
-        w = Math.max(w, lineW * 1.03 + 6);
-        if (lines > given) w *= 1.02; // the browser wrapped it: keep the same words per line
-        if (align === 'center') x -= (Math.max(w, 0) - (r.width - bl - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight))) / 2;
-        const col = rgbHex(cs.color);
-        const k = fontKey(cs);
-        fontCodes.set(k, null);
-        elements.push({ type: 'text', x: X(x), y: Y(y), w: S(w), h: S(Math.max(tr.height, lhPx)), text: t, font: k, size: S(size), color: col.hex || '#111111', opacity: col.a, align, lh: Math.round((lhPx / size) * 100) / 100, ls: cs.letterSpacing === 'normal' ? 0 : S(parseFloat(cs.letterSpacing)), ...(hl ? { hl } : {}) });
-        return;
-      }
-      for (const c of el.children) walk(c);
-    };
-    elements.push(...boxOf(pg, pcs, pr)); // the page's own photo / gradient
-    for (const c of pg.children) walk(c);
-    pages.push({ w: S(pr.width), h: S(pr.height), bg: { color: pageBg.a > 0 ? pageBg.hex : '#ffffff', image: '' }, elements });
-  }
-  // fonts: each family + weight through the importer (Google Fonts), same codes in the editor and the PDF
-  for (const k of fontCodes.keys()) {
-    const [fam, w, it] = k.split('|');
-    const name = `${fam.replace(/\s+/g, '')}-${WEIGHT_NAME[w] || 'Regular'}${it === '1' ? 'Italic' : ''}`;
-    const r = await api('/design/fonts/resolve', { body: { name, bold: Number(w) >= 700, italic: it === '1' } }).catch(() => null);
-    fontCodes.set(k, r?.code || (Number(w) >= 600 ? 'IS' : Number(w) >= 500 ? 'IM' : 'IR'));
-  }
-  for (const p of pages) for (const e of p.elements) if (e.type === 'text') e.font = fontCodes.get(e.font);
-  // pictures: data URLs → uploaded files (once each)
-  for (const e of pending) {
-    if (!srcs.has(e.src)) srcs.set(e.src, (async () => { try { const url = /^data:image\/(png|jpeg)/.test(e.src) && e.src.length < 4.2e6 ? e.src : await reencode(e.src, 2400); return (await api('/design/images', { body: { image: url } })).src; } catch { return ''; } })());
-    e.src = await srcs.get(e.src);
-  }
-  for (const p of pages) p.elements = p.elements.filter((e) => e.type !== 'image' || e.src);
-  return { pages };
+export async function convertToDesign(fdoc, { api }) {
+  const raw = await convertPages(fdoc);
+  const fontCodes = {}, srcs = {};
+  for (const k of raw.fonts) { const n = fontName(k); const r = await api('/design/fonts/resolve', { body: { name: n.name, bold: n.bold, italic: n.italic } }).catch(() => null); if (r?.code) fontCodes[k] = r.code; }
+  for (const src of raw.images) { try { srcs[src] = (await api('/design/images', { body: { image: src } })).src; } catch { /* left out */ } }
+  return finish(raw, fontCodes, srcs);
 }

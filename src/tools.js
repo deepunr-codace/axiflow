@@ -435,8 +435,22 @@ export async function completeDoc(id, { content, source }) {
     const design = doc.kind === 'brochure' ? brochureLayout(tpl, content, s, doc.input.company) : proposalDesign(content, doc.items, s, { preparedFor: doc.input.company });
     patch.design_json = cleanDesign(design);
   }
+  if (content?.html) patch.design_json = await classicDesignOf({ ...doc, content }); // opened in the classic editor
   await update('docs', id, patch);
   await announce(id);
+}
+/**
+ * The classic editor's design of a Codeace HTML document (owner, 2026-11-12: "use classic editor always. but i need my
+ * same pdf structure and styles"): the pages converted in Chromium (src/html-docs/to-design.js). null when that fails;
+ * the document is then printed from its HTML and converted when it is opened.
+ */
+export async function classicDesignOf(doc) {
+  try { return cleanDesign(await (await import('./html-docs/to-design.js')).htmlToDesign(doc)); }
+  catch (e) {
+    const { logEvent } = await import('./pipeline/log.js');
+    await logEvent(doc.lead_id || null, 'tools', 'to-design', 'error', `doc ${doc.id}: ${e.message}`).catch(() => {});
+    return null;
+  }
 }
 
 export async function generate(id, { wait = false } = {}) {
@@ -456,7 +470,8 @@ export async function generate(id, { wait = false } = {}) {
     const tpl = await getTemplate(doc.template_id) || await defaultTemplate(doc.kind);
     const research = await researchFor(doc);
     if (htmlDocs.isHtmlTemplate(tpl)) { // without Claude: the template's general Codeace copy for this lead
-      await update('docs', id, { design_json: null, content_json: htmlDocs.htmlContent(tpl.source, htmlDocs.fallbackData(tpl.source, doc.input, s)), source: 'template', updated_at: nowISO() });
+      const content = htmlDocs.htmlContent(tpl.source, htmlDocs.fallbackData(tpl.source, doc.input, s));
+      await update('docs', id, { design_json: await classicDesignOf({ ...doc, content }), content_json: content, source: 'template', updated_at: nowISO() });
       return;
     }
     let design, content = null, source;
@@ -510,6 +525,8 @@ export async function saveDoc(id, { design, items, title, content }) {
       const h0 = doc.content.html, sent = content?.html || {};
       const edits = sent.edits !== undefined ? htmlDocs.cleanEdits(sent.edits) : h0.edits;
       patch.content_json = { ...doc.content, html: { ...h0, data: sent.data !== undefined ? htmlDocs.sanitizeEdit(sent.data) : h0.data, edits, split: htmlDocs.hasEdits(edits) ? h0.split || {} : {} } };
+      // new words for a document that is edited in the classic editor: its pages are laid out again from them
+      if (doc.design && sent.data !== undefined && design === undefined) patch.design_json = await classicDesignOf({ ...doc, content: patch.content_json }) || doc.design;
     }
     else if (doc.kind !== 'script') throw new Error('Only scripts are saved as text');
     else patch.content_json = cleanScript(content || {});
@@ -567,7 +584,7 @@ export function docPdf(d) {
     if (d.status !== 'ready' || !d.content) throw new Error('Script is not ready yet');
     return scriptPdf(d.content, d.input, s);
   }
-  if (htmlDocs.isHtmlDoc(d)) { // printed by Chromium (src/html-docs)
+  if (htmlDocs.isHtmlDoc(d) && !d.design) { // printed by Chromium (src/html-docs) until it has its classic design
     if (d.status !== 'ready') throw new Error('Document is not ready yet');
     return htmlDocs.htmlDocPdf(d);
   }

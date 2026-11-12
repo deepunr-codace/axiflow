@@ -81,7 +81,11 @@ function textInner(e) {
     // **marked** words in the highlight colour; the box keeps the raw text for editing
     String(e.text).split('**').forEach((part, i) => {
       if (!part) return;
-      if (i % 2) { const s = document.createElement('span'); s.style.color = e.outline ? 'transparent' : e.hl; if (e.outline) s.style.webkitTextStroke = `${e.outline}px ${e.hl}`; s.textContent = part; box.append(s); }
+      if (i % 2) {
+        const s = document.createElement('span'); s.style.color = e.outline ? 'transparent' : e.hl; if (e.outline) s.style.webkitTextStroke = `${e.outline}px ${e.hl}`;
+        if (e.hlf) Object.assign(s.style, { fontFamily: `${FONT_FAMILY[e.hlf] || 'Poppins'}, sans-serif`, fontWeight: FONT_W[e.hlf] || 700 }); // a bold phrase (same as render-pdf tokenFont)
+        s.textContent = part; box.append(s);
+      }
       else box.append(document.createTextNode(part));
     });
     return box;
@@ -118,7 +122,23 @@ function iconSvg(e) {
   return `<svg viewBox="0 0 24 24" width="100%" height="100%" preserveAspectRatio="none" ${paint}>${ic.prims.map((p) => (p.t === 'circle' ? `<circle cx="${p.cx}" cy="${p.cy}" r="${p.r}"/>` : `<path d="${p.d}"/>`)).join('')}</svg>`;
 }
 
+/** The CodeAce proposal's price table (look 'codeace'); the same sizes as render-pdf drawPricingCodeace. */
+const caMoney = (n) => (META?.currency === 'INR' || !META?.currency ? `₹ ${Math.round(Number(n) || 0).toLocaleString('en-IN')}` : `${META.currency} ${Math.round(Number(n) || 0).toLocaleString('en-US')}`);
+function pricingCodeace(e, items) {
+  const s = e.size || 11.25, k = s / 11.25, col = 127.5 * k, px = 15 * k;
+  const fam = (c) => `${FONT_FAMILY[c] || 'Inter'}, sans-serif`;
+  const total = (items || []).reduce((a, i) => a + Number(i.price || 0), 0);
+  const row = (bg, color, pad, a, b, fa, fb, size = s, line = true) => `<div style="display:grid;grid-template-columns:minmax(0,1fr) ${col}px;${bg ? `background:${bg};` : ''}color:${color};${line ? 'border-top:0.75px solid #E2E2E2;' : ''}font-size:${size}px;line-height:normal">
+<div style="padding:${pad}px ${px}px;font-family:${fam(fa)};font-weight:${FONT_W[fa] || 600}">${esc(a)}</div><div style="padding:${pad}px ${px}px;text-align:right;font-family:${fam(fb)};font-weight:${FONT_W[fb] || 400}">${esc(b)}</div></div>`;
+  return `<div style="width:${e.w}px;border:0.75px solid #E2E2E2;border-radius:${12 * k}px;overflow:hidden;box-sizing:border-box">
+${row('#111111', '#FFFFFF', 11.25 * k, 'Module / Component', `Cost (${META.currency || 'INR'})`, e.fontb, e.fontb, s, false)}
+${(items || []).map((i, n) => row(n % 2 ? '#F7F7F7' : '', '#111111', 10.5 * k, i.name, caMoney(i.price), e.fontm, e.font)).join('')}
+${row('#D7261E', '#FFFFFF', 12 * k, 'Total', `${caMoney(total)}${META.tax_label ? ` + ${META.tax_label}` : ''}`, e.fontb, e.fontb, s * 16 / 15, false)}
+</div>`;
+}
+
 function pricingHtml(e, items) {
+  if (e.look === 'codeace') return pricingCodeace(e, items);
   const P = META.pricing;
   const total = (items || []).reduce((a, i) => a + Number(i.price || 0), 0);
   const rows = [{ label: 'Module / Component', value: `Cost (${META.currency})`, head: true }, ...(items || []).map((i) => ({ label: i.name, value: money(i.price) })), { label: 'Total', value: `${money(total).replace('₹', '')} + ${META.tax_label}`, total: true }];
