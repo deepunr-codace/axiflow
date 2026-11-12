@@ -25,6 +25,28 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - **Kept, unused:** GitHub repo deepunr-codace/axilume-web-crm and Supabase `hzxtdianyucccuogeygw`. Its `axicore-tick` workflow now pings a dead address and fails harmlessly.
   - Do not port changes to AWC. The AWC notes further down are history.
 
+## Status (2026-11-12): drag and drop on the HTML documents; brochures researched and fact-checked per lead (abbdf67)
+- **Owner:** "i need my editor. its just content editor. where is my drag n drop editor?" (chose "Both": drag and drop on the real pages + "Open in classic editor"), then "for each brochure generation, the contents should be generated separately according to the lead details and SWOT. we research and update each and every content. also verify they are correct".
+- **Design mode** (default; Words / Design switch on the document page, remembered in `localStorage axf-hd-mode`): `public/html-design.js` `mountDesign()`.
+  - **How it works:** the pages are the template HTML, shown full size in an iframe (no sandbox; a CSP meta blocks scripts inside) and scaled to fit.
+  - **What you can do:** click to select (Esc = the box around it), drag to move, 3 resize handles, double-click / Enter to type (plain text), panel (text colour, fill / no fill, size, weight, corners, to front, hide, reset), add text / picture / box (on the page in view), Ctrl+Z / Y, arrows nudge, Delete hides (added ones are removed), "Undo all page changes".
+  - **Storage:** `content.html.edits = { els: { "<page>:<child path>": { tx, ty, w, h, color, bg, size, weight, radius, z, hidden, text } }, added: [...] }`.
+  - **Rendering:** `src/html-docs/edits.js` `applyEdits()` tags every element of a page with `data-k` (a small tag walker over the templates' own HTML; `<style>` skipped, `<br>` not counted) and applies the edits. `htmlFor()` always runs it, so the page view and the PDF match.
+  - **Fit check:** documents with edits keep their page plan, so the keys stay put.
+  - **Text conflicts:** text typed on a page wins over the Words form, and the form says so. "Write it again" starts with no edits.
+- **Open in classic editor** (More menu): `convertToDesign()` walks the rendered DOM and builds the classic design model at 0.75 pt/px:
+  - boxes (fill, linear gradients; radial gradients approximated as a diagonal), single-side borders as thin bars, background photos and `<img>` (re-encoded to JPEG / PNG and uploaded);
+  - texts with font (each family + weight through `/api/design/fonts/resolve`, i.e. Google Fonts), size, colour, letter spacing and line height; a bold part in another colour becomes `**…**` + `hl`. Boxes get 3 % + 6 px of room because the classic font measures a hair wider.
+  - `POST /api/tools/docs/:id/classic` saves it as a new document of the same lead ("<title> (classic)", source `converted`).
+  - **Lost in the conversion:** inline SVG icons (proposal contact page), italic Manrope (Google has none).
+- **Brochure content per lead** (`src/html-docs/index.js`, both HTML brochure templates; proposals unchanged):
+  - `BROCHURE_PROCESS`: research first (website, Google listing, social pages, marketplaces, 2-3 competitors), then the lead data, then each section from named sources, then verify every fact.
+  - The job now carries `<website_check>` (audit, `tools.js`) and says so when the lead has no SWOT.
+  - The answer has `verification { sources, facts[{claim, source, status: confirmed | from_crm | from_swot | removed}], not_found }`. It is stored as `content.html.verification` and shown as "Fact check" in the Words form, with a one-line summary in the design panel. `post.mjs` treats it as soft.
+  - **Copy guard:** `exampleLeaks()` / `acceptHtml()` refuse an answer that uses words particular to the Nirapara example (`EXAMPLE_TERMS`) unless the lead's own sections contain them or a fact confirms them with a URL. The answer is then written again (retry). The same check is in `claude-worker/validate.mjs` via `job.example_terms`, so Claude on GitHub fixes it in the same run.
+- **Tested:** `bps/edits-unit.mjs` (3 templates: keys, balance, move / text / hide / add, escaping); `bps/verify-unit.mjs` (15 checks: process / website check / SWOT in the job, copy caught and refused, confirmed words allowed, Nirapara itself not flagged, worker validator both ways); e2e 33 checks; browser `bps/dd-test.mjs` (17: drag, colour, resize, type, add, undo, select + delete, PDF, Words, classic copy 13 pages printing, no console errors). All re-run on an export of the staged commit only.
+- **Not seen yet:** a real Claude run with the research process and fact check (time and cost will go up a little); a manager using the design mode on a phone (not built for touch).
+
 ## Status (2026-11-12): "CodeAce Growth Brochure" = new default brochure template (LIVE, 8a8080c)
 - **Owner:** "downloads/Nirapara Ecom Growth Brochure — Proposal Style (3).pdf: add this to brochure template and make this default". Its source is `Downloads/Nirapara Ecom Growth Brochure — Proposal Style.html` (Claude design bundle, 13 landscape pages, each page a nested bundle; unpacked with the scratchpad `bps/unpack.cjs` twice).
 - **Built like the other HTML templates:** `src/html-docs/brochure-ps.js` (source `builtin-html-brochure-ps`; every style copied from the page markup; 1123 × 794 px printed by its own `@page` size, `cssPage`) + `samples/nirapara-brochure-ps.js` (word for word). Pages: cover → contents (page ranges computed) → challenge → opportunity → journey → plan → idea pages (4 ideas; 2 beside a `statement` card; 4 beside a picture when `photo` and a photo are set) → economics → delivery → results.
