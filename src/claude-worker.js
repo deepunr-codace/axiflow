@@ -249,7 +249,7 @@ async function postProcess(doc, output) {
   if (kind === 'html') { // the Codeace HTML templates (src/html-docs): the content of the fixed design
     const h = await import('./html-docs/index.js');
     const template = ctx.html || doc.input.claude.job.template;
-    return { content: h.htmlContent(template, h.cleanHtmlData(template, output)), source: 'claude' };
+    return { content: h.acceptHtml(template, output, doc.input.claude.job), source: 'claude' }; // brochures: fact check kept, copies of the example refused
   }
   const { materializeStock } = await import('./images.js'); // the stock photos Claude chose: downloaded and saved now
   if (kind === 'free') {

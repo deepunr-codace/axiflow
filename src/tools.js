@@ -366,7 +366,8 @@ export async function buildClaudeJob(doc, s = getSettings()) {
   } else {
     const tpl = await getTemplate(doc.template_id) || await defaultTemplate(doc.kind);
     if (htmlDocs.isHtmlTemplate(tpl)) { // the Codeace HTML templates: Claude writes the content of the fixed design
-      job = htmlDocs.htmlJob(tpl.source, { input: base, dossier, research, swot: await leadSwot(doc.lead_id), settings: s, items: doc.items });
+      job = htmlDocs.htmlJob(tpl.source, { input: base, dossier, research, swot: await leadSwot(doc.lead_id), settings: s, items: doc.items,
+        audit: doc.kind === 'brochure' && base.website ? await auditWebsite(normalizeUrl(base.website)).catch(() => null) : null }); // the website check (2026-11-12)
       ctx = { html: tpl.source };
     } else if (!tpl || tpl.mode !== 'smart') return null;
     else if (doc.kind === 'proposal') job = claudeProposalJob(base, doc.items || [], research, dossier); // their own site structure; prices stay ours
@@ -505,7 +506,11 @@ export async function saveDoc(id, { design, items, title, content }) {
   if (!doc) throw new Error('Not found');
   const patch = { updated_at: nowISO() };
   if (content !== undefined) {
-    if (htmlDocs.isHtmlDoc(doc)) patch.content_json = { ...doc.content, html: { ...doc.content.html, data: htmlDocs.sanitizeEdit(content?.html?.data ?? {}), split: {} } };
+    if (htmlDocs.isHtmlDoc(doc)) { // the words (form) and/or what was done on the pages (page editor)
+      const h0 = doc.content.html, sent = content?.html || {};
+      const edits = sent.edits !== undefined ? htmlDocs.cleanEdits(sent.edits) : h0.edits;
+      patch.content_json = { ...doc.content, html: { ...h0, data: sent.data !== undefined ? htmlDocs.sanitizeEdit(sent.data) : h0.data, edits, split: htmlDocs.hasEdits(edits) ? h0.split || {} : {} } };
+    }
     else if (doc.kind !== 'script') throw new Error('Only scripts are saved as text');
     else patch.content_json = cleanScript(content || {});
   }

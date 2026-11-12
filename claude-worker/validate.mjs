@@ -41,6 +41,15 @@ export async function validate() {
     } catch (e) { problems.push(e.message); }
   }
   if (!problems.length && job.kind === 'free') problems.push(...checkSlides(result));
+  // HTML brochures: words particular to the reference example must not appear unless they are true for this business
+  // (in the lead data, or confirmed with a URL in verification.facts); same rule as AxiFlow's exampleLeaks()
+  if (job.kind === 'html' && Array.isArray(job.example_terms)) {
+    const lead = [...String(job.prompt || '').matchAll(/<(lead|crm_and_notes|research|website_check|swot)\b[^>]*>([\s\S]*?)<\/\1>/g)].map((m) => m[2]).join('\n').toLowerCase(); // the lead's own sections
+    const text = JSON.stringify({ ...result, verification: undefined, strategy: undefined, review: undefined }).toLowerCase();
+    const confirmed = JSON.stringify((result?.verification?.facts || []).filter((f) => f.status === 'confirmed' && /^https?:\/\//.test(f.source || ''))).toLowerCase();
+    const leaks = job.example_terms.filter((t) => { const w = t.toLowerCase(); return new RegExp(`\\b${w}\\b`).test(text) && !lead.includes(w) && !confirmed.includes(w); });
+    if (leaks.length) problems.push(`copied from the reference example: ${leaks.join(', ')}. Write about this business only, or confirm the fact with a URL in verification.facts`);
+  }
   return problems;
 }
 

@@ -15,7 +15,7 @@ try {
   };
 } catch { /* Claude Code did not answer: no usage */ }
 const problems = await validate();
-const hard = problems.filter((p) => !/characters; keep it to|removed by the truth checks|Give exactly|lines or fewer|^layout:|\.(fonts|font_pairing|strategy|review|gaps)(\.|:)/.test(p)); // layout warnings: AxiFlow fits the text; a missing gaps slide is simply left out
+const hard = problems.filter((p) => !/characters; keep it to|removed by the truth checks|Give exactly|lines or fewer|^layout:|\.(fonts|font_pairing|strategy|review|gaps|verification)(\.|:)/.test(p)); // layout warnings: AxiFlow fits the text; a missing gaps slide is simply left out
 const claudeErr = fs.existsSync(new URL('claude-error.txt', dir)) ? fs.readFileSync(new URL('claude-error.txt', dir), 'utf8').trim() : '';
 if (claudeErr) body.error = `Claude Code: ${claudeErr}`.slice(0, 500);
 else if (hard.length) body.error = `Claude's answer did not pass the checks: ${hard.slice(0, 5).join('; ')}`.slice(0, 500);

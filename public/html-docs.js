@@ -65,6 +65,19 @@ function block(path, key, value) {
 const getAt = (o, path) => path.split('.').reduce((a, k) => (a == null ? a : a[k]), o);
 function setAt(o, path, v) { const ks = path.split('.'); const last = ks.pop(); const t = ks.reduce((a, k) => a[k], o); t[last] = v; }
 
+/** What Claude checked before writing (brochures): each fact with its source, and what it could not confirm. */
+function factCheck(v) {
+  if (!v || !((v.facts || []).length || (v.sources || []).length)) return '';
+  const label = { confirmed: 'Checked online', from_crm: 'From the CRM', from_swot: 'From the SWOT', removed: 'Not confirmed, left out' };
+  const n = (s) => (v.facts || []).filter((f) => f.status === s).length;
+  const link = (u) => (/^https?:\/\//.test(u || '') ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u.replace(/^https?:\/\/(www\.)?/, '').slice(0, 48))}</a>` : esc(u || ''));
+  return `<details class="hd-sec hd-facts"><summary>Fact check: ${n('confirmed')} checked online, ${n('from_crm') + n('from_swot')} from the CRM / SWOT, ${n('removed') + (v.not_found || []).length} left out</summary>
+  ${['confirmed', 'from_crm', 'from_swot', 'removed'].map((s) => (v.facts || []).filter((f) => f.status === s).length ? `<p class="small" style="margin:10px 0 4px"><b>${label[s]}</b></p>${(v.facts || []).filter((f) => f.status === s).map((f) => `<div class="small" style="margin:4px 0 4px 10px">${esc(f.claim)}${f.source ? ` <span class="muted">· ${link(f.source)}</span>` : ''}</div>`).join('')}` : '').join('')}
+  ${(v.not_found || []).length ? `<p class="small" style="margin:10px 0 4px"><b>Looked for, not found</b></p>${v.not_found.map((x) => `<div class="small muted" style="margin:4px 0 4px 10px">${esc(x)}</div>`).join('')}` : ''}
+  ${(v.sources || []).length ? `<p class="small" style="margin:10px 0 4px"><b>Sources</b></p>${v.sources.map((s) => `<div class="small" style="margin:4px 0 4px 10px">${link(s.url)} <span class="muted">${esc(s.used_for)}</span></div>`).join('')}` : ''}
+</details>`;
+}
+
 /** The page of one HTML document: pages on the left, the words on the right. */
 export async function renderHtmlDoc(kind, d, noun) {
   const { $, api, toast, busy, modal, view } = H;
@@ -79,20 +92,25 @@ export async function renderHtmlDoc(kind, d, noun) {
     <input class="ed-title" value="${esc(d.title)}" maxlength="120" title="Document name">
     <span class="small muted">${esc(d.source === 'claude' ? 'Written by Claude' : d.source === 'template' ? 'Standard copy' : d.source || '')} · ${esc(d.template?.name || '')}</span>
     <span class="spacer"></span>
+    <div class="seg" id="hdMode" role="tablist" aria-label="Edit mode"><button data-m="design" title="Drag and drop on the pages"><span class="mi">drag_pan</span>Design</button><button data-m="words" title="Every text in a form"><span class="mi">notes</span>Words</button></div>
     <span class="small muted" id="hdStatus"></span>
     ${isProposal ? '<button class="btn sm" id="hdPrices"><span class="mi">payments</span>Prices</button>' : ''}
     <a class="btn primary sm" id="dlBtn" href="/api/tools/docs/${d.id}/pdf?download=1">Download PDF</a>
     <button class="btn sm" id="copyLink">Copy share link</button>
     <details class="dd"><summary class="btn sm">More<span class="mi">expand_more</span></summary><div>
       <a href="/api/tools/docs/${d.id}/pdf" target="_blank">Open the PDF<span class="mi">open_in_new</span></a>
+      <button id="classicBtn">Open in classic editor</button>
       <button id="regenBtn">Write it again</button>
       <button class="danger" id="delBtn">Delete</button></div></details>
   </div>
   <div class="hd-layout">
     <div class="hd-pages" id="hdPages"></div>
+    <aside class="hd-form card" id="hdDesign" hidden></aside>
     <aside class="hd-form card" id="hdForm">
       <div class="sec-h"><h2>Words</h2><span class="spacer"></span><span class="small muted">The design stays as it is</span></div>
+      ${Object.values(r.edits?.els || {}).some((x) => typeof x.text === 'string') ? '<p class="small muted" style="margin:0 0 8px">Some texts were typed on the pages (Design); those win over the fields here.</p>' : ''}
       ${(r.photos || []).length ? `<div class="hd-photos">${r.photos.map(([k, label]) => `<label class="btn sm"><span class="mi">image</span>${esc(label)}<input type="file" accept="image/*" data-photo="${esc(k)}" hidden></label>`).join('')}${r.photos.some(([k]) => data.photos?.[k]) ? '<button class="btn sm ghost" id="hdNoPhotos">Remove photos</button>' : ''}</div>` : ''}
+      ${factCheck(r.verification)}
       <div id="hdFields"></div>
     </aside>
   </div>`;
@@ -151,6 +169,41 @@ export async function renderHtmlDoc(kind, d, noun) {
   $('#copyLink').onclick = async () => { await flush(); try { await navigator.clipboard.writeText(d.share_url); toast('Share link copied'); } catch { prompt('Copy this link:', d.share_url); } };
   $('#regenBtn').onclick = (e) => { if (!confirm('Write it again? Your edits to the words will be replaced.')) return; busy(e.target, async () => { await api(`/tools/docs/${d.id}/regenerate`, { body: {} }); location.reload(); }); };
   $('#delBtn').onclick = async () => { if (!confirm(`Delete this ${noun}?`)) return; await api(`/tools/docs/${d.id}`, { method: 'DELETE' }); location.hash = `#/${kind}`; };
+  // ---------------------------------------------------------------- Design mode (drag and drop on the pages)
+  let design = null;
+  const setMode = async (m) => {
+    try { localStorage.setItem('axf-hd-mode', m); } catch { /* private window */ }
+    document.querySelectorAll('#hdMode [data-m]').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
+    if (m === 'design') {
+      if (design) return;
+      await flush();
+      $('#hdForm').hidden = true; $('#hdDesign').hidden = false;
+      const { mountDesign } = await import('./html-design.js');
+      const v = r.verification, facts = v?.facts || [];
+      const note = facts.length ? `<p class="small muted" style="margin:14px 2px 0"><span class="mi in">fact_check</span> Fact check: ${facts.filter((f) => f.status === 'confirmed').length} facts checked online, ${facts.filter((f) => /^from_/.test(f.status)).length} from the CRM / SWOT, ${facts.filter((f) => f.status === 'removed').length + (v.not_found || []).length} left out. Details under Words.</p>` : '';
+      design = await mountDesign(pagesEl, $('#hdDesign'), { doc: d, api, toast, size: r.size, note });
+    } else {
+      if (!design) { $('#hdForm').hidden = false; return; }
+      await design.flush(); design.destroy(); design = null;
+      $('#hdDesign').hidden = true; $('#hdForm').hidden = false;
+      show((await api(`/tools/docs/${d.id}/html`)).html);
+    }
+  };
+  document.querySelectorAll('#hdMode [data-m]').forEach((b) => (b.onclick = () => setMode(b.dataset.m)));
+  let startMode = 'design';
+  try { startMode = localStorage.getItem('axf-hd-mode') || 'design'; } catch { /* private window */ }
+  await setMode(startMode === 'words' ? 'words' : 'design');
+  $('#classicBtn').onclick = (e) => busy(e.target, async () => {
+    if (!confirm(`Make a copy of this ${noun} in the classic editor? The copy is a new document for the same lead (boxes, texts and pictures you can drag); this one stays as it is.`)) return;
+    await setMode('design');
+    await design.flush();
+    toast('Converting the pages…');
+    const conv = await design.convert();
+    const { id } = await api(`/tools/docs/${d.id}/classic`, { body: { design: conv } });
+    toast('Copy made: opening the classic editor');
+    location.hash = `#/${kind}/${id}`;
+  });
+
   const pr = $('#hdPrices');
   if (pr) pr.onclick = () => {
     const items = JSON.parse(JSON.stringify(d.items || []));
@@ -168,5 +221,5 @@ export async function renderHtmlDoc(kind, d, noun) {
       toast('Prices saved');
     });
   };
-  return { flush };
+  return { flush: async () => { await flush(); if (design) { await design.flush(); design.destroy(); design = null; } } };
 }

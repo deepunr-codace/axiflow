@@ -420,7 +420,7 @@ api.get('/tools/docs/:id/html', async (req, res) => {
   const d = await tools.getDoc(Number(req.params.id));
   if (!d || !h.isHtmlDoc(d)) return res.status(404).json({ error: 'Not an HTML document' });
   const t = h.HTML_TEMPLATES[d.content.html.template];
-  res.json({ html: await h.htmlDocHtml(d), size: t.size, data: d.content.html.data, template: d.content.html.template, photos: t.photos || [] });
+  res.json({ html: await h.htmlDocHtml(d), size: t.size, data: d.content.html.data, template: d.content.html.template, photos: t.photos || [], edits: d.content.html.edits || { els: {}, added: [] }, verification: d.content.html.verification || null });
 });
 // An HTML template's sample (the Nirapara reference) as a PDF: no document, no CRM write (also proves Chromium works)
 api.get('/design/templates/:id/sample.pdf', async (req, res) => {
@@ -430,12 +430,28 @@ api.get('/design/templates/:id/sample.pdf', async (req, res) => {
   const pdf = await h.htmlDocPdf(h.sampleDoc(t.source));
   res.set({ 'content-type': 'application/pdf', 'content-disposition': `inline; filename="${t.kind}-sample.pdf"` }).send(pdf);
 });
+// "Open in classic editor": the browser converts the HTML pages into the design model (boxes, texts, images, fonts)
+// and a copy is saved as a new document of the same lead, opened in the drag-and-drop editor; the original stays
+api.post('/tools/docs/:id/classic', express.json({ limit: '3mb' }), async (req, res) => {
+  const h = await import('../html-docs/index.js');
+  const { cleanDesign } = await import('../design/model.js');
+  const { token } = await import('../util.js');
+  const d = await tools.getDoc(Number(req.params.id));
+  if (!d || !h.isHtmlDoc(d)) return res.status(404).json({ error: 'Not an HTML document' });
+  let design;
+  try { design = cleanDesign(req.body?.design); } catch (e) { return res.status(400).json({ error: e.message }); }
+  const now = nowISO();
+  const id = await insert('docs', { kind: d.kind, token: token(), title: `${d.title} (classic)`.slice(0, 200), lead_id: d.lead_id, template_id: null, input_json: d.input,
+    items_json: d.items, content_json: { converted_from: d.id }, design_json: design, status: 'ready', source: 'converted', created_at: now, updated_at: now });
+  res.json({ id });
+});
 api.post('/tools/docs/:id/html-preview', express.json({ limit: '2mb' }), async (req, res) => {
   const h = await import('../html-docs/index.js');
   const d = await tools.getDoc(Number(req.params.id));
   if (!d || !h.isHtmlDoc(d)) return res.status(404).json({ error: 'Not an HTML document' });
   const data = h.sanitizeEdit(req.body?.data ?? d.content.html.data);
-  res.json({ html: await h.htmlDocHtml({ ...d, content: { ...d.content, html: { ...d.content.html, data, split: {} } } }) });
+  const edits = req.body?.edits !== undefined ? h.cleanEdits(req.body.edits) : d.content.html.edits;
+  res.json({ html: await h.htmlDocHtml({ ...d, content: { ...d.content, html: { ...d.content.html, data, edits, split: h.hasEdits(edits) ? d.content.html.split || {} : {} } } }) });
 });
 api.post('/tools/:kind', async (req, res) => res.json({ id: await tools.createDoc(req.params.kind, req.body || {}) }));
 api.get('/tools/docs/:id', async (req, res) => {

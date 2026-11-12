@@ -1299,6 +1299,13 @@ html[data-theme="light"] .tv-page .dthumb { box-shadow: 0 0 0 1px rgba(0, 0, 0, 
 .hd-item .hd-del { position: absolute; right: 0; top: 4px; }
 .hd-check { margin: 8px 0; }
 @media (max-width: 1100px) { .hd-layout { grid-template-columns: 1fr; height: auto; } .hd-pages { max-height: 70vh; } }
+/* Design mode: drag and drop on the real pages (public/html-design.js) */
+#hdMode button { display: inline-flex; align-items: center; gap: 6px; }
+.hdd-wrap { border-radius: 10px; }
+.hdd-tools { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; padding-bottom: 10px; border-bottom: 1px solid var(--line, rgba(255,255,255,.08)); }
+.hdd-props { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; }
+.hdd-props input[type=color] { width: 54px; height: 34px; padding: 2px; border-radius: 8px; cursor: pointer; }
+.hdd-props .hd-field button { align-self: flex-start; }
 
 /* Search box in long dropdowns (public/select.js, more than 8 options): pinned to the top while the list scrolls */
 .xsel-search { position: sticky; top: -6px; z-index: 1; display: flex; align-items: center; gap: 8px; margin: -6px -6px 6px; padding: 10px 12px; background: #1A1A1D; border-bottom: 1px solid rgba(255, 255, 255, .08); border-radius: 12px 12px 0 0; }

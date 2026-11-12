@@ -9,6 +9,8 @@ import { NIRAPARA_BROCHURE } from './samples/nirapara-brochure.js';
 import { brochurePsHtml, pagePlan as psPagePlan, ideaPlan as psIdeaPlan, SIZE as PS_SIZE, PHOTOS as PS_PHOTOS } from './brochure-ps.js';
 import { NIRAPARA_BROCHURE_PS, NIRAPARA_PS_INPUT } from './samples/nirapara-brochure-ps.js';
 const PS = 'builtin-html-brochure-ps';
+import { applyEdits, cleanEdits, hasEdits } from './edits.js';
+export { cleanEdits, hasEdits };
 
 /*
  * HTML document templates (owner, 2026-11-11: "i generated brochure and proposal from claude web. can u convert this
@@ -106,12 +108,12 @@ async function context(kind, d, { client, items, created, website, template }) {
 }
 
 /** The document's full HTML (what the PDF prints and the page shows). */
-export async function htmlFor({ template, data, split }, { client, items, created, website }) {
+export async function htmlFor({ template, data, split, edits }, { client, items, created, website }) {
   const t = HTML_TEMPLATES[template];
   const d = template === 'builtin-html-proposal' ? { ...data, eyebrow: data.eyebrow || `${data.doc_type || 'Website Proposal'} · ${monthYear(created, getSettings())}` } : data;
   const ctx = await context(t.kind, d, { client, items, created, website, template });
-  if (template === PS) return brochurePsHtml(d, ctx, split || {});
-  return t.kind === 'brochure' ? brochureHtml(d, ctx, split || {}) : proposalHtml(d, ctx, split || {});
+  const html = template === PS ? brochurePsHtml(d, ctx, split || {}) : t.kind === 'brochure' ? brochureHtml(d, ctx, split || {}) : proposalHtml(d, ctx, split || {});
+  return applyEdits(html, edits, resolveSrc); // data-k keys for the page editor + what was moved / retyped / added on the pages
 }
 const docArgs = (doc) => ({ client: doc.input?.company || doc.title || 'Client', items: doc.items, created: doc.created_at, website: doc.input?.website || '' });
 
@@ -126,7 +128,8 @@ export async function htmlDocPdf(doc) {
   const t = HTML_TEMPLATES[h.template];
   let split = h.split || {};
   let html = await htmlFor({ ...h, split }, docArgs(doc));
-  for (let i = 0; i < 3; i++) {
+  // pages edited by hand keep their plan: splitting a page would move the elements the edits point at
+  for (let i = 0; i < 3 && !hasEdits(h.edits); i++) {
     const over = await withPage(html, t.size, overflowCheck);
     if (!over.length) break;
     const next = h.template === PS ? replanPs(h.data, split, over) : replan(t.kind, h.data, split, over);
@@ -349,8 +352,58 @@ Fields:
 - closing: the contact page headline, e.g. "Let's Make <Business> the First Choice, Not the Third."
 Plain sentences, title case for headings as in the reference, no emoji, no invented facts or numbers about the client.`;
 
+// ------------------------------------------------------------------ brochures: research, per-lead content, fact check
+// (owner, 2026-11-12: "for each brochure generation, the contents should be generated separately according to the lead
+// details and SWOT. we research and update each and every content. also verify they are correct")
+const FACT_STATUS = ['confirmed', 'from_crm', 'from_swot', 'removed'];
+const VERIFICATION = O({
+  sources: A(O({ url: S(300), used_for: S(160) }), 0, 20),
+  facts: A(O({ claim: S(200), source: S(300), status: { type: 'string', enum: FACT_STATUS } }), 0, 40),
+  not_found: A(S(160), 0, 15),
+});
+const withVerification = (schema) => ({ ...schema, properties: { ...schema.properties, verification: VERIFICATION }, required: [...schema.required, 'verification'] });
+const BROCHURE_PROCESS = `<process>
+Work in this order. The brochure is written for THIS business only, from what you find now; nothing is reused.
+1. Research (web search is on): open the business's own website and its main pages, its Google / Maps listing and
+   reviews, its Instagram / Facebook / YouTube pages, the marketplaces or directories it sells or lists on, and two or
+   three competitors in the same place. Note what it sells, to whom, where, how customers enquire, book or buy today,
+   what its website and listings lack, and anything recent (new outlets, launches, awards, press).
+2. Read the lead data below: the CRM record and notes (the team's calls and what the client said), the SWOT and how
+   we solve it, and the website check. They are the starting point; your research updates and completes them.
+3. Write every section from those sources: the challenge from the SWOT weaknesses and threats and what you saw on the
+   website and listings; the opportunity from the SWOT opportunities; the customer journey from how THIS business's
+   customers actually decide; the ideas from the SWOT solutions and the website type ordered; the working figures
+   from the business's own prices and products where you found them (else clearly marked as working figures).
+4. Verify before answering: go through every fact about the business in your draft (names, places, products, prices,
+   channels, years, numbers, quotes). Each must come from a page you opened (status confirmed, with its URL), the CRM
+   record (from_crm) or the SWOT (from_swot). Anything you could not confirm: rewrite it in general terms or drop it,
+   and list it under not_found (status removed in facts). Never present a guess as a fact.
+5. Fill "verification": sources = the pages you used (URL + what for); facts = each checked claim with its source and
+   status; not_found = what you looked for and could not confirm.
+</process>`;
+/** Words particular to the Nirapara reference: in another lead's brochure they mean the example was copied. */
+const EXAMPLE_TERMS = ['Nirapara', 'Kalady', 'Blinkit', 'Instamart', 'BigBasket', 'Reliance Smart', 'puttu', 'palappam', 'appam', 'podi', 'Kerala Kitchen Box', 'pack QR', 'purity report', 'batch report', 'chilli powder', 'curry masala', 'kirana'];
+/** What the job says about the lead itself (not the guide, which names the example). */
+const leadContext = (prompt) => [...String(prompt || '').matchAll(/<(lead|crm_and_notes|research|website_check|swot)\b[^>]*>([\s\S]*?)<\/\1>/g)].map((m) => m[2]).join('\n').toLowerCase();
+export function exampleLeaks(output, job) {
+  const lead = leadContext(job?.prompt);
+  const text = JSON.stringify({ ...output, verification: undefined, strategy: undefined, review: undefined }).toLowerCase();
+  const confirmed = JSON.stringify((output?.verification?.facts || []).filter((f) => f.status === 'confirmed' && /^https?:\/\//.test(f.source || ''))).toLowerCase();
+  return EXAMPLE_TERMS.filter((t) => { const w = t.toLowerCase(); return new RegExp(`\\b${w}\\b`).test(text) && !lead.includes(w) && !confirmed.includes(w); });
+}
+/** Claude's answer for an HTML template → the document content (with the fact check), or an error that retries. */
+export function acceptHtml(template, output, job) {
+  if (HTML_TEMPLATES[template]?.kind === 'brochure') {
+    const leaks = exampleLeaks(output, job);
+    if (leaks.length) throw new Error(`facts copied from the Nirapara example (${leaks.join(', ')}): written again`);
+  }
+  const content = htmlContent(template, cleanHtmlData(template, output));
+  if (output?.verification) content.html.verification = clean(output.verification, VERIFICATION);
+  return content;
+}
+
 /** The Claude job for an HTML template (the caller appends the playbook, strategy and review sections). */
-export function htmlJob(template, { input, dossier, research, swot, settings, items }) {
+export function htmlJob(template, { input, dossier, research, swot, settings, items, audit }) {
   const brochure = HTML_TEMPLATES[template]?.kind === 'brochure';
   const ps = template === PS;
   const lead = [`Business: ${input.company}`, input.industry && `Industry: ${input.industry}`, input.city && `Place: ${input.city}`, input.website && `Website: ${input.website}`,
@@ -366,15 +419,18 @@ export function htmlJob(template, { input, dossier, research, swot, settings, it
     prompt: [
       ps ? BROCHURE_PS_GUIDE : brochure ? BROCHURE_GUIDE : PROPOSAL_GUIDE,
       `<lead>\n${lead}\n</lead>`,
+      brochure ? BROCHURE_PROCESS : '',
       dossier ? `<crm_and_notes>\n${dossier}\n</crm_and_notes>` : '',
       research ? `<research>\n${typeof research === 'string' ? research : JSON.stringify(research).slice(0, 6000)}\n</research>` : '',
-      swot ? `<swot>\n${JSON.stringify(swot).slice(0, 4000)}\n</swot>` : '',
+      audit?.findings?.length ? `<website_check url="${String(input.website || '').replace(/"/g, '')}">\n${audit.findings.map((f) => `- ${f.text}`).join('\n')}\n</website_check>` : '',
+      swot ? `<swot>\n${JSON.stringify(swot).slice(0, 4000)}\n</swot>` : brochure ? '<swot>No SWOT has been made for this lead yet: work out its strengths, weaknesses, opportunities and threats from your research first.</swot>' : '',
       facts,
       `<reference_example business="Nirapara">\n${JSON.stringify(example)}\n</reference_example>`,
     ].filter(Boolean).join('\n\n'),
     // limits (lengths, counts, ranges) are kept out of the schema Claude gets: strict structured output refuses them;
     // the guide states them and cleanHtmlData enforces them on the answer
-    schema: stripLimits(ps ? BROCHURE_PS_SCHEMA : brochure ? BROCHURE_SCHEMA : PROPOSAL_SCHEMA),
+    schema: stripLimits(ps ? withVerification(BROCHURE_PS_SCHEMA) : brochure ? withVerification(BROCHURE_SCHEMA) : PROPOSAL_SCHEMA),
+    ...(brochure ? { example_terms: EXAMPLE_TERMS } : {}), // the GitHub worker's validator refuses copies of the example too
     maxTokens: 16000,
   };
 }
