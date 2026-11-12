@@ -345,6 +345,12 @@ api.put('/settings', async (req, res) => {
   res.json(await saveSettings(req.body || {}));
 });
 
+// The AI page (owner, 2026-11-12): everything about AI in one place, in plain terms (src/ai-setup.js)
+api.get('/ai-setup', async (_req, res) => res.json(await (await import('../ai-setup.js')).aiSetupStatus()));
+api.put('/ai-setup', async (req, res) => res.json(await (await import('../ai-setup.js')).saveAiSetup(req.body || {})));
+api.post('/ai-setup/check-github', async (_req, res) => res.json(await (await import('../ai-setup.js')).checkGithub()));
+api.post('/ai-setup/return-key', async (_req, res) => res.json(await (await import('../ai-setup.js')).setupReturnKey()));
+
 // Keys (bring your own): saved encrypted, never sent back (only the last 4 characters)
 api.get('/keys', async (_req, res) => { const k = await import('../keys.js'); res.json({ keys: await k.keysStatus(), github_secrets: await k.githubSecretsSeen() }); });
 api.put('/keys/:name', async (req, res) => res.json(await (await import('../keys.js')).saveKey(req.params.name, req.body?.value)));

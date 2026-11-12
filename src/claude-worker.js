@@ -55,10 +55,27 @@ export const fallbackEngine = (s = getSettings()) => {
   const f = s.claude?.fallback_engine;
   return ENGINES[f] && f !== 'github' && !missingFor(f, s).length ? f : null;
 };
-async function fallbackFor(engine) {
-  if (engine !== 'github') return null;
-  const f = fallbackEngine();
+/*
+ * Backup per tool (owner, 2026-11-12, the AI page: "fallback options"): claude.fallbacks = { script, brochure, proposal },
+ * each an engine or 'none'. A tool without its own choice follows claude.fallback_engine (the setting above).
+ * The backup takes over when the tool's main engine fails in any way (GitHub: usage limit, error, failed dispatch, no
+ * answer in time; an API key: error, daily spend limit, no answer in time). A job moves once: on the backup it is retried
+ * there (no ping-pong), except that a paid backup that reaches the daily spend limit hands the job back to its main.
+ */
+export const backupSetting = (tool, s = getSettings()) => {
+  const v = s.claude?.fallbacks?.[tool];
+  const b = v === undefined || v === null ? s.claude?.fallback_engine : v;
+  return ENGINES[b] ? b : 'none';
+};
+/** The tool's backup engine when it can be used instead of `from` right now (set up; not the engine that failed). */
+export const backupEngine = (tool, from, s = getSettings()) => {
+  const b = backupSetting(tool, s);
+  return b !== 'none' && b !== from && !missingFor(b, s).length ? b : null;
+};
+async function fallbackFor(engine, kind) {
+  const f = backupEngine(TOOL_OF[kind] || kind || 'script', engine || 'github');
   if (!f) return null;
+  if (f === 'github') return f; // the subscription has no spend limit (it may be resting: the job then waits for the reset)
   const { budgetLeft } = await import('./ai/claude.js');
   return (await budgetLeft().catch(() => false)) ? f : null;
 }
@@ -68,13 +85,13 @@ export function claudeMissing() {
   const s = getSettings();
   return [...new Set(enginesInUse(s).flatMap((e) => missingFor(e, s)))];
 }
-function missingFor(e, s = getSettings()) {
+export function missingFor(e, s = getSettings()) {
   const m = [];
-  if (e === 'anthropic') { if (!process.env.ANTHROPIC_API_KEY) m.push('ANTHROPIC_API_KEY (your Anthropic API key: Integrations → Keys)'); return m; }
-  if (e === 'openrouter') { if (!process.env.OPENROUTER_API_KEY) m.push('OPENROUTER_API_KEY (your OpenRouter key: Integrations → Keys)'); return m; }
-  if (!process.env.GITHUB_DISPATCH_TOKEN) m.push('GITHUB_DISPATCH_TOKEN (GitHub token that may start the workflow)');
-  if (!process.env.CLAUDE_WORKER_SECRET) m.push('CLAUDE_WORKER_SECRET (shared secret for the result callback)');
-  if (!/^[\w.-]+\/[\w.-]+$/.test(s.claude?.github_repo || '')) m.push('the GitHub repo (Integrations → Claude)');
+  if (e === 'anthropic') { if (!process.env.ANTHROPIC_API_KEY) m.push('the Anthropic API key (AI page → Anthropic API)'); return m; }
+  if (e === 'openrouter') { if (!process.env.OPENROUTER_API_KEY) m.push('the OpenRouter key (AI page → OpenRouter)'); return m; }
+  if (!process.env.GITHUB_DISPATCH_TOKEN) m.push('the GitHub access key (AI page → Claude subscription, step 1)');
+  if (!process.env.CLAUDE_WORKER_SECRET) m.push('the return key (AI page → Claude subscription, step 3)');
+  if (!/^[\w.-]+\/[\w.-]+$/.test(s.claude?.github_repo || '')) m.push('the GitHub repository (AI page → Advanced)');
   if (!/^https:/.test(BASE_URL)) m.push('an https BASE_URL (GitHub must reach the callback; the live site has one)');
   return m;
 }
@@ -168,15 +185,19 @@ export async function dispatchJob(doc, job, ctx = {}, { attempt = 1, engine: for
   let hold = engine === 'github' ? await getState('claude_hold') : null;
   if (hold && !(new Date(hold.until) > new Date())) hold = null;
   if (hold) { // the subscription limit is still on: straight to the fallback engine when there is one
-    const f = await fallbackFor(engine);
+    const f = await fallbackFor(engine, job.kind);
     if (f) { engine = f; claude.fell_back = `Claude usage limit (${hold.why})`.slice(0, 200); hold = null; }
   }
-  const missing = missingFor(engine);
+  let missing = missingFor(engine);
+  if (missing.length && !hold) { // the main engine is not set up (a key removed…): its backup writes it when there is one
+    const f = await fallbackFor(engine, job.kind);
+    if (f) { claude.fell_back = `${ENGINES[engine]} is not set up`; engine = f; missing = missingFor(engine); }
+  }
   if (missing.length) claude.last_error = `Claude mode is on but this server is missing: ${missing.join('; ')}`;
   else if (hold) { claude.hold_until = hold.until; claude.last_error = `Waiting for the Claude usage limit to reset (${hold.why})`.slice(0, 300); }
   else if (engine === 'github') {
     try { claude.run_url = await dispatch(doc, claude); } catch (e) {
-      const f = await fallbackFor(engine);
+      const f = await fallbackFor(engine, job.kind);
       if (f) { engine = f; claude.fell_back = `GitHub dispatch failed: ${e.message}`.slice(0, 200); } else claude.last_error = e.message;
     }
   }
@@ -250,6 +271,7 @@ async function postProcess(doc, output) {
     const h = await import('./html-docs/index.js');
     const template = ctx.html || doc.input.claude.job.template;
     return { content: h.acceptHtml(template, output, doc.input.claude.job), source: 'claude' }; // brochures: fact check kept, copies of the example refused
+
   }
   const { materializeStock } = await import('./images.js'); // the stock photos Claude chose: downloaded and saved now
   if (kind === 'free') {
@@ -286,16 +308,19 @@ function resetAt(why) {
 async function retry(doc, why) {
   const s = getSettings();
   const c = doc.input.claude;
-  const onGithub = (c.engine || 'github') === 'github';
+  const kind = c.job?.kind || doc.kind;
+  const engine = c.engine || 'github';
+  const onGithub = engine === 'github';
   const limit = LIMIT_RE.test(why) && onGithub;
   if (limit) await setState('claude_hold', { until: resetAt(why), why: why.slice(0, 200) }); // later jobs skip GitHub until the reset
-  const f = onGithub ? await fallbackFor('github') : null;
-  if (f) { // GitHub failed (limit or any error): the same job on the API now; a usage limit does not use up a try
+  const f = c.fell_back ? null : await fallbackFor(engine, kind); // a job moves to its backup once
+  if (f) { // the main engine failed (limit or any error): the same job on the tool's backup now; a usage limit does not use up a try
     await dispatchJob(doc, c.job, c.ctx, { attempt: limit ? c.attempts || 1 : (c.attempts || 1) + 1, engine: f, fellBack: why });
     return { status: 200, error: why };
   }
-  if (!onGithub && c.fell_back && /Daily AI budget/i.test(why)) { // the API spend limit is reached: back to GitHub (waits for its reset if held)
-    await dispatchJob(doc, c.job, c.ctx, { attempt: c.attempts || 1, engine: 'github' });
+  const main = engineFor(kind);
+  if (c.fell_back && /Daily AI budget/i.test(why) && main !== engine) { // a paid backup reached the spend limit: back to the main (waits for its reset if held)
+    await dispatchJob(doc, c.job, c.ctx, { attempt: c.attempts || 1, engine: main });
     return { status: 200, error: why };
   }
   if (limit) {
@@ -337,8 +362,9 @@ export async function retryStale({ force = false } = {}) {
     if (c.hold_until) { // waiting for the usage limit: send again after the reset, with the same try
       // ...unless its tool now runs on an API key (engine per tool): then the subscription limit does not apply
       // ...or the fallback engine can take it now (owner, 2026-11-10: usage limit → API)
-      if (new Date(c.hold_until) > new Date() && engineFor(c.job?.kind || doc.kind) === 'github' && !await fallbackFor('github')) continue;
-      await dispatchJob(doc, c.job, c.ctx, { attempt: c.attempts || 1 });
+      const kind = c.job?.kind || doc.kind;
+      if (new Date(c.hold_until) > new Date() && (c.fell_back || engineFor(kind) === 'github') && !(c.fell_back ? null : await fallbackFor('github', kind))) continue;
+      await dispatchJob(doc, c.job, c.ctx, { attempt: c.attempts || 1, engine: c.fell_back ? 'github' : null, fellBack: c.fell_back }); // a job that moved to the subscription as a backup stays there
       n++;
       continue;
     }
@@ -350,8 +376,8 @@ export async function retryStale({ force = false } = {}) {
     if (c.last_error && !late && Date.now() - new Date(c.dispatched_at).getTime() < 120000) continue; // a failed dispatch: wait 2 min before trying again
     // no answer in time (or a failed dispatch): a GitHub job goes to the fallback engine when there is one,
     // even on its last try; a job already moved to the API stays there
-    const f = (c.engine || 'github') === 'github' ? await fallbackFor('github') : null;
-    if (f) await dispatchJob(doc, c.job, c.ctx, { attempt: (c.attempts || 1) + 1, engine: f, fellBack: c.last_error || 'no answer from GitHub in time' });
+    const f = c.fell_back ? null : await fallbackFor(c.engine || 'github', c.job?.kind || doc.kind);
+    if (f) await dispatchJob(doc, c.job, c.ctx, { attempt: (c.attempts || 1) + 1, engine: f, fellBack: c.last_error || `no answer from ${ENGINES[c.engine || 'github']} in time` });
     else if ((c.attempts || 1) >= (s.claude?.max_attempts || 3)) await giveUp(doc, c.last_error || `no answer within ${s.claude?.timeout_minutes || 20} minutes`);
     else await dispatchJob(doc, c.job, c.ctx, { attempt: (c.attempts || 1) + 1, engine: c.fell_back ? c.engine : null, fellBack: c.fell_back });
     n++;

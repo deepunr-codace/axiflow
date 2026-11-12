@@ -132,7 +132,24 @@ function describeError(e) {
  * outputs don't hit HTTP timeouts, and resumes `pause_turn` from long server-tool loops.
  * Returns { text, sources }.
  */
-export async function runText({ purpose, leadId, system, prompt, tools, effort = 'medium', maxTokens = 32000, force = null }) {
+/*
+ * Backup for the in-app AI (editor assistant, briefing; owner, 2026-11-12, the AI page): ai.backup_provider
+ * ('anthropic' | 'openrouter' | ''). When the main provider fails (or has no key), the same call runs once on the backup.
+ * Not when AI is off or the daily spend limit is reached, and never for forced calls (the Claude engines have their own backup).
+ */
+async function withBackup(force, run) {
+  try { return await run(force); } catch (e) {
+    if (force) throw e;
+    const s = getSettings();
+    const b = s.ai.backup_provider;
+    if (!s.ai.enabled || !b || b === aiProvider(s) || !keyFor(b) || /budget/i.test(e.message)) throw e;
+    return run({ provider: b, model: b === 'openrouter' ? orModel(s) : s.ai.model });
+  }
+}
+export const runText = (args) => withBackup(args.force || null, (force) => runTextOnce({ ...args, force }));
+export const runJson = (args) => withBackup(args.force || null, (force) => runJsonOnce({ ...args, force }));
+
+async function runTextOnce({ purpose, leadId, system, prompt, tools, effort = 'medium', maxTokens = 32000, force = null }) {
   const s = await preflight(force);
   if (aiProvider(s) === 'openrouter') {
     const web = (tools || []).some((t) => /web_search|web_fetch/.test(t.type || t.name || ''));
@@ -186,7 +203,7 @@ export async function runText({ purpose, leadId, system, prompt, tools, effort =
  * messages: a whole conversation after the system prompt ([{ role: 'user'|'assistant', content }]) instead of one prompt.
  * temperature / model (OpenRouter model override) / timeoutMs are optional; temperature is only sent to OpenRouter.
  */
-export async function runJson({ purpose, leadId, system, prompt, messages = null, schema, effort = 'low', maxTokens = 16000, temperature, model, timeoutMs, force = null }) {
+async function runJsonOnce({ purpose, leadId, system, prompt, messages = null, schema, effort = 'low', maxTokens = 16000, temperature, model, timeoutMs, force = null }) {
   const s = await preflight(force);
   if (aiProvider(s) === 'openrouter') return limited(async () => (await orRun({ s, purpose, leadId, system, prompt, messages, effort, maxTokens, schema, temperature, modelOverride: model, timeoutMs })).data);
   return limited(async () => {

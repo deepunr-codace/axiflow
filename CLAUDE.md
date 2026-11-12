@@ -24,6 +24,75 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - **Vercel project `axilume-web-crm` deleted** (owner, same day; `vercel project rm --yes`; the address now gives 404 DEPLOYMENT_NOT_FOUND).
   - **Kept, unused:** GitHub repo deepunr-codace/axilume-web-crm and Supabase `hzxtdianyucccuogeygw`. Its `axicore-tick` workflow now pings a dead address and fails harmlessly.
   - Do not port changes to AWC. The AWC notes further down are history.
+- **Vercel function storage (2026-11-12):** Vercel warned that the team was at 75% of the free 10 GB.
+  - **Why:** every push kept a full deployment (163 axiflow, 133 axiflow-v1, 43 axilume-web-crm, 214 presenta, 3 acestudio). Since 11 Nov each AxiFlow deployment includes Chromium (~75 MB), and notes-only pushes deployed too.
+  - **Owner: "do it" / "for all projects in the vercel".** Old deployments deleted through the Vercel API (scratchpad `vclean.mjs`): each existing project keeps its current production deployment plus the newest 5; deleted projects lose all of theirs. The API allows about 200 deletions per 10 minutes, so it ran in rounds.
+  - **`vercel.json` `ignoreCommand`** (8119d45, fixed in 692514d): a push that changes only `.md` files is not built. It compares with `VERCEL_GIT_PREVIOUS_SHA` (the last deployed commit), not `HEAD^`. The first version would skip a code commit pushed together with a notes commit. If the check fails, it builds. Checked live: the notes-only 6fb4422 shows CANCELED; 692514d built.
+  - **Result:** 546 deployments deleted in 3 rounds. Left: axiflow 5, presenta 5, acestudio 3.
+
+## Status (2026-11-12): the AI page (#/ai): everything about AI in one place, in plain words
+- **Owner:** "make the AI integration properly. its now not understandable. add one ai integration page - enable disable - key adding options - fallback options etc. it should be user friendly". The owner also asked for simple English explanations in this session.
+- **Before:** AI was spread over the sidebar Claude button, Integrations (Claude mode card with engine / engine per tool / fallback_engine, the Keys card with AI and GitHub groups, the Editor AI card) and Tool settings (Claude mode and AI writer cards). It used technical words, and there was one backup for all documents, only from the subscription to an API key.
+- **The page** (`public/ai.js` + `public/ai.css`, server `src/ai-setup.js`; menu Options → AI; the sidebar row is now "AI writing"):
+  1. **"AI writes your documents"** = `claude.mode`, with a generated plain sentence about who writes what and which backup can take over, plus a grouped list of problems.
+  2. **Who writes what:** SWOTs, Brochures, Proposals and the Editor assistant, each with a "Written by" and an "If that fails" select, plus a status chip. Accounts that are not set up are greyed out. Changes save at once. The same card has "Research each business on the web first" (`claude.web_research`).
+  3. **Your AI accounts:**
+     - **Claude subscription through GitHub** (full width): status (working / last answer / resting until the reset), what it is used for, a Check button, and a 3-step setup that folds away once it works:
+       1. the GitHub access key;
+       2. the Claude login (`claude setup-token`, saved straight into GitHub);
+       3. the return key ("Set up automatically" = generate `CLAUDE_WORKER_SECRET` if missing and copy it to `AXIFLOW_CALLBACK_SECRET`).
+     - **Anthropic API** and **OpenRouter:** key saved / last 4, Test, Replace, Remove, a "get a key" link; a new key is tested at once.
+  4. **Paid AI spending:** today against the limit (bar), this month, the daily limit (`ai.daily_budget_usd`; $0 = never use paid AI).
+  5. **Recent AI work:** the last 8 documents, who wrote each, "(backup)" with the reason on hover, and the status.
+  6. **Advanced** (folded): models for documents and for the assistant on each API, wait minutes, tries, GitHub repository.
+- **API:**
+  - `GET/PUT /api/ai-setup`. The save refuses AI writing on with a main AI that is not set up, and the assistant on a missing key.
+  - `POST /api/ai-setup/check-github`: repo, workflow, push right, secret names. It records the secrets it finds in state `github_secrets`, so the steps tick.
+  - `POST /api/ai-setup/return-key`.
+  - Keys still go through `/api/keys`.
+- **Engine changes:**
+  - **Backup per job:** `claude.fallbacks = { script, brochure, proposal }`, each an engine or 'none'. A job without its own choice follows the old `claude.fallback_engine`, so live behaviour is unchanged until something is picked (`backupSetting`, `backupEngine`, `fallbackFor(engine, kind)` in claude-worker).
+  - **The backup works from any main:**
+    - an API key failing or reaching the spend limit, or no answer in time, moves the job to its backup, including the subscription;
+    - a main that is not set up hands the job straight to its backup;
+    - a job moves once (no ping-pong); a paid backup that hits the spend limit hands the job back to its main.
+  - **Editor assistant backup:** `ai.backup_provider` in `ai/claude.js` (`withBackup`). It is used once on a failure or a missing key, not when AI is off or the spend limit is reached, and never for forced document calls.
+- **Integrations and Tool settings:** their AI cards are replaced by one link card. The AI key groups left the Keys card; the scheduler's CRON_SECRET GitHub row moved to the sync group. The "missing" texts on documents now point to the AI page.
+- **Tested** (scratchpad):
+  - the old 14-check backup test `fb-test.mjs` passes unchanged;
+  - `backup-logic.mjs` (12 pure checks);
+  - `ai-setup-test.mjs` (17 checks on a throwaway DB with stand-in GitHub / OpenRouter / Anthropic): per-job none, OpenRouter outage → subscription, spend limit → subscription, assistant backup, forced calls untouched, save rules;
+  - headless Edge `live-crm/ai-ui.mjs` (switch refused then on, selects, GitHub key, check, return key, backup, limit, advanced, Integrations and Tool settings link cards, phone 390 px without overflow, light theme) and `ai-ll.mjs` on a live-like seeded DB (summary "Your Claude subscription writes SWOTs, brochures and proposals. If it fails or reaches its limit, your Anthropic API key takes over.", no problems, all Ready, no console errors).
+- **Memory note:** this PC was at ~0.7 GB free commit charge. A leftover test server of mine (port 3417) was stopped; servers on 3150 and 3477 were not mine and were left. Run tests with `--max-old-space-size=256 --max-semi-space-size=1`.
+
+## Status (2026-11-12): instant CRM → AxiCore sync (LIVE on both sides; the 5-minute timer is waiting on the owner)
+- **Why:** no instant link existed. The CRM DB trigger was never installed on the live CRM (last `crm_webhook` 2026-11-06), and GitHub's "every 30 min" `axiflow-tick` really runs every 4-10 h. Measured: lead 473 waited 221 min for its SWOT; leads arrived within minutes only while someone used AxiCore.
+- **Owner's workflow plan (chose "start.. 4 will do later"):**
+  1. The CRM app tells AxiFlow after every save, plus a 5-minute backup check.
+  2. Progress shown in the CRM ("SWOT being written…").
+  3. Manager alert for brochures/proposals waiting for approval.
+  4. Real WhatsApp / email sending (later).
+  - The owner also asked for simple English explanations in this session.
+- **AxiFlow (live, e199431):**
+  - `POST /api/axicore/changed` (OPEN_ROUTES, any CRM user): one `pollCrm({force})` 1.5 s later per burst, then flushOutbox; `seen('crm_app')`.
+  - `/webhooks/atomic?from=backup` records `crm_backup`.
+  - Integrations → Live sync shows the app message, the 5-minute backup and the optional DB trigger.
+  - Tested locally with a stand-in CRM (no login 401, one message → read after 1.6 s, burst of 5 → 1 read, backup door 401/200). Live: no login 401; backup with the real WEBHOOK_SECRET 200 and `crm_backup` recorded.
+- **CRM (LIVE, 16b3832a; owner: "ok now push this"):** pushed to the CRM main on top of 12b118e0, after checking that the co-worker had pushed nothing since. The live bundle `index-BKwadWeJ.js` contains `/api/axicore/changed`.
+  - New `axicore/notify.ts`: `withAxiCoreNotify` wraps the Supabase data provider in `getDataProvider`.
+  - Sends after create/update/delete on companies, contacts, deals, brochures, proposal, call_logs, call_assignments, and after importLeads, recordCallOutcome, unarchiveDeal, mergeContacts.
+  - One message per 800 ms burst, keepalive, never blocks a save; off in demo mode.
+  - Checks: tsc, eslint, prettier, vite build, and a vitest of the wrapper (3 tests; the test file was not kept) all pass.
+- **5-minute backup timer: NOT set up. Owner, after the cost check: "dont check current setup is fine".**
+  - **Why:** one full CRM read (`pollOnce`) downloads about 550 KB from the CRM Supabase (companies `select=*` 296 KB, contacts 200 KB, deals 52 KB; 238 / 235 / 234 rows on 2026-11-12). Every 5 minutes that is about 4.7 GB a month, nearly the free plan's ~5 GB egress.
+  - **Every forced read costs the same 550 KB:** each instant message (one per save burst) and each pollSoon while AxiCore is used (at most one per minute). At about 100 saves a day, that is roughly 1.5 GB a month of CRM egress.
+  - **The light check was offered, not built:** a ~1 KB "anything new?" fingerprint (counts + max id, deals/brochures `updated_at`), followed by a full read only on a change. Companies and contacts have no `updated_at`, so plain field edits outside the CRM app would be missed. Build it if CRM egress becomes a problem.
+  - `/webhooks/atomic?from=backup` stays in the code (harmless). The script `cron-setup.mjs` was never run.
+- **Found:** the live CRM has **no `proposal` table** (PostgREST 404; OpenAPI lists no table like it), so proposal rows and PDF links cannot be written to the CRM. Ask the co-worker whether it was removed or renamed.
+- **Next:**
+  1. Tell the co-worker about CRM commit 16b3832a (`axicore/notify.ts` + one line in the Supabase dataProvider).
+  2. Live check with a real save: Integrations shows "From the CRM app".
+  3. Then parts 2 and 3.
 
 ## Status (2026-11-12): drag and drop on the HTML documents; brochures researched and fact-checked per lead (abbdf67)
 - **Owner:** "i need my editor. its just content editor. where is my drag n drop editor?" (chose "Both": drag and drop on the real pages + "Open in classic editor"), then "for each brochure generation, the contents should be generated separately according to the lead details and SWOT. we research and update each and every content. also verify they are correct".

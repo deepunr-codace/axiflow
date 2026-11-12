@@ -3,6 +3,7 @@ import { setupPlans, homePlanCard, wirePlanButtons, renderPlans, renderPlan, ren
 import { setupScripts, renderScripts } from './scripts.js';
 import { setupHtmlDocs, renderHtmlDoc, framePages } from './html-docs.js';
 import { setupCrmLeads, renderCrmLeads } from './crm-leads.js';
+import { setupAi, renderAi } from './ai.js';
 import { autoEnhanceSelects } from './select.js';
 // AxiFlow: single-page admin. No build step; talks to /api.
 const $ = (s, el = document) => el.querySelector(s);
@@ -98,6 +99,7 @@ setupPlans({ $, $$, api, esc, money, toast, busy, modal, get view() { return vie
 setupScripts({ $, $$, api, esc, toast, busy, modal, docList: (...a) => docList(...a), get view() { return view; } });
 setupHtmlDocs({ $, api, toast, busy, modal, get view() { return view; } });
 setupCrmLeads({ $, $$, api, esc, toast, busy, fmtDate, fmtDay, money, simplePill, groupItems: (el) => groupItems(el), get view() { return view; } });
+setupAi({ $, $$, api, esc, toast, busy, fmtDate, get view() { return view; }, onMode: (on) => { if (META) META.claude_mode = on; setClaude(on); } });
 
 function formData(form) {
   const out = {};
@@ -296,21 +298,22 @@ async function boot() {
 /* Owner, 2026-11-05: a coloured Claude button in the sidebar; on = the three tools write with Claude Code on GitHub. */
 function setClaude(on) {
   for (const el of [$('#claudeBtn'), $('#claudeRow')]) { if (!el) continue; el.classList.toggle('on', on); el.setAttribute('aria-pressed', String(on)); }
-  $('#claudeBtn').dataset.tip = on ? 'Claude mode: on' : 'Claude mode: off';
+  $('#claudeBtn').dataset.tip = on ? 'AI writing: on' : 'AI writing: off';
   $('#claudePill').textContent = on ? 'On' : 'Off';
 }
 async function toggleClaude(btn) {
   const on = !$('#claudeBtn').classList.contains('on');
   if (on && META.claude_missing?.length) {
-    modal('Claude mode is not set up yet', `<p>Claude mode lets Claude write pitch scripts, brochures and proposals for each CRM lead, on GitHub with your Claude subscription or on your own API key. It still needs:</p><ul>${META.claude_missing.map((m) => `<li>${esc(m)}</li>`).join('')}</ul><p class="small muted">Add keys and choose the engine in Integrations.</p>`, '<a class="btn primary" href="#/integrations/claude" data-close-dialog>Open Integrations</a>');
+    modal('AI writing is not set up yet', '<p>Before AI can write your SWOTs, brochures and proposals, connect the AI that writes them (your Claude subscription, or an API key).</p><p class="small muted">The AI page shows what is missing and walks you through it.</p>', '<a class="btn primary" href="#/ai" data-close-dialog>Open the AI page</a>');
     document.querySelector('[data-close-dialog]')?.addEventListener('click', (ev) => ev.target.closest('dialog')?.close());
     return;
   }
   await busy(btn, async () => {
-    await api('/settings', { method: 'PUT', body: { claude: { mode: on } } });
+    await api('/ai-setup', { method: 'PUT', body: { mode: on } });
     META.claude_mode = on;
     setClaude(on);
-    toast(on ? 'Claude mode on: scripts, brochures and proposals are written by Claude Code' : 'Claude mode off: the tools use the standard templates');
+    toast(on ? 'AI writing is on' : 'AI writing is off: new documents get your standard text');
+    if (/^#\/ai\b/.test(location.hash)) route();
   });
 }
 $('#claudeBtn').onclick = (e) => toggleClaude(e.currentTarget);
@@ -350,7 +353,7 @@ const ROUTES = {
   lead: ['Lead', renderLead], approvals: ['Pitch approvals', renderApprovals], tasks: ['Tasks', renderTasks],
   inbox: ['Messages', renderInbox], projects: ['Projects', renderProjects], invoices: ['Invoices', renderInvoices],
   automation: ['Automation runs & log', renderAutomation], templates: ['Message templates', renderTemplates], settings: ['Tool settings', renderSettings], integrations: ['Integrations', renderIntegrations],
-  usage: ['', renderUsage],
+  usage: ['', renderUsage], ai: ['', renderAi],
 };
 
 // ------------------------------------------------------------ Claude usage (owner, 2026-11-09: "track usage")
@@ -1105,17 +1108,8 @@ async function renderSettings(section) {
     ${inp('proposal.payment_terms', 'Payment terms', 'area')}${inp('proposal.investment_note', 'Note under the prices', 'area')}${inp('proposal.deliverables_note', 'Deliverables note', 'area')}${inp('proposal.terms', 'Terms (one per line)', 'lines')}</div>
     <label>Packages (JSON)<textarea id="pkgJson" class="code">${esc(JSON.stringify(s.packages, null, 2))}</textarea></label><br>
     <label>Module split (JSON: name and share in %)<textarea id="modJson" class="code" style="min-height:120px">${esc(JSON.stringify(s.proposal?.modules || [], null, 2))}</textarea></label></div>
-  <div class="card" id="t-claude"><h2>Claude mode</h2><p class="small muted">With Claude mode on (the Claude button in the menu), pitch scripts, brochures and proposals are written by Claude Code in the GitHub repo, then come back here and go to the CRM as usual. Templates imported from a PDF are still filled in-app. If Claude does not answer, the job is sent again; after the last try the document shows an error to try again.</p>
-    <div class="form-grid">${inp('claude.github_repo', 'GitHub repo (owner/name)')}${inp('claude.timeout_minutes', 'Wait for an answer (minutes)', 'number')}${inp('claude.max_attempts', 'Tries before giving up', 'number')}</div>
-    <p class="small" style="margin-top:10px">${(META.claude_missing || []).length ? 'Still needed: ' + META.claude_missing.map(esc).join('; ') : '<span class="ok">Ready: GitHub token and callback secret are set.</span>'} · <a href="#/integrations/claude">Status, tests and last jobs in Integrations</a></p></div>
-  <div class="card"><h2><span class="mi">auto_awesome</span>AI writer</h2>
-    <p class="small muted">Status: ${env.ai.enabled ? '<b class="ok">on</b>' : env.ai.key_set ? '<b>disabled</b>' : '<b class="bad">no API key</b>: add OPENROUTER_API_KEY or ANTHROPIC_API_KEY (.env locally, Vercel environment variables live), then restart / redeploy'} · provider <b>${env.ai.provider === 'openrouter' ? 'OpenRouter' : 'Claude API'}</b>, model ${esc(env.ai.model)} · spent today $${env.ai.spent_today_usd}<br>Keys found: OpenRouter ${env.ai.keys?.openrouter ? 'yes' : 'no'}, Anthropic ${env.ai.keys?.anthropic ? 'yes' : 'no'}</p>
-    <div class="form-grid">${inp('ai.enabled', 'Use AI to write the documents', 'bool')}${inp('ai.daily_budget_usd', 'AI daily budget (USD)', 'number')}
-    <label>AI provider<select data-path="ai.provider">${[['auto', 'Automatic (whichever key is set)'], ['openrouter', 'OpenRouter'], ['anthropic', 'Claude API (Anthropic)']].map(([v, l]) => `<option value="${v}" ${(s.ai.provider || 'auto') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-    ${inp('ai.openrouter_model', 'OpenRouter model (empty = Claude model on OpenRouter)')}
-    ${inp('ai.model', 'Claude model')}${inp('ai.effort_research', 'Effort: research (low…max)')}${inp('ai.effort_writing', 'Effort: pitch, design, messages')}${inp('ai.effort_light', 'Effort: replies, planning')}
-    ${inp('ai.web_search_max_uses', 'Max web searches per lead', 'number')}${inp('ai.max_concurrent', 'Parallel AI jobs', 'number')}</div>
-    <p class="small muted">Without a key (or when the budget is reached) every tool falls back to its standard wording, so documents are still made.</p></div>
+  <div class="card" id="t-claude"><div class="sec-h"><h2><span class="mi">auto_awesome</span>AI</h2><span class="spacer"></span><a class="btn sm primary" href="#/ai">Open the AI page</a></div>
+    <p class="small muted">Which AI writes your SWOTs, brochures and proposals, its keys, the backup when it fails, the editor assistant and the daily spending limit are all on the AI page.</p></div>
   <div class="card" id="crmCard"><div class="sec-h"><h2>Team CRM</h2><span class="spacer"></span><button class="btn sm" id="crmSync"><span class="mi">sync</span>Read the CRM now</button></div>
     <div id="crmStatus" class="small muted">Loading…</div>
     <div class="form-grid" style="margin-top:12px">${inp('atomic.enabled', 'Use the CRM (read deals and call results)', 'bool')}${inp('atomic.read_only', 'Read only: write nothing except the tables below', 'bool')}${inp('atomic.write_tables', 'What AxiFlow may write while read only (table or table.column)', 'list')}${inp('atomic.deal_means_consent', 'An open deal counts as consent for WhatsApp/email', 'bool')}${inp('atomic.poll_seconds', 'Check the CRM every N seconds', 'number')}${inp('atomic.import_per_poll', 'New CRM leads to bring in per check', 'number')}</div>
@@ -1226,9 +1220,7 @@ async function renderSettings(section) {
  */
 async function renderIntegrations(section) {
   const [st, { settings: s }, kk] = await Promise.all([api('/integrations'), api('/settings'), api('/keys')]);
-  const KEY_GROUPS = [
-    ['claude', 'Claude and AI keys', 'Your own keys (BYOK). Claude mode can run on them instead of GitHub, and the editor assistant uses them.'],
-    ['github', 'Claude Code on GitHub', 'The token that starts the GitHub job, and the secret its answer is signed with.'],
+  const KEY_GROUPS = [ // AI keys (Anthropic, OpenRouter, the GitHub token and return key) are on the AI page (#/ai) since 2026-11-12
     ['images', 'Stock photos', 'Free photo libraries. With a key, every brochure gets real photos that fit the lead\'s vertical and business (Claude picks them; only the chosen ones are saved, with the photographer recorded).'],
     ['crm', 'Team CRM', 'Where the CRM lives and the key AxiFlow reads it with.'],
     ['sync', 'Live sync and scheduler', 'Secrets that protect the CRM trigger and the scheduler URL.'],
@@ -1250,7 +1242,8 @@ async function renderIntegrations(section) {
   const keysCard = `<div class="card" id="i-keys"><div class="sec-h"><h2>Keys (bring your own)</h2></div>
     <p class="small muted">Add API keys and secrets here instead of in .env or Vercel. They are stored encrypted in AxiFlow's database, used at once (no redeploy), and never shown again: only the last 4 characters. A key saved here wins over the same variable on the server; Remove goes back to the server's value. The database URL, login password and session secret stay on the server.</p>
     ${KEY_GROUPS.map(([g, title, text]) => `<div class="key-group"><h3>${title}</h3>${text ? `<p class="small muted">${text}</p>` : ''}${kk.keys.filter((k) => k.group === g).map(keyRow).join('')}
-      ${g === 'github' ? `<h3 style="margin-top:14px">GitHub repo secrets</h3><p class="small muted">The GitHub job reads these from the repo. AxiFlow can save them for you when the GitHub token also has <b>Secrets: read and write</b> for the repo.</p>${ghRow('CLAUDE_CODE_OAUTH_TOKEN', 'Claude subscription login for Claude Code (run claude setup-token on your computer).', '')}${ghRow('AXIFLOW_CALLBACK_SECRET', 'Must equal the callback secret above.', 'CLAUDE_WORKER_SECRET')}${ghRow('CRON_SECRET', 'Lets the 30-minute GitHub pinger call the scheduler.', 'CRON_SECRET')}` : ''}</div>`).join('')}</div>`;
+      ${g === 'sync' ? ghRow('CRON_SECRET', 'Lets the 30-minute GitHub pinger call the scheduler (saved into the GitHub repo).', 'CRON_SECRET') : ''}</div>`).join('')}
+    <p class="small muted">AI keys (Anthropic, OpenRouter, the Claude subscription's GitHub key) are on the <a href="#/ai">AI page</a>.</p></div>`;
   const val = (path) => path.split('.').reduce((o, k) => o?.[k], s);
   const field = (path, label, type = 'text', opts) => {
     const v = val(path);
@@ -1268,7 +1261,7 @@ async function renderIntegrations(section) {
   const lastSync = [crm.last_app_ping, crm.last_webhook].filter(Boolean).sort((a, b) => (a.at < b.at ? 1 : -1))[0] || null;
   const liveSync = !!lastSync;
   const tiles = [
-    ['claude', 'Claude mode', c.on, c.mode && !c.on, c.on ? `On · ${({ github: 'GitHub', anthropic: 'Claude API', openrouter: 'OpenRouter' })[c.engine]}` : c.mode ? 'On, setup missing' : 'Off'],
+    ['ai', 'AI', c.on, c.mode && !c.on, c.on ? 'Writing your documents' : c.mode ? 'On, setup missing' : 'Off'],
     ['keys', 'Keys', kk.keys.some((k) => k.source === 'app'), kk.keys.some((k) => k.source === 'unreadable'), `${kk.keys.filter((k) => k.source).length} of ${kk.keys.length} set · ${kk.keys.filter((k) => k.source === 'app').length} saved here`],
     ['keys', 'Stock photos', kk.keys.some((k) => k.group === 'images' && k.source), false, kk.keys.filter((k) => k.group === 'images' && k.source).map((k) => k.label.split(' ')[0]).join(' + ') || 'No key: sample images only'],
     ['crm', 'Team CRM', crmOk, crm.keys && !crmOk, crmOk ? `${crm.linked_leads} leads · ${crm.read_only ? 'read only' : 'read and write'}` : crm.keys ? 'Switched off' : 'Not connected'],
@@ -1276,7 +1269,6 @@ async function renderIntegrations(section) {
     ['templates', 'Templates', true, false, 'Automatic and by hand'],
     ['schedule', 'Scheduler', !!sch.last_tick, sch.cron_secret_set && !sch.last_tick, sch.last_tick ? `Last tick ${fmtDate(sch.last_tick.at)}` : sch.cron_secret_set ? 'No tick yet' : 'CRON_SECRET missing'],
     ['storage', 'Files and database', st.storage.kind === 'supabase' && st.database.kind === 'postgres', st.storage.kind !== 'supabase', `${st.database.kind === 'postgres' ? 'Postgres' : 'Embedded DB'} · ${st.storage.kind === 'supabase' ? 'Supabase Storage' : st.storage.kind === 'blob' ? 'Vercel Blob' : 'local files'}`],
-    ['ai', 'Editor AI assistant', !!st.ai.enabled, st.ai.key_set && !st.ai.enabled, st.ai.enabled ? `${st.ai.provider === 'openrouter' ? 'OpenRouter' : 'Claude API'}` : 'No key'],
     ['channels', 'Email and WhatsApp', st.channels.email === 'live' || st.channels.whatsapp === 'live', false, `Email ${st.channels.email} · WhatsApp ${st.channels.whatsapp}`],
   ];
   const tplOpts = (kind) => [[0, 'The default template'], ...st.templates.list.filter((t) => t.kind === kind && t.source !== 'builtin-claude').map((t) => [t.id, t.name + (t.is_default ? ' (default)' : '')])];
@@ -1286,23 +1278,9 @@ async function renderIntegrations(section) {
   <div class="int-tiles">${tiles.map(([id, n, on, warn, sub]) => `<a class="int-tile" href="#/integrations/${id}" data-jump="${id}">${dot(on, warn)}<b>${n}</b><span class="small muted">${esc(sub)}</span></a>`).join('')}</div>
   ${keysCard}
 
-  <div class="card" id="i-claude"><div class="sec-h"><h2>Claude mode</h2><span class="spacer"></span>${c.engine === 'github' ? '<button class="btn sm" data-test="github"><span class="mi">network_check</span>Test GitHub</button>' : ''}<button class="btn sm ${c.mode ? '' : 'primary'}" id="intClaude">${c.mode ? 'Switch Claude mode off' : 'Switch Claude mode on'}</button></div>
-    <p class="small muted">With Claude mode on, Claude writes the pitch script, brochure and proposal for each CRM lead: AxiFlow sends the job (lead data from the CRM, research, rules), Claude researches the business and writes it, and the result is laid out here and goes to the CRM. Choose who runs it: Claude Code on GitHub with your Claude subscription, or your own API key (Anthropic or OpenRouter, paid per use). No answer in time = sent again; after the last try the document shows an error.</p>
-    <div class="engine-pick">${Object.entries(c.engines).map(([k, n]) => `<label class="how-opt"><input type="radio" name="engine" data-ipath="claude.engine" data-type="radio" value="${k}" ${c.engine === k ? 'checked' : ''}><span class="how-body"><b>${esc(n)}</b><span class="small muted">${{ github: 'Runs Claude Code in the GitHub repo. No API cost; uses your Claude plan. Up to 25 minutes for a designed brochure.', anthropic: 'Runs here on your Anthropic key (pay per use, logged in the AI cost log). About 1 to 4 minutes per document.', openrouter: 'Runs here through OpenRouter on your key (pay per use; needs credits for web research).' }[k]}</span></span></label>`).join('')}</div>
-    <h3 style="margin-top:14px">Engine per tool</h3>
-    <p class="small muted">A tool can run on another engine than the one above, e.g. SWOTs on your Claude plan and brochures and proposals on your API key. "Same as above" follows the main choice.</p>
-    <div class="form-grid">${[['script', 'Pitch script (SWOT)'], ['brochure', 'Brochure'], ['proposal', 'Proposal']].map(([t, l]) => `<label>${l}<select data-ipath="claude.engines.${t}"><option value="">Same as above (${esc(c.engines[c.engine])})</option>${Object.entries(c.engines).map(([k, n]) => `<option value="${k}" ${s.claude?.engines?.[t] === k ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select><span class="small muted">Now: ${esc(c.engines[c.by_tool[t]])}</span></label>`).join('')}</div>
-    <div class="form-grid" style="margin-top:10px"><label>If GitHub fails or hits the usage limit<select data-ipath="claude.fallback_engine"><option value="" ${s.claude?.fallback_engine ? '' : 'selected'}>No fallback: wait for GitHub and retry it</option>${Object.entries(c.engines).filter(([k]) => k !== 'github').map(([k, n]) => `<option value="${k}" ${s.claude?.fallback_engine === k ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select><span class="small muted">${s.claude?.fallback_engine ? (c.fallback ? 'A GitHub job that hits the usage limit, fails or does not answer in time runs again on this key at once (while under the daily spend limit).' : 'Its key is not set, so jobs wait for GitHub.') : 'Jobs wait for the usage limit to reset.'}</span></label></div>
-    <div class="row" style="margin:12px 0 8px">${dot(c.on, c.mode && !c.on)}<b>${c.on ? 'Working' : c.mode ? 'On, but setup is missing' : 'Off'}</b><span class="pill">${esc(c.engines[c.engine])} · ${esc(c.model)}</span>${c.host ? '' : '<span class="pill">Local server: retries run only on the live site</span>'}</div>
-    ${c.missing.length ? `<div class="int-warn"><b>Still needed for this engine:</b><ul>${c.missing.map((m) => `<li>${esc(m)}</li>`).join('')}</ul><a href="#/integrations/keys" data-jump="keys">Add keys</a></div>` : ''}
-    <div class="int-test" data-result="github"></div>
-    ${c.in_use.includes('github') ? `${copyRow('Result callback', c.callback_url)}${copyRow('Workflow', c.workflow)}
-    <div class="form-grid" style="margin-top:12px">${field('claude.github_repo', 'GitHub repo (owner/name)')}${field('claude.timeout_minutes', 'Wait for an answer (minutes)', 'number')}</div>` : ''}
-    ${c.in_use.some((e) => e !== 'github') ? `<div class="form-grid" style="margin-top:12px">${field('claude.api_model.anthropic', 'Model on the Claude API')}${field('claude.api_model.openrouter', 'Model on OpenRouter')}${field('ai.daily_budget_usd', 'Daily spend limit (USD)', 'number')}</div>` : ''}
-    <div class="form-grid" style="margin-top:12px">${field('claude.max_attempts', 'Tries before giving up', 'number')}${field('claude.web_research', 'Claude may search the web for the business', 'bool')}</div>
-    <h3>Last jobs</h3>${runs}
-    <p class="small"><a href="#/usage"><span class="mi in">monitoring</span>Tokens used per run, day and lead</a></p>
-    <p class="small muted">Last result received: ${when(c.last_result)}</p></div>
+  <div class="card" id="i-ai"><div class="sec-h"><h2>AI</h2><span class="spacer"></span><a class="btn sm primary" href="#/ai"><span class="mi">auto_awesome</span>Open the AI page</a></div>
+    <p class="small muted">Which AI writes your SWOTs, brochures and proposals, its keys, the backup when it fails, and spending: all on the AI page.</p>
+    <div class="row" style="margin:8px 0">${dot(c.on, c.mode && !c.on)}<b>${c.on ? 'AI writing is on' : c.mode ? 'AI writing is on, but setup is missing' : 'AI writing is off'}</b></div></div>
 
   <div class="card" id="i-templates"><h2>Templates: automatic and by hand</h2>
     <p class="small muted">Documents the automation makes (a CRM status change) always use a real template, so every brochure and proposal in the CRM follows a tested design. When you make one by hand (New), you choose: a template, or "Claude designs" (Claude lays out every slide itself; brochures only, needs Claude mode).</p>
@@ -1348,9 +1326,6 @@ async function renderIntegrations(section) {
   <div class="card" id="i-storage"><h2>Files and database</h2>
     <p class="small">Database: <b>${st.database.kind === 'postgres' ? 'Postgres (Supabase)' : 'Embedded (local only)'}</b><br>Uploads: <b>${st.storage.kind === 'supabase' ? `Supabase Storage, bucket ${esc(st.storage.bucket)}` : st.storage.kind === 'blob' ? 'Vercel Blob' : 'local folder data/uploads'}</b></p>
     ${envRows([...st.database.env, ...st.storage.env])}</div>
-  <div class="card" id="i-ai"><h2>Editor AI assistant</h2>
-    <p class="small muted">Only the chat in the document editor and the manager briefing use this; the documents themselves are written by Claude Code.</p>
-    <p class="small">${st.ai.enabled ? `On · ${st.ai.provider === 'openrouter' ? 'OpenRouter' : 'Claude API'} · ${esc(st.ai.model || '')}` : 'Off (no key)'}</p>${envRows(st.ai.env)}</div>
   <div class="card" id="i-channels"><h2>Email and WhatsApp</h2>
     <p class="small muted">Not connected = messages are only saved here (safe test mode). In the CRM-tools setup the telecaller sends the brochure.</p>
     <p class="small">Email: <b>${esc(st.channels.email)}</b> · WhatsApp: <b>${esc(st.channels.whatsapp)}</b></p>${envRows(st.channels.env)}</div>
@@ -1402,7 +1377,6 @@ async function renderIntegrations(section) {
     const box = $(`[data-result="${b.dataset.test}"]`);
     box.innerHTML = `<div class="int-res ${r.ok ? 'ok' : 'bad'}"><span class="mi in">${r.ok ? 'check_circle' : 'error'}</span>${esc(r.detail)} <span class="muted">(${r.ms} ms)</span></div>`;
   })));
-  $('#intClaude').onclick = async (e) => { await toggleClaude(e.currentTarget); if (META.claude_mode !== c.mode) renderIntegrations(); };
   $('#intCrmSync').onclick = (e) => busy(e.currentTarget, async () => { const r = await api('/atomic/sync', { body: {} }); toast(r.result.skipped || `Read ${r.result.deals} deals from the CRM`); renderIntegrations('crm'); });
   $('#intSave').onclick = (e) => busy(e.currentTarget, async () => {
     const patch = {};
