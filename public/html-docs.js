@@ -30,17 +30,21 @@ ${only ? `[data-page]:not([data-page="${only}"]){display:none!important}` : `[da
 }
 
 // ------------------------------------------------------------------ the form
-const LABELS = { tag: 'Brochure name', doc_type: 'Document type', script_word: 'Name in Malayalam (cover)', title_em: 'Title, italic end', cta_before: 'Closing line, start', cta_em: 'Closing line, italic part', cta_after: 'Closing line, end', note_bold: 'Note, bold start', retainer_bold: 'Retainer, bold start', includes_title: 'List heading', idea_titles: 'Idea page headings', highlight: 'Highlighted step (0-3)', goal: 'Goal (0 attract, 1 convert, 2 retain)', short: 'Short name (plan page)', featured: 'Dark signature card', dark: 'Dark card', tone: 'Card colour (grey, red, dark)' };
+const LABELS = { doc_name: 'Brochure name', idea_pages: 'Idea pages', think_label: 'Label: what the customer thinks', do_label: 'Label: what we do', headline: 'Headline on the photo', new: 'Marked NEW', statement: 'Statement card', includes_title: 'List heading', tag: 'Brochure name', doc_type: 'Document type', script_word: 'Name in Malayalam (cover)', title_em: 'Title, italic end', cta_before: 'Closing line, start', cta_em: 'Closing line, italic part', cta_after: 'Closing line, end', note_bold: 'Note, bold start', retainer_bold: 'Retainer, bold start', includes_title: 'List heading', idea_titles: 'Idea page headings', highlight: 'Highlighted step (0-3)', goal: 'Goal (0 attract, 1 convert, 2 retain)', short: 'Short name (plan page)', featured: 'Dark signature card', dark: 'Dark card', tone: 'Card colour (grey, red, dark)' };
 const human = (k) => LABELS[k] || String(k).replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
 const blankLike = (v) => (typeof v === 'string' ? '' : typeof v === 'number' ? 0 : typeof v === 'boolean' ? false : Array.isArray(v) ? [] : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, blankLike(x)])) : '');
-const SKIP = new Set(['photos', 'image', 'image_alt', 'eyebrow', 'idea_pages', 'new']);
+// fields not shown in the form; the older Codeace Growth Plan keeps its page plan in idea_pages, the CodeAce Growth
+// Brochure has idea page headings there and NEW marks the owner may change
+const SKIP_BASE = ['photos', 'image', 'image_alt', 'eyebrow', 'photo', 'photo_alt', 'count'];
+let SKIP = new Set([...SKIP_BASE, 'idea_pages', 'new']);
 
 function field(path, key, value) {
   const id = `f-${path}`;
   if (typeof value === 'boolean') return `<label class="check hd-check"><input type="checkbox" data-path="${esc(path)}" ${value ? 'checked' : ''}> ${esc(human(key))}</label>`;
   if (typeof value === 'number') return `<label class="hd-field"><span>${esc(human(key))}</span><input type="number" data-path="${esc(path)}" data-num value="${esc(value)}"></label>`;
   if (typeof value === 'string') {
-    const long = value.length > 60 || /text|lead|paragraph|subtitle|note|gap|approach|retainer|closing|intro|statement|why/.test(path);
+    // a line break in the text (two-line headings) needs a box that keeps it
+    const long = value.length > 60 || value.includes('\n') || /text|lead|paragraph|subtitle|note|gap|approach|retainer|closing|intro|statement|why/.test(path);
     return `<label class="hd-field" for="${esc(id)}"><span>${esc(human(key))}</span>${long ? `<textarea id="${esc(id)}" data-path="${esc(path)}" rows="${Math.min(6, Math.max(2, Math.ceil(value.length / 52)))}">${esc(value)}</textarea>` : `<input id="${esc(id)}" data-path="${esc(path)}" value="${esc(value)}">`}</label>`;
   }
   return '';
@@ -66,6 +70,7 @@ export async function renderHtmlDoc(kind, d, noun) {
   const { $, api, toast, busy, modal, view } = H;
   const r = await api(`/tools/docs/${d.id}/html`);
   let data = JSON.parse(JSON.stringify(r.data));
+  SKIP = new Set(r.template === 'builtin-html-brochure-ps' ? SKIP_BASE : [...SKIP_BASE, 'idea_pages', 'new']);
   document.getElementById('pageTitle').textContent = '';
   const isProposal = kind === 'proposal';
   view.innerHTML = `
@@ -87,7 +92,7 @@ export async function renderHtmlDoc(kind, d, noun) {
     <div class="hd-pages" id="hdPages"></div>
     <aside class="hd-form card" id="hdForm">
       <div class="sec-h"><h2>Words</h2><span class="spacer"></span><span class="small muted">The design stays as it is</span></div>
-      ${isProposal ? `<div class="hd-photos"><label class="btn sm"><span class="mi">image</span>Cover photo<input type="file" accept="image/*" data-photo="cover" hidden></label><label class="btn sm"><span class="mi">image</span>Photo strip<input type="file" accept="image/*" data-photo="strip" hidden></label>${data.photos?.cover || data.photos?.strip ? '<button class="btn sm ghost" id="hdNoPhotos">Remove photos</button>' : ''}</div>` : ''}
+      ${(r.photos || []).length ? `<div class="hd-photos">${r.photos.map(([k, label]) => `<label class="btn sm"><span class="mi">image</span>${esc(label)}<input type="file" accept="image/*" data-photo="${esc(k)}" hidden></label>`).join('')}${r.photos.some(([k]) => data.photos?.[k]) ? '<button class="btn sm ghost" id="hdNoPhotos">Remove photos</button>' : ''}</div>` : ''}
       <div id="hdFields"></div>
     </aside>
   </div>`;

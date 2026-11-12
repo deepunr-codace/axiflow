@@ -419,21 +419,15 @@ api.get('/tools/docs/:id/html', async (req, res) => {
   const h = await import('../html-docs/index.js');
   const d = await tools.getDoc(Number(req.params.id));
   if (!d || !h.isHtmlDoc(d)) return res.status(404).json({ error: 'Not an HTML document' });
-  res.json({ html: await h.htmlDocHtml(d), size: h.HTML_TEMPLATES[d.content.html.template].size, data: d.content.html.data, template: d.content.html.template });
+  const t = h.HTML_TEMPLATES[d.content.html.template];
+  res.json({ html: await h.htmlDocHtml(d), size: t.size, data: d.content.html.data, template: d.content.html.template, photos: t.photos || [] });
 });
 // An HTML template's sample (the Nirapara reference) as a PDF: no document, no CRM write (also proves Chromium works)
 api.get('/design/templates/:id/sample.pdf', async (req, res) => {
   const h = await import('../html-docs/index.js');
   const t = await templates.getTemplate(Number(req.params.id));
   if (!h.isHtmlTemplate(t)) return res.status(404).json({ error: 'Only the Codeace HTML templates have a sample PDF' });
-  const { NIRAPARA_ITEMS } = await import('../html-docs/samples/nirapara-proposal.js');
-  const { NIRAPARA_PROPOSAL } = await import('../html-docs/samples/nirapara-proposal.js');
-  const { NIRAPARA_BROCHURE } = await import('../html-docs/samples/nirapara-brochure.js');
-  const brochure = t.source === 'builtin-html-brochure';
-  const doc = { id: 0, kind: t.kind, title: 'Nirapara sample', input: { company: 'Nirapara' }, status: 'ready', created_at: new Date().toISOString(),
-    items: brochure ? null : NIRAPARA_ITEMS.map((name) => ({ name, price: 0 })),
-    content: { html: { template: t.source, data: brochure ? NIRAPARA_BROCHURE : { ...NIRAPARA_PROPOSAL, doc_type: 'Shopify Store Proposal' }, split: {} } } };
-  const pdf = await h.htmlDocPdf(doc);
+  const pdf = await h.htmlDocPdf(h.sampleDoc(t.source));
   res.set({ 'content-type': 'application/pdf', 'content-disposition': `inline; filename="${t.kind}-sample.pdf"` }).send(pdf);
 });
 api.post('/tools/docs/:id/html-preview', express.json({ limit: '2mb' }), async (req, res) => {
