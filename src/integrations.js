@@ -41,6 +41,8 @@ export async function integrationsStatus() {
       webhook_url: `${BASE_URL}/webhooks/atomic`,
       webhook_secret_set: set('WEBHOOK_SECRET'),
       last_webhook: seenAt.crm_webhook || null,
+      last_app_ping: seenAt.crm_app || null, // the CRM app after a save (2026-11-12)
+      last_backup: seenAt.crm_backup || null, // the 5-minute timer in AxiFlow's own database
       waiting_writes: outbox?.n || 0,
       settings: s.atomic,
     },

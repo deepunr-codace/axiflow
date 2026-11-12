@@ -137,7 +137,7 @@ pub.post('/webhooks/atomic', async (req, res) => {
   const given = req.get('x-webhook-secret') || (req.get('authorization') || '').replace(/^Bearer\s+/i, '') || req.query.key || '';
   if (!process.env.WEBHOOK_SECRET || !checkSecret(given, process.env.WEBHOOK_SECRET)) return res.status(401).json({ error: 'Invalid secret' });
   // A Supabase trigger in the CRM calls this on every change (see crm/axiflow-webhooks.sql).
-  (await import('../integrations.js')).seen('crm_webhook');
+  (await import('../integrations.js')).seen(req.query.from === 'backup' ? 'crm_backup' : 'crm_webhook'); // ?from=backup = the 5-minute timer in AxiFlow's own database
   background(async () => {
     await pollCrm({ force: true });
     await (await import('../crm-sync.js')).flushOutbox().catch(() => {});

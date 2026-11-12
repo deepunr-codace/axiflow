@@ -375,6 +375,22 @@ api.post('/axicore/package', async (req, res) => {
   const leads = await rememberWebsiteType({ dealId: deal_id, companyId: company_id, type, by: req.user?.email || req.user?.name || 'crm' });
   res.json({ ok: true, leads });
 });
+// The CRM app says "something was just saved" (a lead, deal, call, brochure row…; owner, 2026-11-12): read the CRM now
+// instead of waiting for the next check. Any signed-in CRM user; the body is only a label for the Integrations page.
+let crmChangeQueued = false;
+api.post('/axicore/changed', (req, res) => {
+  background(async () => (await import('../integrations.js')).seen('crm_app', `${req.user?.email || req.user?.name || 'crm'}: ${String(req.body?.reason || '').slice(0, 80)}`), 'crm-seen');
+  if (!crmChangeQueued) {
+    crmChangeQueued = true;
+    background(async () => {
+      await new Promise((r) => setTimeout(r, 1500)); // a burst of saves (an import, a company + its deal) becomes one read
+      crmChangeQueued = false;
+      await atomic.pollCrm({ force: true }); // a read already running reads once more afterwards
+      await flushOutbox().catch(() => {});
+    }, 'crm-changed');
+  }
+  res.json({ ok: true });
+});
 // Documents panel on a CRM company page (AxiCore 2.0 in the team CRM; open to every signed-in CRM user)
 api.get('/axicore/company/:id/docs', async (req, res) => {
   const lead = await get(`SELECT id, company, crm_brochure_state, crm_proposal_state FROM leads WHERE external_id = :ext AND crm_removed_at IS NULL`, { ext: `atomic:co:${Number(req.params.id)}` });

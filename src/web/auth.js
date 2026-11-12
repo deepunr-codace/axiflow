@@ -85,7 +85,7 @@ export async function currentUser(req) {
 }
 
 /** Routes every signed-in CRM user may use (documents on their leads). Everything else needs an AxiCore role. */
-const OPEN_ROUTES = [/^POST \/axicore\/package$/, /^GET \/me$/, /^GET \/axicore\/company\/\d+\/docs$/, /^GET \/tools\/docs\/\d+\/pdf$/];
+const OPEN_ROUTES = [/^POST \/axicore\/package$/, /^POST \/axicore\/changed$/,/^GET \/me$/, /^GET \/axicore\/company\/\d+\/docs$/, /^GET \/tools\/docs\/\d+\/pdf$/];
 export async function requireAuth(req, res, next) {
   if (isAuthed(req)) return next();
   const user = await currentUser(req).catch(() => null);

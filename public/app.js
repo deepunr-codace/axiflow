@@ -1265,13 +1265,14 @@ async function renderIntegrations(section) {
   const when = (x) => (x?.at ? `${fmtDate(x.at)}${x.note ? ` · ${esc(x.note)}` : ''}` : 'never');
   const c = st.claude, crm = st.crm, sch = st.scheduler;
   const crmOk = crm.keys && crm.enabled && !crm.error;
-  const liveSync = !!crm.last_webhook;
+  const lastSync = [crm.last_app_ping, crm.last_webhook].filter(Boolean).sort((a, b) => (a.at < b.at ? 1 : -1))[0] || null;
+  const liveSync = !!lastSync;
   const tiles = [
     ['claude', 'Claude mode', c.on, c.mode && !c.on, c.on ? `On · ${({ github: 'GitHub', anthropic: 'Claude API', openrouter: 'OpenRouter' })[c.engine]}` : c.mode ? 'On, setup missing' : 'Off'],
     ['keys', 'Keys', kk.keys.some((k) => k.source === 'app'), kk.keys.some((k) => k.source === 'unreadable'), `${kk.keys.filter((k) => k.source).length} of ${kk.keys.length} set · ${kk.keys.filter((k) => k.source === 'app').length} saved here`],
     ['keys', 'Stock photos', kk.keys.some((k) => k.group === 'images' && k.source), false, kk.keys.filter((k) => k.group === 'images' && k.source).map((k) => k.label.split(' ')[0]).join(' + ') || 'No key: sample images only'],
     ['crm', 'Team CRM', crmOk, crm.keys && !crmOk, crmOk ? `${crm.linked_leads} leads · ${crm.read_only ? 'read only' : 'read and write'}` : crm.keys ? 'Switched off' : 'Not connected'],
-    ['sync', 'Live sync', liveSync, false, liveSync ? `Last change ${fmtDate(crm.last_webhook.at)}` : 'No CRM trigger yet'],
+    ['sync', 'Live sync', liveSync, false, liveSync ? `Last change ${fmtDate(lastSync.at)}` : 'No CRM message yet'],
     ['templates', 'Templates', true, false, 'Automatic and by hand'],
     ['schedule', 'Scheduler', !!sch.last_tick, sch.cron_secret_set && !sch.last_tick, sch.last_tick ? `Last tick ${fmtDate(sch.last_tick.at)}` : sch.cron_secret_set ? 'No tick yet' : 'CRON_SECRET missing'],
     ['storage', 'Files and database', st.storage.kind === 'supabase' && st.database.kind === 'postgres', st.storage.kind !== 'supabase', `${st.database.kind === 'postgres' ? 'Postgres' : 'Embedded DB'} · ${st.storage.kind === 'supabase' ? 'Supabase Storage' : st.storage.kind === 'blob' ? 'Vercel Blob' : 'local files'}`],
@@ -1328,12 +1329,14 @@ async function renderIntegrations(section) {
     <div class="form-grid">${field('atomic.brochure_bucket', 'Brochure bucket')}${field('atomic.brochure_status', 'New brochure row status')}${field('atomic.proposal_bucket', 'Proposal bucket')}${field('atomic.proposals_table', 'Proposal table')}${field('atomic.proposal_url_column', 'Proposal link column')}${field('atomic.proposal_status', 'New proposal row status')}</div>
     <p class="small muted" style="margin-top:8px">What each deal stage does is set in <a href="#/settings">Tool settings → Team CRM</a>.</p></div>
 
-  <div class="card" id="i-sync"><h2>Live sync (CRM trigger)</h2>
-    <p class="small muted">A trigger in the CRM database calls AxiFlow on every change to companies, contacts, deals, brochures, proposals, call logs and call assignments, so AxiFlow reacts within seconds and nobody has to be logged in. Without it, AxiFlow reads the CRM while someone uses the app and on every scheduler tick.</p>
-    <div class="row" style="margin:8px 0">${dot(liveSync)}<b>${liveSync ? 'Working' : 'Not seen yet'}</b><span class="spacer"></span><span class="small muted">Last change received: ${when(crm.last_webhook)}</span></div>
+  <div class="card" id="i-sync"><h2>Live sync</h2>
+    <p class="small muted">When anyone saves a company, contact, deal, call result, brochure or proposal row in the CRM app, the app tells AxiFlow at once and AxiFlow reads the CRM within 2 seconds. A timer in AxiFlow's own database also asks every 5 minutes, for changes made outside the CRM app.</p>
+    <div class="row" style="margin:8px 0">${dot(!!crm.last_app_ping)}<b>From the CRM app</b><span class="spacer"></span><span class="small muted">Last message: ${when(crm.last_app_ping)}</span></div>
+    <div class="row" style="margin:8px 0">${dot(!!crm.last_backup)}<b>Every 5 minutes (backup)</b><span class="spacer"></span><span class="small muted">Last check: ${when(crm.last_backup)}</span></div>
+    <div class="row" style="margin:8px 0">${dot(!!crm.last_webhook, false)}<b>CRM database trigger (optional)</b><span class="spacer"></span><span class="small muted">Last change received: ${when(crm.last_webhook)}</span></div>
     ${copyRow('Webhook', crm.webhook_url)}
     ${envRows([{ name: 'WEBHOOK_SECRET', set: crm.webhook_secret_set }])}
-    <ol class="small int-steps"><li>Open the CRM's Supabase project → SQL Editor → New query.</li><li>Paste the <b>contents</b> of <code>crm/axiflow-webhooks.READY.sql</code> (not the file name) and run it.</li><li>Change something in the CRM; this card shows the time within a few seconds.</li></ol></div>
+    <p class="small muted">The database trigger is not needed while the app message and the 5-minute check run. To add it anyway: CRM Supabase → SQL Editor → paste the contents of <code>crm/axiflow-webhooks.READY.sql</code> → Run.</p></div>
 
   <div class="card" id="i-schedule"><h2>Scheduler</h2>
     <p class="small muted">The scheduler tick reads the CRM, sends waiting CRM writes, retries Claude jobs that did not answer and runs the daily work. Vercel calls it once a day; the GitHub workflow <code>axiflow-tick.yml</code> calls it every 30 minutes when the repo secret CRON_SECRET is set.</p>
