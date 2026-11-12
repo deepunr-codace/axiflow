@@ -3,6 +3,7 @@
   "framework": null,
   "buildCommand": "",
   "installCommand": "npm install",
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- . ':!*.md'",
   "outputDirectory": "public",
   "regions": [
     "dub1"
