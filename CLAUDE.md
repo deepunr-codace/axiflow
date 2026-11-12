@@ -13,6 +13,16 @@ The team's main CRM is **Twenty**, set up by a co-worker and run by the **teleca
 
 Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATABASE_URL` and `pg`; embedded PGlite in `data/pg` when `DATABASE_URL` is empty), Vercel Blob for uploads (`data/uploads` locally), nodemailer, `@anthropic-ai/sdk` (Claude, `claude-opus-5-5`), and a vanilla-JS admin SPA in `public/`. There is no build step. Code map: see README. The old SQLite file `data/crm.db` is kept only as a backup/migration source.
 
+## Working setup (owner, 2026-11-12): live CRM + AxiCore only; AWC removed
+- **Owner:** "remove awc. now on we will work on live setup(crm + axicore - 2 supabase db)".
+- **The live setup:**
+  - **CRM:** https://atomic-crm-flame.vercel.app; repo karuncodeace/atomic-crm on the co-worker's Vercel; Supabase `vedzrmwpojeyykjkkqyy`. Working clone: the session scratchpad `live-crm`.
+  - **AxiCore = this repo:** https://axiflow-v1.vercel.app; Supabase `urjgjuleerifdvuxcmoa`. The CRM proxies the tool paths here.
+- **AWC (Axilume Web CRM):**
+  - **Removed:** the local folder `Axilume Web CRM/` was deleted (2026-11-12; git was clean and matched GitHub).
+  - **Kept, unused (owner chose to remove only the local folder):** GitHub repo deepunr-codace/axilume-web-crm, Vercel project axilume-web-crm and Supabase `hzxtdianyucccuogeygw`.
+  - Do not port changes to AWC. The AWC notes further down are history.
+
 ## Status (2026-11-12): AxiCore for CRM managers too; search box in long dropdowns
 - **Owner:** "give axicore access to manager also", then "add search option too" (screenshot of the long "CRM lead" picker).
 - **Managers:**
@@ -23,6 +33,7 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - Empty group headings hide, and "No matches" shows when nothing fits. Arrows / Enter / Esc still work while typing.
   - Styles `.xsel-search`, `.xsel-none` (dark and light).
 - **Tested** in headless Edge on a throwaway DB with 12 CRM-style leads (scratchpad `live-crm/search-ui.mjs`): "kottayam int" → the 4 Kottayam interior firms, ArrowDown + Enter picks and fills the form, no-match message, Backspace restores the list, Esc closes and stays on the page, light theme, phone width, no console errors.
+- **Live:** AxiFlow bfd1872, CRM 12b118e0 (on top of the co-worker's 53c71284); both bundles checked to contain the change. The live CRM has 3 admins and 1 BDE, no manager yet and no sales row without a role (a row without one would count as a manager in `auth.js`). **Not seen yet:** a real manager login.
 
 ## Status (2026-11-11): the Claude-web brochure and proposal are the default templates, printed exactly (HTML engine)
 - **Owner:** "i generated brochure and proposal from claude web. can u convert this exactly to our system. next generations should use this as default. but it should be same as exactly without any difference" (`Downloads/Nirapara Ecom Growth Brochure - Premium (source).html` = the brochure made in this session, and `Downloads/Nirapara Shopify Store Proposal — CodeAce.html`, a Claude design bundle: `__bundler` manifests of gzipped pages, each page a design-canvas file of static HTML with inline styles, Manrope, logos, WebP photos).
