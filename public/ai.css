@@ -40,6 +40,7 @@
 .ai-job-cell .xsel, .ai-job-cell select { width: 100%; }
 .ai-job-l { display: none; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
 .ai-job-st { display: flex; justify-content: flex-start; }
+.ai-research-note { margin: 14px 2px 0; font-size: 13px; line-height: 1.55; }
 .ai-research { margin-top: 12px; border: 1px solid var(--edge); border-radius: 12px; background: var(--sunk); }
 
 /* 3. accounts */

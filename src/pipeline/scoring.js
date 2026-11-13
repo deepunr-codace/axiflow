@@ -19,7 +19,7 @@ export function scoreLead(lead, audit, packages) {
     else {
       const high = audit.findings.filter((f) => f.severity === 'high').length;
       if (high) add(Math.min(15, high * 6), `${high} critical website issue(s)`);
-      if (audit.findings.length >= 4) add(5, 'many website issues');
+      if (audit.findings.filter((f) => f.severity !== 'info').length >= 4) add(5, 'many website issues');
     }
   }
 

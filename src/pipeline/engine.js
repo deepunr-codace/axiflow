@@ -4,16 +4,13 @@ import * as tools from '../tools.js';
 import { getSettings } from '../settings.js';
 import { STAGE_IDS, TERMINAL, PRE_REPLY } from '../stages.js';
 import { nowISO, addDays, addMinutes, isDue, token, money, formatInTz, zonedToUtc, normalizeEmail, normalizePhone, normalizeUrl, titleCase, truthy, BASE_URL } from '../util.js';
-import { auditWebsite, recommendPackage } from './enrich.js';
+import { collectFacts, saveFacts, recommendPackage } from './enrich.js';
 import { scoreLead } from './scoring.js';
-import { buildBrochure } from './brochure.js';
 import { sendToLead, inSendWindow } from './messenger.js';
 import { logEvent, addActivity, addTask } from './log.js';
 import { crmEvent } from '../crm-sync.js';
 import { aiEnabled } from '../ai/claude.js';
-import { fallbackPitch } from '../ai/pitchmaker.js';
 import { composeMessage, analyzeReply, planNextAction, classifyReplyRules } from '../ai/manager.js';
-import { writeProposal } from '../ai/proposal.js';
 import { brochureUrl, brochureAttachment, proposalUrl, proposalAttachment } from '../pdf/docs.js';
 
 export const getLead = async (id) => await get(`SELECT * FROM leads WHERE id = :id`, { id });
@@ -195,7 +192,9 @@ async function step(lead, { force }) {
   switch (lead.stage) {
     case 'new': {
       if (lead.do_not_contact) { await setStage(lead, 'do_not_contact', 'flagged at intake'); return true; }
-      const audit = await auditWebsite(lead.website);
+      const collected = await collectFacts(lead); // Stage 1 of the SWOT guide: the verified facts, kept on the lead
+      await saveFacts(lead.id, collected);
+      const audit = collected.audit;
       const recommended = recommendPackage(lead, audit, s.packages);
       const { score, reasons } = scoreLead(lead, audit, s.packages);
       await update('leads', lead.id, { audit_json: audit, recommended_package: recommended, score, score_reasons: reasons, updated_at: nowISO() });
@@ -212,14 +211,13 @@ async function step(lead, { force }) {
       await setStage(lead, 'researching', 'pitch maker started');
       return true;
     case 'researching': {
-      // Owner, 2026-11-05 ("high speed", "remove old logics"): the brochure job goes out first (Claude writes it in Claude
-      // mode); the pitch maker is rule-based (no AI, no homepage design) and only feeds the messages; a ready call script
-      // is kept instead of writing a second one.
+      // Only the AI writes (owner, 2026-11-13: "remove rule based default generation from the system completely ...
+      // use only research"): the SWOT (unless one is ready) and the brochure go to Claude, which researches the business
+      // first. The old rule-based pitch and built-in brochure are gone; the CRM gets the brochure when Claude's is ready.
       await runLeadTools(lead.id, { script: !(await tools.latestLeadDoc('script', lead.id)) });
-      await runPitchMaker(lead.id);
       if (auto.auto_approve_brochure) await approveBrochure(lead.id, 'auto');
       else {
-        await setStage(await getLead(lead.id), 'brochure_ready', 'pitch, design & brochure ready for approval');
+        await setStage(await getLead(lead.id), 'brochure_ready', 'SWOT and brochure being written by the AI, approval in the CRM');
         await addTask(lead.id, `Review & approve pitch for ${lead.company}`);
       }
       return true;
@@ -397,48 +395,30 @@ async function runTouch(lead) {
   return false;
 }
 
-// ------------------------------------------------------------- pitch maker
+// ------------------------------------------------------------- AI tools for an interested lead
 
-/** Rule-based pitch for the messages (the in-app AI research, pitch and homepage designer were removed, owner 2026-11-05). */
-export async function runPitchMaker(id) {
-  const s = getSettings();
-  const lead = await getLead(id);
-  const audit = lead.audit_json ? JSON.parse(lead.audit_json) : null;
-  const pitch = fallbackPitch(await getLead(id), audit);
-  const prev = (() => { try { return lead.pitch_json ? JSON.parse(lead.pitch_json) : null; } catch { return null; } })();
-  if (prev?.telecaller_script) pitch.telecaller_script = prev.telecaller_script; // keep the call script the tools made
-  await update('leads', id, { pitch_json: pitch, pitch_source: pitch.source, recommended_package: pitch.recommended_package, updated_at: nowISO() });
-  await logEvent(id, 'pitch_maker', 'pitch', 'ok', `${pitch.source}: ${pitch.headline}`);
-
-  await generateBrochure(id);
-  await addActivity(id, 'system', `Pitch ready (${pitch.source}): ${pitch.headline}`, `Hook: ${pitch.hook}\nPackage: ${pitch.recommended_package}. ${pitch.package_reason}`);
-  await crmEvent(id, 'lead.pitch_ready', { headline: pitch.headline, package: pitch.recommended_package, source: pitch.source });
+/**
+ * A lead that just turned interested: the AI writes its SWOT (unless one is ready) and its brochure, unless a brochure
+ * is already ready or being written. Replaces the rule-based pitch maker and built-in brochure (removed 2026-11-13).
+ */
+export async function armLead(id) {
+  if (await get(`SELECT 1 AS one FROM docs WHERE lead_id = :id AND kind = 'brochure' AND status IN ('ready', 'working')`, { id })) return;
+  await runLeadTools(id, { script: !(await tools.latestLeadDoc('script', id)) });
 }
 
 // ----------------------------------------------------------------- brochure
 
-export async function generateBrochure(id) {
-  const s = getSettings();
-  const lead = await getLead(id);
-  const audit = lead.audit_json ? JSON.parse(lead.audit_json) : null;
-  const pitch = lead.pitch_json ? JSON.parse(lead.pitch_json) : null;
-  const html = buildBrochure(lead, audit, s, pitch);
-  await update('leads', id, { brochure_html: html, brochure_version: (lead.brochure_version || 0) + 1, brochure_status: 'ready', updated_at: nowISO() });
-  await logEvent(id, 'brochure', 'generate', 'ok', `v${(lead.brochure_version || 0) + 1}`);
-}
-
 export async function approveBrochure(id, by = 'admin') {
-  const lead = await getLead(id);
-  if (!lead.brochure_html) await generateBrochure(id);
   await update('leads', id, { brochure_status: 'approved', approved_by: by, approved_at: nowISO() });
   await completeTasks(id, 'Review & approve');
   await setStage(await getLead(id), 'brochure_approved', `approved by ${by}`);
   await logEvent(id, 'brochure', 'approve', 'ok', by);
 }
 
+/** A new brochure written by the AI (the old built-in brochure is gone); the approval starts again. */
 export async function regenerateBrochure(id) {
   const lead = await getLead(id);
-  await generateBrochure(id);
+  await runLeadTools(id, { script: false, force: true });
   if (lead.stage === 'brochure_approved') await setStage(lead, 'brochure_ready', 'regenerated, needs re-approval');
   await update('leads', id, { brochure_status: 'ready', approved_at: null, approved_by: null });
 }
@@ -502,7 +482,7 @@ export async function handleInbound(leadId, channel, text, { subject = null, pro
     if (positive) {
       if (s.automation.auto_send_booking_link) await sendToLead(leadId, 'booking');
       // Arm the sales team: build the pitch if this lead came from a marketing pipe.
-      if (!fresh.pitch_json) background(() => runPitchMaker(leadId).catch((e) => logEvent(leadId, 'pitch_maker', 'run', 'error', e.message)), 'pitch-maker');
+      background(() => armLead(leadId).catch((e) => logEvent(leadId, 'tools', 'arm', 'error', e.message)), 'arm-lead');
     }
   }
   if (a.suggested_reply && !(a.intent === 'interested' && s.automation.auto_send_booking_link && PRE_REPLY.has(fresh.stage))) {
@@ -560,7 +540,7 @@ export async function logCallOutcome(taskId, outcome, { notes = '', callbackAt =
       if (outcome === 'interested' && getSettings().automation.auto_send_booking_link && (fresh.wa_opt_in || fresh.email_opt_in || fresh.last_inbound_at)) {
         await sendToLead(lead.id, 'booking');
       }
-      if (!fresh.pitch_json) background(() => runPitchMaker(lead.id).catch((e) => logEvent(lead.id, 'pitch_maker', 'run', 'error', e.message)), 'pitch-maker');
+      background(() => armLead(lead.id).catch((e) => logEvent(lead.id, 'tools', 'arm', 'error', e.message)), 'arm-lead');
       break;
     case 'callback': {
       const hours = callbackAt ? Math.max(1, (new Date(callbackAt) - Date.now()) / 3600e3) : 24;
@@ -636,6 +616,8 @@ export function buildProposalItems(lead, s = getSettings()) {
 }
 
 export async function createAndSendProposal(leadId, items = null, { docId = null } = {}) {
+  // only a finished proposal document is sent (the built-in proposal write-up was removed, 2026-11-13)
+  if (!docId) throw new Error('A proposal can only be sent from a finished proposal document (Proposal tool)');
   const s = getSettings();
   const lead = await getLead(leadId);
   items = items || buildProposalItems(lead, s);
@@ -643,9 +625,8 @@ export async function createAndSendProposal(leadId, items = null, { docId = null
   const tax = Math.round((subtotal * s.billing.tax_pct) / 100);
   const p = { lead_id: leadId, token: token(), items_json: items, subtotal, tax, total: subtotal + tax, advance_pct: s.billing.advance_pct, status: 'sent', created_at: nowISO() };
   await run(`UPDATE proposals SET status = 'superseded' WHERE lead_id = :leadId AND status = 'sent'`, { leadId });
-  // The designed proposal (Proposal tool) is the document when docId is given; otherwise the built-in AI write-up.
-  // Prices always come from code (the tool's line items or buildProposalItems), never from the AI.
-  const { content, source } = docId ? { content: { executive_summary: 'Designed proposal (Proposal tool)' }, source: 'tool' } : await writeProposal(lead, items);
+  // The proposal document (written by the AI) is what the client gets; prices come from its line items, never the AI.
+  const { content, source } = { content: { executive_summary: 'Designed proposal (Proposal tool)' }, source: 'tool' };
   Object.assign(p, { content_json: content, content_source: source, doc_id: docId });
   p.id = await insert('proposals', p);
   const saved = await get(`SELECT * FROM proposals WHERE id = :id`, { id: p.id });
@@ -780,7 +761,7 @@ export async function moveStage(id, stage) {
   if (CONVERSION_SEQ.has(stage)) Object.assign(extra, { next_action_type: 'message', next_action_at: addDays(nowISO(), getSettings().sequence.follow_up_1_days) });
   if (stage === 'do_not_contact') Object.assign(extra, { do_not_contact: 1, next_action_at: null });
   await setStage(lead, stage, 'moved manually', extra);
-  if (stage === 'proposal_sent' && !await get(`SELECT 1 FROM proposals WHERE lead_id = :id AND status = 'sent'`, { id })) await createAndSendProposal(id);
+  if (stage === 'proposal_sent' && !await get(`SELECT 1 FROM proposals WHERE lead_id = :id AND status = 'sent'`, { id })) await startProposal(id, 'moved to proposal'); // the AI writes it first
   return advance(id);
 }
 
@@ -819,8 +800,8 @@ const countOut = async () => (await get(`SELECT COUNT(*) n FROM messages WHERE d
 
 // ------------------------------------------------- tools in the pipeline
 /** Pitch script + designed brochure for a lead (per settings.automation.auto_tools). Never stalls the lead. */
-export async function runLeadTools(leadId, { script = true, brochure = true } = {}) {
-  const at = getSettings().automation.auto_tools || {};
+export async function runLeadTools(leadId, { script = true, brochure = true, force = false } = {}) {
+  const at = force ? { script: true, brochure: true } : getSettings().automation.auto_tools || {};
   if (script && at.script) {
     try {
       const d = await tools.createDocForLead('script', leadId);
@@ -846,7 +827,6 @@ export async function runLeadTools(leadId, { script = true, brochure = true } = 
  */
 export async function startProposal(leadId, reason = '') {
   const s = getSettings();
-  if (!s.automation.auto_tools?.proposal) return { sent: await createAndSendProposal(leadId) };
   const d = await tools.createDocForLead('proposal', leadId);
   if (tools.waitingForClaude(d)) { // Claude mode: the follow-up below runs when the result comes back (claude-worker.afterReady)
     await logEvent(leadId, 'tools', 'proposal', 'ok', `#${d.id} sent to Claude Code${reason ? ` (${reason})` : ''}`);
@@ -854,7 +834,7 @@ export async function startProposal(leadId, reason = '') {
   }
   if (d.status !== 'ready') {
     await logEvent(leadId, 'tools', 'proposal', 'error', d.error || 'not ready');
-    return { sent: await createAndSendProposal(leadId) }; // never stall the lead
+    return { error: d.error || 'not ready' }; // shown with Try again in the CRM; nothing default is sent
   }
   return proposalDocReady(leadId, d, reason);
 }

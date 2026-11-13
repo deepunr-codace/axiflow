@@ -88,7 +88,7 @@ export async function integrationsStatus() {
       env: envs('SUPABASE_URL', 'SUPABASE_SECRET_KEY', 'SUPABASE_BUCKET', 'BLOB_READ_WRITE_TOKEN'),
     },
     database: { kind: set('DATABASE_URL') ? 'postgres' : 'embedded', env: envs('DATABASE_URL') },
-    ai: { ...(await aiStatus().catch(() => ({}))), env: envs('OPENROUTER_API_KEY', 'ANTHROPIC_API_KEY') },
+    ai: { ...(await aiStatus().catch(() => ({}))), env: envs('ANTHROPIC_API_KEY') },
     channels: { ...channelStatus(s), env: envs('SMTP_HOST', 'SMTP_USER', 'WA_TOKEN', 'WA_PHONE_NUMBER_ID') },
     login: { env: envs('ADMIN_PASSWORD', 'SESSION_SECRET') },
   };

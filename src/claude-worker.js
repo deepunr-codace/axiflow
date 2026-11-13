@@ -19,17 +19,16 @@ const EVENT = 'axiflow-generate';
 /*
  * Engines (owner, 2026-11-05: "BYOK + this claude integration"):
  *  - github:     Claude Code on GitHub Actions with the Claude subscription (the original Claude mode);
- *  - anthropic:  the same job on the owner's own Anthropic API key, run here in the background;
- *  - openrouter: the same job on the owner's OpenRouter key (a Claude model through OpenRouter).
- * All three use the same jobs, post-processing, retries and CRM writes; only who runs the job differs.
+ *  - anthropic:  the same job on the owner's own Anthropic API key, run here in the background.
+ * Both use the same jobs, post-processing, retries and CRM writes; only who runs the job differs. (OpenRouter was a
+ * third engine until 2026-11-13; owner: "remove all free ai from our axiflow(openrouter)".)
  */
 export const ENGINES = {
   github: 'Claude Code on GitHub (Claude subscription)',
   anthropic: 'Claude API (your Anthropic API key)',
-  openrouter: 'OpenRouter (your OpenRouter key)',
 };
 export const engineOf = (s = getSettings()) => (ENGINES[s.claude?.engine] ? s.claude.engine : 'github');
-const API_MODEL = { anthropic: 'claude-opus-5-5', openrouter: 'anthropic/claude-opus-5.5' };
+const API_MODEL = { anthropic: 'claude-opus-5-5' };
 export const engineModel = (s = getSettings(), e = engineOf(s)) => (e === 'github' ? 'Claude Code' : s.claude?.api_model?.[e] || API_MODEL[e]);
 
 /*
@@ -93,7 +92,6 @@ export function claudeMissing() {
 export function missingFor(e, s = getSettings()) {
   const m = [];
   if (e === 'anthropic') { if (!process.env.ANTHROPIC_API_KEY) m.push('the Anthropic API key (AI page → Anthropic API)'); return m; }
-  if (e === 'openrouter') { if (!process.env.OPENROUTER_API_KEY) m.push('the OpenRouter key (AI page → OpenRouter)'); return m; }
   if (!process.env.GITHUB_DISPATCH_TOKEN) m.push('the GitHub access key (AI page → Claude subscription, step 1)');
   if (!process.env.CLAUDE_WORKER_SECRET) m.push('the return key (AI page → Claude subscription, step 3)');
   if (!/^[\w.-]+\/[\w.-]+$/.test(s.claude?.github_repo || '')) m.push('the GitHub repository (AI page → Advanced)');
@@ -113,9 +111,11 @@ async function runOnApi(doc, claude, engine) {
   const started = Date.now();
   const note = '\n\n(You are answering directly: there are no files and no validator. Return only the JSON that matches the schema.)';
   let research = '';
-  if (job.web) {
+  // SWOT jobs never research here (guide 5.4): the research stage ran before, and the backup writes from the same
+  // verified facts and evidence as the main engine, with no tools
+  if (job.web && job.kind !== 'script') {
     try {
-      const tools = engine === 'anthropic' ? [{ type: 'web_search_20260209', name: 'web_search', max_uses: s.ai.web_search_max_uses || 5 }, { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 4 }] : [{ type: 'web_search', name: 'web_search' }];
+      const tools = [{ type: 'web_search_20260209', name: 'web_search', max_uses: s.ai.web_search_max_uses || 5 }, { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 4 }];
       const r = await runText({ purpose: `claude_${job.kind}_research`, leadId: doc.lead_id, force, effort: 'medium', maxTokens: 6000, tools,
         system: 'You research one local business for a digital agency. Report only facts you found, with the page they came from.',
         prompt: `Research this business before we write for it. Find: what it offers (each service, treatment, product or menu), who its customers are, how they enquire, book or buy today, its look and tone, and what is missing online. Short notes, no advice.\n\n${String(job.prompt).slice(0, 6000)}` });
@@ -131,7 +131,8 @@ async function runOnApi(doc, claude, engine) {
   const textMode = job.kind === 'free' || unionCount(job.schema) > 12 || fieldCount(job.schema) > 80;
   if (!textMode) {
     try {
-      return await runJson({ purpose: `claude_${job.kind}`, leadId: doc.lead_id, force, effort: 'medium', maxTokens: 24000, timeoutMs: 270000,
+      // (the designed brochure's pages as HTML need more room: its job asks for 32,000)
+      return await runJson({ purpose: `claude_${job.kind}`, leadId: doc.lead_id, force, effort: 'medium', maxTokens: Math.max(24000, Number(job.maxTokens) || 0), timeoutMs: 270000,
         system: job.system, prompt: `${job.prompt}${research}${note}`, schema: job.schema });
     } catch (e) { if (!SCHEMA_REFUSED.test(e.message)) throw e; }
   }
@@ -303,17 +304,37 @@ export async function acceptResult(body) {
   }
 }
 
+/** The sources a SWOT cites (id → "text (source)"), kept with it so the script page can show them on hover. */
+function withSources(content, sources) {
+  const cited = new Set((content.swot_refs || []).flatMap((r) => r.refs || []));
+  const map = {};
+  for (const f of sources.facts || []) if (cited.has(f.id)) map[f.id] = `${f.text} (${f.source})`;
+  for (const e of sources.evidence || []) if (cited.has(e.id)) map[e.id] = `${e.fact} (${e.source_url})`;
+  return { ...content, sources: map };
+}
 /** The same post-processing as the in-app path, per kind. */
 async function postProcess(doc, output) {
   const { kind, ctx } = { kind: doc.input.claude.job.kind, ctx: doc.input.claude.ctx || {} };
-  if (kind === 'script') return { content: (await import('./ai/script.js')).postScript(output, doc.input, ctx.audit || null), source: 'claude' };
+  if (kind === 'script') {
+    const content = (await import('./ai/script.js')).postScript(output, doc.input, { ids: ctx.ids || null });
+    if (!ctx.sources) return { content, source: 'claude' }; // a job built before the critic existed
+    // Stage 5 (guide 5.5): the critic checks every point against the same sources; unsupported points are dropped,
+    // overstated ones reworded. Then the cited sources are kept with the document for the script page.
+    const checked = await (await import('./ai/critic.js')).checkSwot(content, ctx.sources, { leadId: doc.lead_id });
+    return { content: withSources(checked, ctx.sources), source: 'claude' };
+  }
   if (kind === 'proposal') return { content: (await import('./ai/proposal-doc.js')).postProposal(output, doc.input, doc.items || []), source: 'claude' };
   if (kind === 'brochure') return { content: (await import('./ai/brochure.js')).postBrochure(output, doc.input, doc.input.services || []), source: 'claude' };
   if (kind === 'html') { // the Codeace HTML templates (src/html-docs): the content of the fixed design
     const h = await import('./html-docs/index.js');
     const template = ctx.html || doc.input.claude.job.template;
-    return { content: h.acceptHtml(template, output, doc.input.claude.job), source: 'claude' }; // brochures: fact check kept, copies of the example refused
-
+    const content = h.acceptHtml(template, output, doc.input.claude.job); // the fact check is kept with the content
+    // every text cut to fit its box is logged (brochure fix guide 2026-11-13, section 8), so it shows how often it happens
+    if (content.html.cuts?.length) {
+      const list = content.html.cuts.map((c) => (c.items ? `${c.path} ${c.items}→${c.max} items` : `${c.path} ${c.length}→${c.max}`));
+      await logEvent(doc.lead_id ?? null, 'tools', 'html_cut', 'ok', `doc #${doc.id}: ${list.length} text(s) cut to fit: ${list.join('; ')}`.slice(0, 500));
+    }
+    return { content, source: 'claude' };
   }
   const { materializeStock } = await import('./images.js'); // the stock photos Claude chose: downloaded and saved now
   if (kind === 'free') {
@@ -412,7 +433,10 @@ export async function retryStale({ force = false } = {}) {
     }
     // a whole designed brochure ("Claude designs", kind free) takes longer: the GitHub job may run 25 minutes
     // API engines run inside one server function (Vercel stops it after 5 minutes): retry after 7 minutes
-    const wait = c.engine && c.engine !== 'github' ? 7 * 60000 : c.job?.kind === 'free' ? Math.max(limit, 27 * 60000) : limit;
+    // A GitHub job may run up to the workflow's 35-minute limit: it is never re-sent before then (brochure fix guide
+    // 2026-11-13, B13: with the 12-minute setting a slow but working run was sent to the paid backup as well); the
+    // limit went to 35 for the designed brochure's several calls, so every GitHub job waits the whole limit plus two minutes
+    const wait = c.engine && c.engine !== 'github' ? 7 * 60000 : Math.max(limit, 37 * 60000);
     const late = Date.now() - new Date(c.dispatched_at).getTime() > wait;
     if (!late && !c.last_error) continue; // still within its time and the dispatch worked
     if (c.last_error && !late && Date.now() - new Date(c.dispatched_at).getTime() < 120000) continue; // a failed dispatch: wait 2 min before trying again

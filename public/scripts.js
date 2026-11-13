@@ -168,6 +168,32 @@ function swotPlain(c, company) {
   return out.join('\n\n');
 }
 
+/** The sources of each point (SWOT guide 5.6: "a small 'V3, E7' tag"; hover = the fact itself). */
+function swotRefs(c, k) {
+  const refs = (c.swot_refs || []).filter((r) => r.quadrant === k);
+  if (!refs.length) return '';
+  const tag = (id) => `<span class="tag sw-id" title="${H.esc(`${id}: ${c.sources?.[id] || 'source'}`)}">${H.esc(id)}</span>`;
+  return `<div class="sw-refs small">${(c.swot[k] || []).map((text) => {
+    const r = refs.find((x) => x.text === text);
+    return `<div class="sw-ref"><span class="sw-txt muted">${H.esc(text.length > 70 ? text.slice(0, 68) + '…' : text)}</span>${r ? (r.basis === 'market' ? '<span class="tag sw-id" title="General market knowledge, not a fact about this business">market</span>' : r.refs.map(tag).join('')) : '<span class="muted">edited by hand</span>'}</div>`;
+  }).join('')}</div>`;
+}
+/** What the critic did (guide 5.5) and what could not be verified. */
+function swotReview(c) {
+  const chk = c.swot_check, conf = c.swot?.to_confirm || [];
+  if (!chk && !conf.length) return '';
+  const rows = [];
+  if (chk?.status === 'checked') {
+    rows.push(`<p class="small sw-note">${I('fact_check')}Checked against the sources: ${chk.removed?.length || 0} point(s) removed, ${chk.changed?.length || 0} reworded.</p>`);
+    for (const r of chk.removed || []) rows.push(`<div class="small sw-chk"><span class="tag">removed</span> ${H.esc(r.text)}</div>`);
+    for (const r of chk.changed || []) rows.push(`<div class="small sw-chk"><span class="tag">reworded</span> <s class="muted">${H.esc(r.from)}</s> → ${H.esc(r.to)}</div>`);
+  } else if (chk?.status === 'not_checked') rows.push(`<p class="small sw-note">${I('warning')}Not checked against the sources (${H.esc(chk.reason || 'the check could not run')}). Read it carefully before approving.</p>`);
+  if (conf.length) rows.push(`<p class="small" style="margin-top:8px"><b>To confirm</b> (could not be verified):</p><ul class="small">${conf.map((x) => `<li>${H.esc(x)}</li>`).join('')}</ul>`);
+  return `<div class="card"><h2>${I('verified')}Review</h2>${rows.join('')}</div>`;
+}
+const approveArea = (d) => (!d.lead_id || d.status !== 'ready' ? ''
+  : d.approved_at ? `<span class="tag" title="Only an approved SWOT is used for the brochure and proposal">${I('check_circle')}Approved${d.approved_by ? ` by ${H.esc(d.approved_by)}` : ''}</span>`
+  : `<button class="btn" id="scApprove" title="Only an approved SWOT is used for the brochure and proposal">${I('check_circle')}Approve SWOT</button>`);
 function renderSwot(id, d, c, meta) {
   H.view.innerHTML = `
   <p><a class="back-link" href="#/script">${I('arrow_back')}All scripts</a></p>
@@ -175,6 +201,7 @@ function renderSwot(id, d, c, meta) {
     <div class="grow"><h2 style="margin:0;font-size:24px">SWOT: ${H.esc(d.title)}</h2>
       <div class="small muted" style="margin-top:4px">${meta}${d.input.website ? ` · <a href="${H.esc(d.input.website)}" target="_blank" rel="noopener">${H.esc(d.input.website.replace(/^https?:\/\//, ''))}${I('open_in_new')}</a>` : ''}</div></div>
     <span class="tag${d.source === 'claude' ? ' claude' : ''}">${d.source === 'claude' ? 'Written by Claude' : 'From the website check'}</span><span class="small muted" id="scStatus">Saved</span>
+    <span id="scApproveBox">${approveArea(d)}</span>
     <button class="btn" id="scCopy">${I('content_copy')}Copy</button>
     <a class="btn" href="/api/tools/docs/${id}/pdf?download=1">${I('download')}PDF</a>
     ${d.lead_id ? `<button class="btn primary" id="scUse" title="Saves it on the lead; the CRM gets the pitch point and the SWOT note with the next sync">${I('send')}Send to the CRM</button>` : ''}
@@ -186,7 +213,8 @@ function renderSwot(id, d, c, meta) {
   <form id="scForm" class="sc-form">
     <div class="card sc-point"><label>Pitch point (for the CRM)<input name="pitch_point" value="${H.esc(c.pitch_point || '')}"></label></div>
     <div class="card"><h2>${I('summarize')}Summary</h2><textarea name="summary" rows="3">${H.esc(c.swot.summary || '')}</textarea></div>
-    <div class="grid g2">${QUADS.map(([k, label, icon]) => `<div class="card sw-q sw-${k}"><h2>${I(icon)}${label}</h2><p class="small muted">One point per line.</p><textarea name="${k}" rows="5">${H.esc((c.swot[k] || []).join('\n'))}</textarea></div>`).join('')}</div>
+    <div class="grid g2">${QUADS.map(([k, label, icon]) => `<div class="card sw-q sw-${k}"><h2>${I(icon)}${label}</h2><p class="small muted">One point per line.</p><textarea name="${k}" rows="5">${H.esc((c.swot[k] || []).join('\n'))}</textarea>${swotRefs(c, k)}</div>`).join('')}</div>
+    ${swotReview(c)}
     <div class="card"><h2>${I('build')}How we solve it</h2><p class="small muted">Website development, SEO, AEO (answers in Google AI Overviews and voice search), GEO (recommended by ChatGPT, Gemini, Perplexity) and automation.</p>
       <div class="sc-list" id="swSol">${(c.solutions || []).map(solRow).join('')}</div>
       <button type="button" class="btn sm" id="swAdd">${I('add')}Add</button></div>
@@ -203,7 +231,7 @@ function renderSwot(id, d, c, meta) {
     clearTimeout(saveTimer);
     H.$('#scStatus').textContent = 'Saving…';
     saveTimer = setTimeout(async () => {
-      try { await H.api(`/tools/docs/${id}`, { method: 'PUT', body: { content: read() } }); H.$('#scStatus').textContent = 'Saved'; } catch (e) { H.$('#scStatus').textContent = 'Not saved'; H.toast(e.message, true); }
+      try { await H.api(`/tools/docs/${id}`, { method: 'PUT', body: { content: read() } }); H.$('#scStatus').textContent = 'Saved'; if (d.approved_at) { d.approved_at = null; d.approved_by = null; H.$('#scApproveBox').innerHTML = approveArea(d); bindApprove(); H.toast('Edited: approve the SWOT again'); } } catch (e) { H.$('#scStatus').textContent = 'Not saved'; H.toast(e.message, true); }
     }, 700);
   };
   f.addEventListener('input', save);
@@ -216,6 +244,8 @@ function renderSwot(id, d, c, meta) {
   H.$('#scCopy').onclick = async () => {
     try { await navigator.clipboard.writeText(swotPlain(read(), d.title)); H.toast('SWOT copied'); } catch { H.toast('Copy is blocked in this browser', true); }
   };
+  const bindApprove = () => { const b = H.$('#scApprove'); if (b) b.onclick = () => H.busy(b, async () => { clearTimeout(saveTimer); const r = await H.api(`/tools/docs/${id}/approve`, { body: {} }); Object.assign(d, { approved_at: r.approved_at, approved_by: r.approved_by }); H.$('#scApproveBox').innerHTML = approveArea(d); H.toast('SWOT approved: the brochure and proposal will use it'); }); };
+  bindApprove();
   if (H.$('#scUse')) H.$('#scUse').onclick = (e) => H.busy(e.target, async () => { clearTimeout(saveTimer); await H.api(`/tools/docs/${id}`, { method: 'PUT', body: { content: read() } }); await H.api(`/tools/docs/${id}/use-for-lead`, { body: {} }); H.toast('Saved on the lead; the CRM gets it with the next sync'); });
   H.$$('.dd [data-act]').forEach((b) => (b.onclick = () => H.busy(b, async () => {
     if (b.dataset.act === 'regen') { if (!confirm('Write the SWOT again? Your edits will be replaced.')) return; await H.api(`/tools/docs/${id}/regenerate`, { body: {} }); renderScript(id); }

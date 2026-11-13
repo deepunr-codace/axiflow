@@ -8,9 +8,9 @@ import * as cw from './claude-worker.js';
  * adding, fallback options… user friendly"). One read of everything the page shows, in plain terms, and one save
  * that maps the page's choices onto the existing settings:
  *   - AI writing on/off            → claude.mode
- *   - main AI per document job     → claude.engines[tool]   (github | anthropic | openrouter)
+ *   - main AI per document job     → claude.engines[tool]   (github | anthropic)
  *   - backup per document job      → claude.fallbacks[tool] (an engine or 'none'; see backupSetting in claude-worker)
- *   - editor assistant main/backup → ai.enabled + ai.provider, ai.backup_provider
+ *   - editor assistant             → ai.enabled (the Anthropic API key; OpenRouter was removed on 2026-11-13)
  *   - web research, spend limit, models, retries → claude.* / ai.*
  * Keys are saved with the existing /api/keys routes; nothing here ever returns a key.
  */
@@ -19,8 +19,8 @@ export const JOBS = [
   { id: 'brochure', label: 'Brochures', detail: 'When a lead is marked Interested' },
   { id: 'proposal', label: 'Proposals', detail: 'When a deal reaches the proposal stage' },
 ];
-const ACCOUNTS = ['github', 'anthropic', 'openrouter'];
-const KEY_OF = { anthropic: 'ANTHROPIC_API_KEY', openrouter: 'OPENROUTER_API_KEY' };
+const ACCOUNTS = ['github', 'anthropic'];
+const KEY_OF = { anthropic: 'ANTHROPIC_API_KEY' };
 
 const firstOfMonth = () => { const d = new Date(); return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString(); };
 
@@ -43,9 +43,8 @@ export async function aiSetupStatus() {
     if (backup !== 'none' && backup !== main) usedFor[backup].push(`${j.label} (backup)`);
     return { ...j, main, backup: backup === main ? 'none' : backup };
   });
-  const assistant = { main: s.ai.enabled ? aiProvider(s) : 'off', backup: ['anthropic', 'openrouter'].includes(s.ai.backup_provider) ? s.ai.backup_provider : 'none' };
-  if (assistant.main !== 'off') usedFor[assistant.main].push('Editor assistant (main)');
-  if (assistant.backup !== 'none' && assistant.backup !== assistant.main && assistant.main !== 'off') usedFor[assistant.backup].push('Editor assistant (backup)');
+  const assistant = { main: s.ai.enabled ? aiProvider(s) : 'off', backup: 'none' };
+  if (assistant.main !== 'off') usedFor[assistant.main].push('Editor assistant');
   const docs = await all(`SELECT id, kind, title, status, error, input_json, updated_at FROM docs WHERE input_json LIKE '%"claude":%' ORDER BY id DESC LIMIT 8`).catch(() => []);
   const recent = docs.map((d) => {
     let c = {};
@@ -69,26 +68,23 @@ export async function aiSetupStatus() {
         https: /^https:/.test(BASE_URL),
       },
       anthropic: { ready: ready.anthropic, used_for: usedFor.anthropic, key: keys.ANTHROPIC_API_KEY || null, model: s.claude?.api_model?.anthropic || 'claude-opus-5-5' },
-      openrouter: { ready: ready.openrouter, used_for: usedFor.openrouter, key: keys.OPENROUTER_API_KEY || null, model: s.claude?.api_model?.openrouter || 'anthropic/claude-opus-5.5' },
     },
     spend: { today: ai.spent_today_usd, limit: s.ai.daily_budget_usd, month: Number(month.toFixed(2)) },
     recent,
     options: {
-      web_research: s.claude?.web_research !== false,
+      web_research: true,
       timeout_minutes: s.claude?.timeout_minutes || 12,
       max_attempts: s.claude?.max_attempts || 3,
       github_repo: s.claude?.github_repo || '',
       models: {
         anthropic_docs: s.claude?.api_model?.anthropic || 'claude-opus-5-5',
-        openrouter_docs: s.claude?.api_model?.openrouter || 'anthropic/claude-opus-5.5',
         anthropic_chat: s.ai.model || 'claude-opus-5-5',
-        openrouter_chat: s.ai.openrouter_model || '',
       },
     },
   };
 }
 
-const ENGINE_NAME = { github: 'the Claude subscription', anthropic: 'the Anthropic API key', openrouter: 'the OpenRouter key' };
+const ENGINE_NAME = { github: 'the Claude subscription', anthropic: 'the Anthropic API key' };
 const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
 
 /** Saves the page's choices. Refuses a state that would stop documents being written. */
@@ -110,19 +106,16 @@ export async function saveAiSetup(body = {}) {
     }
   }
   if (body.assistant) {
-    const { main, backup } = body.assistant;
+    const { main } = body.assistant;
     if (main !== undefined) {
-      if (!['off', 'anthropic', 'openrouter'].includes(main)) throw bad('Unknown AI for the editor assistant');
+      if (!['off', 'anthropic'].includes(main)) throw bad('Unknown AI for the editor assistant');
       if (main !== 'off' && !process.env[KEY_OF[main]]) throw bad(`Add ${ENGINE_NAME[main]} first (Your AI accounts, below)`);
       patch.ai.enabled = main !== 'off';
       if (main !== 'off') patch.ai.provider = main;
     }
-    if (backup !== undefined) {
-      if (!['none', 'anthropic', 'openrouter'].includes(backup)) throw bad('Unknown backup for the editor assistant');
-      patch.ai.backup_provider = backup === 'none' ? '' : backup;
-    }
+    patch.ai.backup_provider = ''; // one provider: no backup for the assistant
   }
-  if (body.web_research !== undefined) patch.claude.web_research = !!body.web_research;
+  // web research is always on (owner, 2026-11-13: "use only research"): the old switch is ignored
   if (body.limit !== undefined) {
     const n = Number(body.limit);
     if (!Number.isFinite(n) || n < 0 || n > 1000) throw bad('The daily limit must be between $0 and $1000');
@@ -135,9 +128,7 @@ export async function saveAiSetup(body = {}) {
   if (o.models) {
     const m = o.models, clean = (v) => String(v || '').trim().slice(0, 120);
     if (m.anthropic_docs !== undefined && clean(m.anthropic_docs)) (patch.claude.api_model ??= {}).anthropic = clean(m.anthropic_docs);
-    if (m.openrouter_docs !== undefined && clean(m.openrouter_docs)) (patch.claude.api_model ??= {}).openrouter = clean(m.openrouter_docs);
     if (m.anthropic_chat !== undefined && clean(m.anthropic_chat)) patch.ai.model = clean(m.anthropic_chat);
-    if (m.openrouter_chat !== undefined) patch.ai.openrouter_model = clean(m.openrouter_chat);
   }
   if (body.mode !== undefined) patch.claude.mode = !!body.mode;
 

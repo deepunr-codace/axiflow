@@ -20,7 +20,6 @@ CREATE TABLE IF NOT EXISTS app_keys (
 /** The keys that may be set here, grouped for the Integrations page. gen = AxiFlow can generate a random secret. */
 export const KEY_DEFS = [
   { name: 'ANTHROPIC_API_KEY', group: 'claude', label: 'Anthropic API key', hint: 'console.anthropic.com → API keys. Lets Claude write the tools on your API key (engine "Claude API"), and powers the editor assistant.', prefix: 'sk-ant-' },
-  { name: 'OPENROUTER_API_KEY', group: 'claude', label: 'OpenRouter API key', hint: 'openrouter.ai → Keys. Claude through OpenRouter (engine "OpenRouter"), or any OpenRouter model for the editor assistant.', prefix: 'sk-or-' },
   { name: 'GITHUB_DISPATCH_TOKEN', group: 'github', label: 'GitHub token', hint: 'Fine-grained token for this repo: Contents read and write (starts the workflow). Add Secrets read and write to let AxiFlow save the repo secrets for you.', prefix: 'github_pat_' },
   { name: 'CLAUDE_WORKER_SECRET', group: 'github', label: 'Callback secret', hint: 'Shared with the GitHub repo secret AXIFLOW_CALLBACK_SECRET. Generate one, then save it to GitHub.', gen: true, github: 'AXIFLOW_CALLBACK_SECRET' },
   { name: 'PEXELS_API_KEY', group: 'images', label: 'Pexels API key', hint: 'pexels.com/api → Your API key (free). Photos that fit each lead\'s vertical; free for commercial use, no credit needed.' },
@@ -168,13 +167,6 @@ export async function testAiKey(provider) {
       const r = await fetch('https://api.anthropic.com/v1/models?limit=1', { headers: { 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' }, signal: AbortSignal.timeout(10000) });
       if (!r.ok) throw new Error(r.status === 401 ? 'Anthropic says the key is invalid' : `Anthropic answered ${r.status}`);
       return { ok: true, detail: 'Anthropic accepted the key', ms: Date.now() - t0 };
-    }
-    if (provider === 'openrouter') {
-      if (!process.env.OPENROUTER_API_KEY) throw new Error('Not set');
-      const r = await fetch('https://openrouter.ai/api/v1/key', { headers: { authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` }, signal: AbortSignal.timeout(10000) });
-      if (!r.ok) throw new Error(r.status === 401 ? 'OpenRouter says the key is invalid' : `OpenRouter answered ${r.status}`);
-      const j = (await r.json()).data || {};
-      return { ok: true, detail: `OpenRouter accepted the key${j.limit_remaining != null ? ` · credit left $${Number(j.limit_remaining).toFixed(2)}` : ''}${j.is_free_tier ? ' · free tier (no credits)' : ''}`, ms: Date.now() - t0 };
     }
     if (provider === 'stock') { const r = await (await import('./images.js')).testStock(); return { ...r, ms: Date.now() - t0 }; }
     throw new Error('Unknown provider');

@@ -11,7 +11,9 @@ export { checkSchema };
 export async function validate() {
   let result;
   try { result = JSON.parse(fs.readFileSync(new URL('out/result.json', dir), 'utf8')); } catch (e) { return [`out/result.json is missing or not valid JSON (${e.message})`]; }
-  const problems = checkSchema(result, job.schema);
+  // the designed brochure's answer also carries the runner's own checks (claims check, review, layout): not in the schema
+  const { check: _runnerCheck, ...answer } = job.purpose === 'brochure_designed' && result && typeof result === 'object' ? result : { check: null, ...result };
+  const problems = checkSchema(job.purpose === 'brochure_designed' ? answer : result, job.schema);
   if (!problems.length && job.kind === 'deck') {
     const core = await import('../src/ai/brochure-deck-core.js');
     try {
@@ -21,17 +23,12 @@ export async function validate() {
     } catch (e) { problems.push(e.message); }
   }
   if (!problems.length && job.kind === 'free') problems.push(...checkSlides(result));
-  // HTML brochures: words particular to the reference example must not appear unless they are true for this business
-  // (in the lead data, or confirmed with a URL in verification.facts); same rule as AxiFlow's exampleLeaks()
-  if (job.kind === 'html' && Array.isArray(job.example_terms)) {
-    const lead = [...String(job.prompt || '').matchAll(/<(lead|crm_and_notes|research|website_check|swot)\b[^>]*>([\s\S]*?)<\/\1>/g)].map((m) => m[2]).join('\n').toLowerCase(); // the lead's own sections
-    const text = JSON.stringify({ ...result, verification: undefined, strategy: undefined, review: undefined }).toLowerCase();
-    const confirmed = JSON.stringify((result?.verification?.facts || []).filter((f) => f.status === 'confirmed' && /^https?:\/\//.test(f.source || ''))).toLowerCase();
-    const leaks = job.example_terms.filter((t) => { const w = t.toLowerCase(); return new RegExp(`\\b${w}\\b`).test(text) && !lead.includes(w) && !confirmed.includes(w); });
-    if (leaks.length) problems.push(`copied from the reference example: ${leaks.join(', ')}. Write about this business only, or confirm the fact with a URL in verification.facts`);
-  }
+  // (the copy guard for the Nirapara example was removed with the example itself: brochure fix guide 2026-11-13)
   return problems;
 }
+/** Problems that do not block an answer (AxiFlow fits the text; soft fields): shared by post.mjs and repair-prompt.mjs. */
+export const SOFT = /characters; keep it to|removed by the truth checks|Give exactly|lines or fewer|^layout:|\.(fonts|font_pairing|strategy|review|gaps|verification)(\.|:)/;
+export const hardProblems = (problems) => problems.filter((p) => !SOFT.test(p));
 
 // "Claude designs" brochures: a rough, dependency-free layout check (AxiFlow measures exactly and shrinks text that
 // still runs off). Width per character ≈ 0.55 em; these problems are warnings ("layout:"), post.mjs still sends them.

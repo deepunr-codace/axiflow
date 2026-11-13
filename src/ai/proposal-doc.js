@@ -90,13 +90,13 @@ Follow this structure and tone (a real example from our agency): ${JSON.stringif
 }
 /** The answer merged over the standard proposal, keeping only the schema's fields. */
 export function postProposal(content, input, items) {
-  const base = templateProposal(input, items);
+  // no part of the proposal is filled in from the standard text (owner, 2026-11-13: no default content at any cost)
+  const empty = (v) => v == null || v === '' || (Array.isArray(v) && !v.length);
+  const missing = Object.keys(SCHEMA.properties || {}).filter((k) => empty(content?.[k]));
+  if (missing.length) throw new Error(`the proposal answer was incomplete (${missing.join(', ')})`);
+  const base = templateProposal(input, items); // only its non-AI parts remain (the answer covers every schema field)
   const keep = Object.fromEntries(Object.entries(content || {}).filter(([k, v]) => k in base && v != null && v !== ''));
   const fonts = PAIRINGS[content?.font_pairing] ? { font_pairing: content.font_pairing } : {}; // the typefaces Claude chose
   return { ...base, ...keep, ...fonts };
 }
 
-/** Without Claude: the standard proposal for the package (the in-app AI writer was removed, owner 2026-11-05). */
-export async function writeProposalDoc(input, items, research = null) {
-  return { content: templateProposal(input, items), source: 'template' };
-}

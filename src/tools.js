@@ -1,34 +1,41 @@
 import { addColumns, get, all, insert, update, run } from './db.js';
 import { isWebsiteType, websiteTypeFor, websiteTypeSection, websiteTypeLabel } from './website-type.js';
 import { background } from './background.js';
-import { writeScript, scriptJob, VERTICALS, LANGUAGES, SERVICES, swotText } from './ai/script.js';
+import { scriptJob, VERTICALS, LANGUAGES, SERVICES, swotText } from './ai/script.js';
 import { scriptPdf } from './pdf/script.js';
-import { auditWebsite } from './pipeline/enrich.js';
+import { collectFacts, saveFacts, WEBSITE_CHECK_RULE } from './pipeline/enrich.js';
 import { addActivity } from './pipeline/log.js';
 import { crmEvent } from './crm-sync.js';
 import { getSettings } from './settings.js';
 import { nowISO, token, normalizeUrl, BASE_URL } from './util.js';
-import { writeBrochure, brochureVars, templateBrochure } from './ai/brochure.js';
-import { writeProposalDoc, proposalJob, templateProposal } from './ai/proposal-doc.js';
+import { brochureVars, templateBrochure } from './ai/brochure.js';
+import { proposalJob, templateProposal } from './ai/proposal-doc.js';
 import { chatEdit } from './ai/design-ai.js';
 import { brochureDesign, proposalDesign } from './design/layouts.js';
 import { classicDesign } from './design/deck.js';
 import { editorialDesign } from './design/editorial.js';
 import { signatureDesign, isSignature, signatureStyle } from './design/signature.js';
+import { growthDesign } from './design/growth.js';
 import { contentToData } from './design/brochure-data.js';
 import { buildBrief, deckJob } from './ai/brochure-deck.js';
 import { claudeOn, claudeBroken, dispatchJob, claudeState } from './claude-worker.js';
 import { claudeScriptJob, claudeProposalJob } from './ai/claude-jobs.js';
+import { decideOffer } from './brochure/offer.js';
+import { buildBrief as buildLeadBrief } from './brochure/brief.js';
+import { designedJob } from './brochure/writer.js';
 
 /**
  * Built-in brochure layouts by template source: 'builtin-deck' = Codeace Growth Deck (classic design),
  * 'builtin-editorial' = Codeace Editorial (owner's template package, 2026-11-05), else the classic 12-page layout.
  */
-const DECK_DESIGNS = { 'builtin-deck': 'classic', 'builtin-editorial': 'editorial', 'builtin-claude': 'editorial', 'builtin-signature-precision': 'signature-precision', 'builtin-signature-mono': 'signature-mono', 'builtin-signature-bold': 'signature-bold', 'builtin-signature-commerce': 'signature-commerce' }; // "Claude designs" without Claude = Editorial
+const DECK_DESIGNS = { 'builtin-deck': 'classic', 'builtin-editorial': 'editorial', 'builtin-claude': 'editorial', 'builtin-signature-precision': 'signature-precision', 'builtin-signature-mono': 'signature-mono', 'builtin-signature-bold': 'signature-bold', 'builtin-signature-commerce': 'signature-commerce', 'builtin-growth': 'growth' }; // "Claude designs" without Claude = Editorial
 const deckOf = (tpl) => DECK_DESIGNS[tpl?.source] || null;
-const drawDeck = (design, data) => (isSignature(design) ? signatureDesign(data, signatureStyle(design)) : design === 'editorial' ? editorialDesign(data) : classicDesign(data));
-/** The Signature look for each website type chosen in the CRM (used when no template is set for the type). */
-const TYPE_TEMPLATES = { 'business-website': 'builtin-signature-precision', 'ecommerce-store': 'builtin-signature-bold', 'shopify-store': 'builtin-signature-commerce', 'landing-page': 'builtin-signature-mono' };
+const drawDeck = (design, data) => (isSignature(design) ? signatureDesign(data, signatureStyle(design)) : design === 'growth' ? growthDesign(data) : design === 'editorial' ? editorialDesign(data) : classicDesign(data));
+/**
+ * The look for each website type chosen in the CRM (used when no template is set for the type). Business website =
+ * Codeace Business Website (owner, 2026-11-10: "new default template for business website plan"), the others Signature.
+ */
+const TYPE_TEMPLATES = { 'business-website': 'builtin-growth', 'ecommerce-store': 'builtin-signature-bold', 'shopify-store': 'builtin-signature-commerce', 'landing-page': 'builtin-signature-mono' };
 // fonts.brochure: a fixed pairing wins, "template" keeps the design's fonts, "auto" uses the one Claude chose (theme.fonts)
 const withPairing = (data, s) => ({ ...data, theme: { ...(data.theme || {}), fonts: resolvePairing(s.fonts?.brochure, data.theme?.fonts) } });
 const brochureLayout = (tpl, content, s, company) => {
@@ -39,9 +46,10 @@ const brochureLayout = (tpl, content, s, company) => {
 };
 /** Deck brochures without Claude: the agency copy mapped onto the deck data contract (no AI). */
 async function writeDeck(doc, design, research, s) {
-  const w = await writeBrochure(doc.input, doc.input.services, research);
+  // no rule-based brochure copy any more (owner, 2026-11-13): generate() never calls this; it stops if anything does
+  throw new Error('Rule-based brochures were removed: the AI writes every brochure');
   const data = contentToData(w.content, s, { company: doc.input.company, design });
-  if (isSignature(design)) {
+  if (isSignature(design) || design === 'growth') {
     // the lead's SWOT weaknesses become the "where you lose customers today" slide
     const sw = await leadSwot(doc.lead_id);
     const items = (sw?.swot?.weaknesses || []).slice(0, 4).map((x) => {
@@ -51,12 +59,33 @@ async function writeDeck(doc, design, research, s) {
     if (items.length) data.gaps = { heading: `Where ${doc.input.company} loses customers today`, note: 'From our check of your website and online presence.', items };
     data.cover.tag = websiteTypeLabel(doc.input.website_type) ? `${websiteTypeLabel(doc.input.website_type)} plan` : data.cover.tag;
   }
+  if (design === 'growth') {
+    // the sample cover photo is a salon stylist: keep it for salons, else the layout shows the website mockup
+    const salon = /salon|beauty|spa\b|hair|groom|makeup|bridal/i.test(`${doc.input.industry} ${doc.input.vertical} ${doc.input.company}`);
+    if (!salon && /stylist/.test(data.cover.heroImage?.src || '')) data.cover.heroImage = undefined;
+    if (w.content.about?.[1] && data.about) data.about.more = w.content.about[1];
+  }
   return { content: { ...w.content, deck: { design, data } }, source: w.source };
 }
 /** The lead's SWOT (its latest ready call-script document): the evidence for the brochure's gaps slide. */
+/**
+ * The verified facts for the brochure and proposal (SWOT guide 5.6: "pass the verified facts to those generators too,
+ * so their own fact check has the same ground truth"). The same lines the SWOT writer and critic read.
+ */
+function factsSection(facts) {
+  if (!facts?.length) return '';
+  const lines = facts.map((f) => `${f.id}. ${f.kind && f.kind !== 'seen' ? `(${f.kind === 'not_checked' ? 'not checked' : f.kind}) ` : ''}${f.text} (${f.source})`).join('\n');
+  return `<verified_facts>
+Checked by AxiFlow's own code from the website and the CRM. These are confirmed: never contradict them. A fact you take
+from here counts as confirmed in your fact check (give its id, e.g. V3, as the source). A "(not checked)" line means that
+page could not be read: it is not evidence that something is missing.
+${lines}
+</verified_facts>`;
+}
 async function leadSwot(leadId) {
   if (!leadId) return null;
-  const row = await get(`SELECT content_json FROM docs WHERE lead_id = :id AND kind = 'script' AND status = 'ready' ORDER BY id DESC LIMIT 1`, { id: leadId }).catch(() => null);
+  // only an approved SWOT (guide 5.6): the newest one a person approved; none approved = the brochure goes without one
+  const row = await get(`SELECT content_json FROM docs WHERE lead_id = :id AND kind = 'script' AND status = 'ready' AND approved_at IS NOT NULL ORDER BY id DESC LIMIT 1`, { id: leadId }).catch(() => null);
   let c = row?.content_json;
   if (typeof c === 'string') { try { c = JSON.parse(c); } catch { c = null; } }
   return c?.swot ? { swot: c.swot, solutions: Array.isArray(c.solutions) ? c.solutions : [] } : null;
@@ -83,6 +112,14 @@ This brochure is laid out in the Codeace Signature design ("${signatureStyle(des
 - gaps: 3–4 concrete places where this client loses customers today. Each must be backed by the brief (website check, <swot>, CRM notes or your research); no invented figures. title = the gap in a few plain words, text = one sentence on what it costs them.
 - cover.tag: the package in 2–4 words${websiteTypeLabel(websiteType) ? ` ("${websiteTypeLabel(websiteType)} plan")` : ''}. about.tags: the agency's service lines (at most 5). cover.chips: the services in this brochure.
 - Headlines are set large in one sans-serif face: keep them short and concrete.
+</design_system>` : design === 'growth' ? `<design_system>
+This brochure is laid out in the Codeace Business Website design: light lavender grid paper, Codeace blue, bold Inter headlines, white rounded cards and photo cards (your theme is ignored).
+- Slides: cover → about → insight (only with verified figures) → gaps → how we help (one card per service) → one slide per service (text, 4 benefit cards, a photo card) → why us (team photo + 4 figures) → call to action → thank you.
+- cover.title: either "Digital Growth Solutions" (the layout adds "for <client>" with the client's name in blue) or one short sentence of at most 8 words about the client's outcome, with cover.highlight = 1–3 of its words. cover.tag: the package in 2–4 words${websiteTypeLabel(websiteType) ? ` ("${websiteTypeLabel(websiteType)} plan")` : ''}. cover.chips: the services in this brochure (1–2 words each).
+- cover.heroImage: a stock photo in the brief that clearly shows this kind of business, a person or the owner's trade; the sample stylist only for a salon or beauty business; else null (the layout then shows a website mockup).
+- Service images: a stock photo that fits the service and this business, else the matching sample (web-mockup, robot, erp-laptop, seo-report, phone-instagram), else null. Service names stay short (they sit on small cards); slideTitle may be longer (one line of about 26 characters).
+- gaps: 3–4 concrete places where this client loses customers today. Each must be backed by the brief (website check, <swot>, CRM notes or your research); no invented figures. title = the gap in a few plain words, text = one sentence on what it costs them.
+- about.heading and whyUs.heading: at most 30 characters (longer ones become "About Us" / "Why Choose Us"). Stat values: at most 8 characters.
 </design_system>` : '');
 import { renderDesignPdf } from './design/render-pdf.js';
 import { cleanDesign, cloneDesign, fillTokens } from './design/model.js';
@@ -100,6 +137,9 @@ import { resolvePairing } from './design/fonts.js';
  * plus (proposals) the price line items. The editor, the AI assistant and the PDF all use the design.
  */
 addColumns('docs', { design_json: 'TEXT', template_id: 'INTEGER', chat_json: 'TEXT' });
+// SWOT approval (SWOT guide 5.6, 2026-11-13): a person approves the SWOT in the CRM (or AxiFlow); only approved SWOTs feed
+// the brochure and proposal. A hand edit after approval clears it.
+addColumns('docs', { approved_at: 'TEXT', approved_by: 'TEXT' });
 addColumns('leads', { strategy_json: 'TEXT' }); // the lead's agreed pitch strategy (src/ai/strategy.js), shared by all three tools
 
 const parse = (j, fb = null) => { try { return j ? JSON.parse(j) : fb; } catch { return fb; } };
@@ -123,7 +163,8 @@ function cleanInput(raw) {
 export async function listDocs(kind) {
   const rows = await all(`SELECT d.id, d.kind, d.token, d.title, d.status, d.source, d.error, d.template_id, d.created_at, d.updated_at, d.lead_id,
       d.input_json, d.items_json, l.company, l.city, l.contact_name, l.crm_brochure_state, l.crm_proposal_state, t.name AS template_name,
-      (d.id = (SELECT MAX(d2.id) FROM docs d2 WHERE d2.kind = d.kind AND d2.lead_id = d.lead_id AND d2.status = 'ready')) AS current
+      (d.id = (SELECT MAX(d2.id) FROM docs d2 WHERE d2.kind = d.kind AND d2.lead_id = d.lead_id AND d2.status = 'ready')) AS current,
+      (d.kind = 'brochure' AND d.content_json LIKE '%"needs_look":true%') AS needs_look
     FROM docs d JOIN leads l ON l.id = d.lead_id AND l.crm_removed_at IS NULL LEFT JOIN design_templates t ON t.id = d.template_id
     WHERE d.kind = :kind ORDER BY d.id DESC LIMIT 200`, { kind });
   const s = getSettings();
@@ -131,7 +172,7 @@ export async function listDocs(kind) {
     const input = parseJson(input_json) || {};
     const items = parseJson(items_json) || [];
     return {
-      ...r, current: !!r.current && r.status === 'ready',
+      ...r, current: !!r.current && r.status === 'ready', needs_look: !!r.needs_look && r.status === 'ready', // a designed brochure held back for a look
       made: input.auto === true ? 'auto' : input.auto === false ? 'hand' : '',
       claude: claudeState(input),
       crm_state: kind === 'brochure' ? crm_brochure_state || '' : kind === 'proposal' ? crm_proposal_state || '' : '',
@@ -153,8 +194,10 @@ export async function getDoc(id) {
 export async function leadPrefill(leadId) {
   const l = await get(`SELECT * FROM leads WHERE id = :leadId`, { leadId });
   if (!l) return null;
+  // a CRM contact named after the business is not a person: send "unknown" instead (SWOT guide 2026-11-13, input bugs)
+  const same = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
   return {
-    lead_id: l.id, company: l.company, contact_name: l.contact_name || '', industry: l.industry || '', city: l.city || '',
+    lead_id: l.id, company: l.company, contact_name: same(l.contact_name, l.company) ? '' : l.contact_name || '', industry: l.industry || '', city: l.city || '',
     website: l.website || '', package: l.recommended_package || l.service || '', notes: l.notes || '', phone: l.phone || '',
   };
 }
@@ -200,17 +243,8 @@ export async function resumeDocs({ staleMinutes = 0 } = {}) {
   }
 }
 
-/** Research for a document: a lead's stored pitch-maker research if there is one (no second web search), else optional web research. */
-async function researchFor(doc) {
-  if (doc.lead_id) {
-    const l = await get(`SELECT research_json FROM leads WHERE id = :id`, { id: doc.lead_id });
-    const r = parse(l?.research_json);
-    if (r) return { ...r, sources: undefined };
-  }
-  return maybeResearch(doc.input);
-}
-// In-app web research was removed (owner, 2026-11-05): Claude Code researches the business itself.
-async function maybeResearch() { return null; }
+// (researchFor(), which read the old pitch maker's stored research, was removed with Phase 3 of the SWOT guide: the
+// research pack comes from src/pipeline/research.js and passes the gate in usableResearch(), see buildClaudeJob.)
 
 /** Splits the package price into the configured modules (rounded to ₹1,000; last module takes the rest). */
 export function defaultItems(input) {
@@ -299,12 +333,34 @@ export async function createDoc(kind, raw, { wait = false, auto = false } = {}) 
  */
 // AxiFlow's own notes in the CRM (script note, brochure / proposal notes): not the team's notes.
 const OWN_NOTE = /AxiFlow|Call script from|SWOT analysis|Pitch point:|^Brochure ready for|^Proposal ready for|^Proposal sent|from the link below/i;
-/** Stored research that belongs to this lead: not the no-AI fallback, and about this business (CRM ids get reused). */
-export function usableResearch(r, company) {
-  if (!r || r.source === 'fallback') return null;
-  const words = String(company || '').toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) || [];
-  const text = JSON.stringify([r.business_summary, r.what_they_sell, r.location_and_reach]).toLowerCase();
-  return !words.length || words.some((w) => text.includes(w)) ? r : null;
+/**
+ * Stage 3 of the SWOT pipeline: the gate (owner's SWOT fix guide, 2026-11-13, section 5.3). Evidence whose source URL
+ * the research run did not actually see is dropped; a pack that is too thin is refused (null). The SWOT is then not
+ * written: the lead shows "Research thin, needs a look" instead of a confident but empty SWOT.
+ */
+const normUrl = (u) => String(u).replace(/#.*$/, '').replace(/\/$/, '').toLowerCase();
+export function usableResearch(r, { hasWebsite } = {}) {
+  if (!r?.evidence?.length) return null;
+  const seen = new Set(r._seen_urls || []);
+  const evidence = r.evidence.filter((e) => e.source_url && seen.has(normUrl(e.source_url)));
+  if (evidence.length < 5) return null; // too thin to write from
+  if (hasWebsite && !evidence.some((e) => e.area === 'website')) return null;
+  return { ...r, evidence };
+}
+/** Where the CRM disagrees with itself about the lead's interest (contact call stage / last call vs deal stage). */
+export function crmContradictions(c) {
+  const key = (v) => String(v || '').trim().toLowerCase().replace(/[\s_-]+/g, '_');
+  const yes = (v) => /^(interested|meeting_booked|qualified|won|proposal.*)$/.test(key(v));
+  const no = (v) => /^(not_interested|lost|do_not_contact|closed_lost)$/.test(key(v));
+  const out = [];
+  for (const d of (c.deals || []).filter((x) => !x.archived)) {
+    for (const ct of c.contacts || []) {
+      const said = [ct.lead_stage, ct.last_outcome].filter(Boolean);
+      if (no(d.stage) && said.some(yes)) out.push(`the CRM disagrees with itself: the deal "${d.name || 'deal'}" is "${d.stage}" but ${ct.name}'s call stage / last call says "${said.find(yes)}". Do not build the pitch on either one alone; treat the lead's interest as unclear.`);
+      else if (yes(d.stage) && said.some(no)) out.push(`the CRM disagrees with itself: the deal "${d.name || 'deal'}" is "${d.stage}" but ${ct.name}'s call stage / last call says "${said.find(no)}". Do not build the pitch on either one alone; treat the lead's interest as unclear.`);
+    }
+  }
+  return [...new Set(out)];
 }
 /** Returns { text, crm } where crm is the live CRM record (null when it could not be read). */
 async function leadDossier(doc) {
@@ -319,9 +375,20 @@ async function leadDossier(doc) {
       const c = await crmLead(`${m[1]}-${m[2]}`);
       crm = c;
       const co = c.company;
-      if (co) out.push(`Company in the CRM: ${co.name}${co.sector ? ` · sector: ${co.sector}` : ''}${co.size ? ` · size: ${co.size}` : ''}${co.address ? ` · address: ${co.address}` : ''}${co.website ? ` · website: ${co.website}` : ''}${co.linkedin_url ? ` · LinkedIn: ${co.linkedin_url}` : ''}${co.description ? `\nDescription: ${co.description}` : ''}`);
-      for (const ct of c.contacts || []) out.push(`Contact: ${ct.name}${ct.title ? ` (${ct.title})` : ''}${ct.lead_stage ? ` · call stage: ${ct.lead_stage}` : ''}${ct.last_outcome ? ` · last call: ${ct.last_outcome}` : ''}${ct.do_not_contact ? ' · do not contact' : ''}`);
+      if (co) out.push(`Company in the CRM: ${co.name}${co.sector ? ` · sector: ${co.sector}` : ''}${co.size ? ` · size: ${co.size}` : ''}${co.address ? ` · address: ${co.address}` : ''}${co.website ? ` · website: ${co.website}` : ''}${co.linkedin_url ? ` · LinkedIn: ${co.linkedin_url}` : ''}${co.description ? `\nDescription: ${co.description}` : ''}${co.business_description ? `\nBusiness description in the CRM: ${co.business_description}` : ''}`);
+      // contact details stored in the CRM are verified facts (SWOT guide 2026-11-13, input bugs: they were never sent,
+      // which let the writer claim "no phone or email")
+      const routes = (x) => [x.phone && `phone ${x.phone}`, x.email && `email ${x.email}`, x.whatsapp && `WhatsApp ${x.whatsapp}`].filter(Boolean).join('; ');
+      if (co && routes(co)) out.push(`Verified contact details of the company (from the CRM): ${routes(co)}`);
+      for (const ct of c.contacts || []) out.push(`Contact: ${ct.name}${ct.title ? ` (${ct.title})` : ''}${ct.lead_stage ? ` · call stage: ${ct.lead_stage}` : ''}${ct.last_outcome ? ` · last call: ${ct.last_outcome}` : ''}${ct.do_not_contact ? ' · do not contact' : ''}${routes(ct) ? ` · verified contact details (from the CRM): ${routes(ct)}` : ''}`);
       for (const d of c.deals || []) out.push(`Deal: ${d.name || 'deal'} · stage: ${d.stage}${d.amount ? ` · amount: ${d.amount}` : ''}`);
+      // the telecaller's calls with their notes, newest first (call_logs were not read before)
+      for (const call of (c.calls || []).filter((x) => x.outcome || String(x.notes || '').trim().length >= 4).slice(0, 6)) {
+        out.push(`Call by the telecaller (${String(call.date || '').slice(0, 10)}${call.by ? `, ${call.by}` : ''}${call.on ? `, with ${call.on}` : ''}): ${call.outcome || 'no result'}${String(call.notes || '').trim() ? `: ${String(call.notes).trim().slice(0, 500)}` : ''}`);
+      }
+      // the CRM contradicting itself (e.g. call stage "interested" while the deal is "not_interested"): said out loud, so the
+      // writer does not build the pitch on one side of it
+      for (const w of crmContradictions(c)) out.push(`Warning: ${w}`);
       const seen = new Set();
       const notes = (c.notes || []).filter((n) => {
         const t = String(n.text || '').trim();
@@ -334,8 +401,6 @@ async function leadDossier(doc) {
       if (!notes.length) out.push('The team has written no notes on this lead yet.');
     } catch (e) { out.push(`(The CRM record could not be read: ${e.message})`); }
   }
-  const r = usableResearch((() => { try { return typeof l?.pitch_json === 'string' ? JSON.parse(l.pitch_json) : l?.pitch_json; } catch { return null; } })()?.research, crm?.company?.name || l?.company);
-  if (r) out.push(`Earlier research: ${JSON.stringify({ summary: r.business_summary, sells: r.what_they_sell, customers: r.target_customers, online: r.online_presence, pain_points: r.pain_points })}`);
   if (l?.notes) out.push(`AxiFlow notes: ${String(l.notes).slice(0, 800)}`);
   return { text: out.join('\n').slice(0, 6000), crm };
 }
@@ -343,39 +408,91 @@ async function leadDossier(doc) {
 async function sendToClaude(doc, s) {
   const built = await buildClaudeJob(doc, s);
   if (!built) return false;
+  // Stage 1 (SWOT guide): the verified facts collected for this job are kept on the lead (leads.facts_json)
+  if (built.facts && doc.lead_id) await saveFacts(doc.lead_id, built.facts).catch(() => {});
   await dispatchJob(doc, built.job, built.ctx);
   return true;
 }
 
 /** The exact job Claude Code gets for a document (also used to show the prompt without sending it). */
-export async function buildClaudeJob(doc, s = getSettings()) {
+/**
+ * opts.preview: build the job without calling the research API or saving anything (read-only checks: the research
+ * request is returned instead, and a missing pack does not stop the SWOT).
+ */
+export async function buildClaudeJob(doc, s = getSettings(), opts = {}) {
   const { text: dossier, crm } = await leadDossier(doc).catch(() => ({ text: '', crm: null }));
   // The CRM is the source of truth: its website (even when empty) wins over AxiFlow's older copy of the lead
   // (found 2026-11-05: lead 10 kept "amazon.com" and another business's research after a CRM id was reused).
-  const base = crm?.company ? { ...doc.input, website: crm.company.website || '' } : doc.input;
-  const research = usableResearch(await researchFor({ ...doc, input: base }).catch(() => null), crm?.company?.name || doc.input.company);
+  const base0 = crm?.company ? { ...doc.input, website: crm.company.website || '' } : doc.input;
+  // documents saved before the contact-name fix still carry a contact named after the business: not a person
+  const base = String(base0.contact_name || '').trim().toLowerCase() === String(base0.company || '').trim().toLowerCase() ? { ...base0, contact_name: '' } : base0;
+  // Stage 1 (SWOT guide 2026-11-13): the verified facts from the CRM record and the website, collected by code once per
+  // job (home, contact, about, up to 3 menu pages, robots.txt, sitemap); its `audit` is the old website check
+  const collected = await collectFacts({ website: base.website ? normalizeUrl(base.website) : '' }, { crm }).catch(() => null);
+  // Stages 2 and 3: the research pack (one run per lead, reused 30 days or until the website changes), then the gate
+  let research = null, researchNote = '', researchRequest = null;
+  if (doc.lead_id) {
+    try {
+      const { runResearch } = await import('./pipeline/research.js');
+      const rr = await runResearch(doc.lead_id, { facts: collected?.facts || null, fingerprint: collected ? collected.fingerprint : undefined, crm, input: base, preview: !!opts.preview });
+      researchRequest = rr.request;
+      const gated = usableResearch(rr.pack, { hasWebsite: !!base.website });
+      if (gated) research = { ...gated, _seen_urls: undefined };
+      else researchNote = rr.pack ? `${(rr.pack.evidence || []).length} evidence items, ${(rr.pack.evidence || []).filter((e) => (rr.pack._seen_urls || []).includes(normUrl(e.source_url || ''))).length} with a source the research run actually saw (5 needed${base.website ? ', incl. one about the website' : ''})` : 'no research yet';
+    } catch (e) { researchNote = `the research could not run: ${e.message}`; }
+  }
+  if (doc.kind === 'script' && !research && !opts.preview) throw new Error(`Research thin, needs a look: ${researchNote}. Nothing was written.`);
   const input = { ...base, notes: [base.notes, dossier && `What the CRM and AxiFlow know about this lead:\n${dossier}`].filter(Boolean).join('\n\n') };
   const vertical = VERTICALS.includes(doc.input.vertical) && doc.input.vertical !== 'Other' ? doc.input.vertical
     : verticalOf(base.industry, crm?.company?.sector, crm?.company?.name || base.company, crm?.company?.business_description);
   let job, ctx = {};
   if (doc.kind === 'script') {
-    // Built from scratch by Claude around the lead (research first, CRM call history, one angle).
-    const audit = base.website ? await auditWebsite(normalizeUrl(base.website)).catch(() => null) : null;
-    job = claudeScriptJob(base, research, audit, dossier);
-    ctx = { audit };
+    // Written by Claude from the verified facts, the gated evidence and the CRM record (SWOT guide stage 4). ctx.ids =
+    // the ids the job gave, so postScript() can drop a point that cites none of them.
+    const facts = collected?.facts || [];
+    job = claudeScriptJob(base, research, facts, dossier);
+    ctx = { ids: [...facts.map((f) => f.id), ...(research?.evidence || []).map((e) => e.id)].filter(Boolean),
+      // the same sources for the critic (guide 5.5) and for the refs shown on the script page
+      sources: { facts: facts.map((f) => ({ id: f.id, kind: f.kind, text: f.text, source: f.source })), evidence: research?.evidence || [], competitors: research?.competitors || [] } };
   } else {
-    const tpl = await getTemplate(doc.template_id) || await defaultTemplate(doc.kind);
+    // opts.template: a template given directly (scripts/compare-brochures.js, read-only, before a new template's row exists)
+    const tpl = opts.template || await getTemplate(doc.template_id) || await defaultTemplate(doc.kind);
     if (htmlDocs.isHtmlTemplate(tpl)) { // the Codeace HTML templates: Claude writes the content of the fixed design
-      job = htmlDocs.htmlJob(tpl.source, { input: base, dossier, research, swot: await leadSwot(doc.lead_id), settings: s, items: doc.items,
-        audit: doc.kind === 'brochure' && base.website ? await auditWebsite(normalizeUrl(base.website)).catch(() => null) : null }); // the website check (2026-11-12)
-      ctx = { html: tpl.source };
+      // brochures: the offer is decided in code before writing (brochure fix guide 2026-11-13, section 6.1), from the
+      // website type chosen in the CRM and what the website is today; the writer never chooses between instructions
+      const offer = doc.kind === 'brochure' ? decideOffer({ websiteType: doc.input.website_type, website: base.website, facts: collected?.facts, audit: collected?.audit, settings: s }) : null;
+      if (offer?.blocked) throw new Error(offer.blocked);
+      if (tpl.source === htmlDocs.DESIGNED) {
+        // the designed brochure (brochure fix guide 2026-11-13, phases 2-4): a short brief built by code (facts, evidence,
+        // approved SWOT, CRM, decided offer, the client's images), then one writing call that composes the pages from the
+        // CodeAce design system; the claims check and the visual review run on the same GitHub run (claude-worker/designed.mjs)
+        const { leadImages } = await import('./brochure/images.js');
+        const images = await leadImages(doc.lead_id, base.website).catch(() => []);
+        const b = await buildLeadBrief(doc.lead_id, { crm, facts: collected?.facts || [], research, offer, audit: collected?.audit, images });
+        const a = s.agency || {};
+        job = designedJob({ brief: b.text, ids: b.ids, images, model: s.claude?.api_model?.anthropic || 'claude-opus-5-5', client: base.company,
+          date: new Date().toLocaleString('en-GB', { month: 'long', year: 'numeric', timeZone: s.schedule?.timezone || 'Asia/Kolkata' }),
+          contact: { agency: 'CodeAce IT Solutions LLP', phone: a.phone, email: a.email, website: String(a.website || '').replace(/^https?:\/\//, '').replace(/\/$/, '') } });
+        ctx = { html: tpl.source };
+      } else {
+        job = htmlDocs.htmlJob(tpl.source, { input: base, dossier, research, swot: await leadSwot(doc.lead_id), settings: s, items: doc.items, offer,
+          audit: doc.kind === 'brochure' && base.website ? collected?.audit || null : null }); // the website check (2026-11-12)
+        ctx = { html: tpl.source };
+      }
+      if (doc.kind === 'brochure' && tpl.source !== htmlDocs.DESIGNED) {
+        // lean run on the GitHub runner with a pinned model (prepare.mjs / the workflow read these), the same model as the
+        // API backup; research within at most 4 searches and 4 fetches, then the answer
+        job.model = s.claude?.api_model?.anthropic || 'claude-opus-5-5';
+        job.max_turns = 14;
+        job.offer = offer;
+      }
     } else if (!tpl || tpl.mode !== 'smart') return null;
     else if (doc.kind === 'proposal') job = claudeProposalJob(base, doc.items || [], research, dossier); // their own site structure; prices stay ours
     else {
       // Brochures are built from scratch by Claude: concept, copy, palette, images and layout (the deck job).
       // A Growth Deck / Editorial template fixes the design; with the classic template Claude chooses it.
-      const audit = input.website ? await auditWebsite(normalizeUrl(input.website)).catch(() => null) : null;
-      if (audit?.findings?.length) input.notes += `\n\nWebsite check: ${audit.findings.map((f) => f.text).join('; ')}`;
+      const audit = input.website ? collected?.audit || null : null;
+      if (audit?.findings?.length) input.notes += `\n\nWebsite check: ${audit.findings.map((f) => f.text).join('; ')}\n(${WEBSITE_CHECK_RULE})`;
       const design = deckOf(tpl) || '';
       const brief = buildBrief(input, { design, research, settings: s });
       // Stock photos that fit the vertical and this business (Pexels / Unsplash keys), offered next to the sample images
@@ -388,17 +505,28 @@ export async function buildClaudeJob(doc, s = getSettings()) {
       else { job = deckJob(brief); ctx = { brief, design, stock: stock.map }; job.prompt = [job.prompt, swotSection(await leadSwot(doc.lead_id)), designSection(design, doc.input.website_type)].filter(Boolean).join('\n\n'); }
     }
   }
-  // Every job: the vertical's playbook, the lead's agreed strategy (so call, brochure and proposal tell one story),
-  // and a quality review before answering (owner, 2026-11-05: premium, relevant to the vertical and the business).
+  // Every job: the vertical's playbook. Proposals (and the older deck brochures) also get the lead's agreed strategy and
+  // a quality review before answering (owner, 2026-11-05: premium, relevant to the vertical and the business).
+  // Not the SWOT (script): no quality-review section or scores, to use fewer tokens (owner, 2026-11-06), and no strategy
+  // section (SWOT fix guide 5.4: it still returns a strategy). Not the HTML brochures (brochure fix guide 2026-11-13,
+  // section 8): the decided <offer> replaces the strategy (it conflicted with the website type), and the self-review and
+  // restated strategy only cost output tokens (the scores were always 8-9).
+  const htmlBrochure = doc.kind === 'brochure' && job.kind === 'html';
   const strategy = doc.lead_id ? (await get(`SELECT strategy_json FROM leads WHERE id = :id`, { id: doc.lead_id }).catch(() => null))?.strategy_json : null;
-  // SWOT (kind script): no quality-review section or scores, to use fewer tokens (owner, 2026-11-06)
   const lean = doc.kind === 'script';
-  job.prompt = [job.prompt, doc.kind === 'script' ? '' : websiteTypeSection(doc.input.website_type), playbookSection(vertical), strategySection(strategy ? JSON.parse(strategy) : null), lean ? '' : qualitySection(doc.kind)].filter(Boolean).join('\n\n');
-  job.schema = withStrategy(job.schema, { review: !lean });
+  const designed = job.purpose === 'brochure_designed'; // its brief already lists the verified facts (V-ids)
+  job.prompt = [job.prompt, doc.kind === 'script' ? '' : websiteTypeSection(doc.input.website_type), doc.kind === 'script' || designed ? '' : factsSection(collected?.facts), playbookSection(vertical),
+    lean || htmlBrochure ? '' : strategySection(strategy ? JSON.parse(strategy) : null), lean || htmlBrochure ? '' : qualitySection(doc.kind)].filter(Boolean).join('\n\n');
+  if (!htmlBrochure) job.schema = withStrategy(job.schema, { review: !lean });
   job.vertical = vertical;
-  // Claude Code researches the business itself (website, Google listing, social pages) unless switched off.
-  job.web = s.claude?.web_research !== false || !!doc.input.research;
-  return { job, ctx };
+  // Research is always on (owner, 2026-11-13: "use only research"). For a SWOT it is done before writing, by the
+  // separate research stage (guide 5.4): the writer gets the usable pack and does not browse. The other documents
+  // still let Claude Code research the business itself.
+  job.web = !(doc.kind === 'script' && research);
+  // the SWOT writer's model is pinned (guide P11: predictable quality and cost); the GitHub workflow passes job.model as --model
+  if (doc.kind === 'script') job.model = 'claude-sonnet-5-5';
+  if (designed) job.web = false; // the designed brochure writes from its brief: research happened in the SWOT stage
+  return { job, ctx, facts: collected, research, researchNote, researchRequest };
 }
 
 /**
@@ -435,9 +563,83 @@ export async function completeDoc(id, { content, source }) {
     const design = doc.kind === 'brochure' ? brochureLayout(tpl, content, s, doc.input.company) : proposalDesign(content, doc.items, s, { preparedFor: doc.input.company });
     patch.design_json = cleanDesign(design);
   }
-  if (content?.html) patch.design_json = await classicDesignOf({ ...doc, content }); // opened in the classic editor
+  // HTML documents are delivered as the Chromium print of their pages (brochure fix guide 2026-11-13, section 8: the
+  // CRM got a pdfkit re-render of a converted design, 3-7.6% off, italics lost, other line breaks). They are converted
+  // for the classic editor only when someone opens them there (POST /api/tools/docs/:id/to-design), never for delivery.
+  if (content?.html && doc.kind === 'brochure') await addClientPhotos(doc, content);
+  // the designed brochure: AxiFlow's own layout check on the final pages; anything still wrong (or claims nobody
+  // checked) = "needs a look": shown in AxiFlow and the CRM's Documents panel, and not sent to the CRM as finished
+  const look = content?.html?.template === htmlDocs.DESIGNED ? await designedLook({ ...doc, content }) : null;
   await update('docs', id, patch);
+  if (look?.needs_look) {
+    const { logEvent } = await import('./pipeline/log.js');
+    await logEvent(doc.lead_id || null, 'tools', 'brochure_check', 'ok', `doc #${id} needs a look: ${look.reasons.slice(0, 4).join('; ')}`.slice(0, 500)).catch(() => {});
+    return; // released by hand (POST /api/tools/docs/:id/release) or written again
+  }
   await announce(id);
+}
+/**
+ * The designed brochure's final check (brochure fix guide 2026-11-13, section 6.5): the runner's verdict (claims check,
+ * visual review, layout), AxiFlow's own layout check on the pages it will print, and the output check. Updates
+ * content.html.check in place and returns it.
+ */
+async function designedLook(doc) {
+  const c = doc.content.html.check ||= {};
+  let issues = [];
+  try { issues = await htmlDocs.designedIssues(doc); } catch (e) { issues = [{ page: 0, what: `the pages could not be checked (${e.message})` }]; }
+  const reasons = [
+    ...issues.map((x) => `page ${x.page}: ${x.what}${x.text ? ` ("${String(x.text).slice(0, 50)}")` : ''}`),
+    ...(c.output_problems || []).map((p) => `output: ${p}`),
+    ...(!c.engine_checked ? ['the claims and the pages were not checked by the review (the brochure came from the backup engine)'] : []),
+    ...(c.engine_checked && c.claims?.status !== 'checked' ? ['the claims were not checked'] : []),
+    ...((c.claims?.unresolved || []).filter((u) => u.verdict === 'unsupported').map((u) => `an unsupported claim is still on page ${u.page || '?'}: "${String(u.find || '').slice(0, 60)}"`)),
+  ];
+  Object.assign(c, { layout_final: issues, needs_look: reasons.length > 0, reasons: [...new Set(reasons)].slice(0, 20), checked_at: nowISO() });
+  return c;
+}
+/** Sends a "needs a look" brochure to the CRM after a person looked at it (the CRM gets it as finished, pending approval). */
+export async function releaseDoc(id, by = '') {
+  const d = await getDoc(id);
+  if (!d || d.status !== 'ready' || !d.content?.html?.check?.needs_look) throw new Error('This document is not waiting for a look');
+  const content = { ...d.content, html: { ...d.content.html, check: { ...d.content.html.check, needs_look: false, released_at: nowISO(), released_by: String(by || 'someone').slice(0, 120) } } };
+  await update('docs', id, { content_json: content, updated_at: nowISO() });
+  await announce(id);
+  return { ok: true };
+}
+/**
+ * The client's own photos in the brochure's photo areas (brochure fix guide 2026-11-13, section 8: they shipped as dark
+ * gradients unless someone uploaded pictures by hand): collected from the client's website once per lead
+ * (src/brochure/images.js) and placed by shape: wide ones on the cover and the closing panel, tall ones on the challenge
+ * card and beside one idea page. Photos added by hand are kept. Never stops the document.
+ */
+export async function addClientPhotos(doc, content) {
+  const h = content.html;
+  if (h?.template !== 'builtin-html-brochure-ps' || !doc.lead_id) return;
+  try {
+    const { leadImages, pickPhotos } = await import('./brochure/images.js');
+    const lead = await get(`SELECT website FROM leads WHERE id = :id`, { id: doc.lead_id });
+    const images = await leadImages(doc.lead_id, lead?.website || doc.input.website);
+    const { photos, alt } = pickPhotos(images);
+    if (!Object.keys(photos).length) return;
+    h.data.photos = { ...photos, ...(h.data.photos || {}) };
+    if (photos.ideas) { // one idea page without a statement card shows the picture beside its ideas, if they still fit
+      const before = await htmlDocs.overflowingPages({ ...doc, content }).catch(() => null);
+      const pages = h.data.idea_pages || [];
+      let placed = false;
+      for (let k = 0; k < pages.length && before && !placed; k++) {
+        if (pages[k].statement) continue;
+        pages[k] = { ...pages[k], photo: true, photo_alt: alt.ideas || '' };
+        const after = await htmlDocs.overflowingPages({ ...doc, content }).catch(() => null);
+        if (after && after.length <= before.length) placed = true;
+        else pages[k] = { ...pages[k], photo: false, photo_alt: '' }; // the cards no longer fit beside it: no picture here
+      }
+      if (!placed && h.data.photos.ideas === photos.ideas) delete h.data.photos.ideas; // a picture added by hand stays
+    }
+    h.images = images.map(({ id, kind, w, h: ht, orientation, alt: a, src }) => ({ id, kind, w, h: ht, orientation, alt: a, src }));
+  } catch (e) {
+    const { logEvent } = await import('./pipeline/log.js');
+    await logEvent(doc.lead_id, 'tools', 'brochure_images', 'error', `doc ${doc.id}: ${e.message}`).catch(() => {});
+  }
 }
 /**
  * The classic editor's design of a Codeace HTML document (owner, 2026-11-12: "use classic editor always. but i need my
@@ -507,13 +709,29 @@ export async function saveDoc(id, { design, items, title, content }) {
       const edits = sent.edits !== undefined ? htmlDocs.cleanEdits(sent.edits) : h0.edits;
       patch.content_json = { ...doc.content, html: { ...h0, data: sent.data !== undefined ? htmlDocs.sanitizeEdit(sent.data) : h0.data, edits, split: htmlDocs.hasEdits(edits) ? h0.split || {} : {} } };
       // new words for a document that is edited in the classic editor: its pages are laid out again from them
-      if (doc.design && sent.data !== undefined && design === undefined) patch.design_json = await classicDesignOf({ ...doc, content: patch.content_json }) || doc.design;
+      if (doc.design && sent.data !== undefined && design === undefined) {
+        patch.design_json = await classicDesignOf({ ...doc, content: patch.content_json }) || doc.design;
+        patch.content_json.html.design_edited = false; // the design is the HTML again: the Chromium print is delivered
+      }
     }
     else if (doc.kind !== 'script') throw new Error('Only scripts are saved as text');
-    else patch.content_json = cleanScript(content || {});
+    else {
+      patch.content_json = cleanScript(content || {});
+      // a hand edit keeps the refs of the points it did not change (matched by text) and the to-confirm list
+      const old = doc.content || {};
+      if (patch.content_json.swot) for (const k of ['swot_check', 'sources']) if (old[k]) patch.content_json[k] = old[k];
+      if (doc.approved_at) { patch.approved_at = null; patch.approved_by = null; } // edited after approval: needs approval again
+      if (patch.content_json.swot && (old.swot_refs || old.swot?.to_confirm)) {
+        const now = new Set(Object.entries(patch.content_json.swot).filter(([k]) => k !== 'summary').flatMap(([k, v]) => (v || []).map((x) => `${k}\u0000${x}`)));
+        patch.content_json.swot_refs = (old.swot_refs || []).filter((r) => now.has(`${r.quadrant}\u0000${r.text}`));
+        patch.content_json.swot.to_confirm = Array.isArray(content?.swot?.to_confirm) ? content.swot.to_confirm.map((v) => str(v, 600)).filter(Boolean).slice(0, 10) : old.swot?.to_confirm || [];
+      }
+    }
   }
   if (design !== undefined) patch.design_json = cleanDesign(design);
   const designEdited = design !== undefined;
+  // an HTML document changed by hand in the classic editor: from now on its PDF is the edited design (docPdf)
+  if (designEdited && htmlDocs.isHtmlDoc(doc)) patch.content_json = { ...(patch.content_json || doc.content), html: { ...(patch.content_json || doc.content).html, design_edited: true } };
   if (title !== undefined) patch.title = str(title, 200) || doc.title;
   if (items !== undefined) {
     if (doc.kind !== 'proposal') throw new Error('Only proposals have line items');
@@ -546,7 +764,11 @@ export async function chat(id, message, context = {}) {
   const r = await chatEdit({ design: doc.design, items: doc.items, history: doc.chat, message: msg, context: { ...context, kind: doc.kind, company: doc.input.company } });
   const chatLog = [...(doc.chat || []), { role: 'user', text: msg, at: nowISO() }, { role: 'assistant', text: r.reply, applied: r.applied, skipped: r.skipped, at: nowISO() }].slice(-60);
   const patch = { chat_json: chatLog, updated_at: nowISO() };
-  if (r.applied) { patch.design_json = r.design; if (doc.kind === 'proposal') patch.items_json = r.items; }
+  if (r.applied) {
+    patch.design_json = r.design;
+    if (doc.kind === 'proposal') patch.items_json = r.items;
+    if (htmlDocs.isHtmlDoc(doc)) patch.content_json = { ...doc.content, html: { ...doc.content.html, design_edited: true } }; // its PDF is now the edited design
+  }
   await update('docs', id, patch);
   return { reply: r.reply, applied: r.applied, skipped: r.skipped, doc: await getDoc(id) };
 }
@@ -565,7 +787,9 @@ export function docPdf(d) {
     if (d.status !== 'ready' || !d.content) throw new Error('Script is not ready yet');
     return scriptPdf(d.content, d.input, s);
   }
-  if (htmlDocs.isHtmlDoc(d) && !d.design) { // printed by Chromium (src/html-docs) until it has its classic design
+  // HTML documents: the Chromium print of their pages (src/html-docs), unless someone changed the classic design by hand
+  // (brochure fix guide 2026-11-13: the CRM got a pdfkit re-render of the converted design, 3-7.6% off the template)
+  if (htmlDocs.isHtmlDoc(d) && (!d.design || !d.content.html.design_edited)) {
     if (d.status !== 'ready') throw new Error('Document is not ready yet');
     return htmlDocs.htmlDocPdf(d);
   }
@@ -573,6 +797,24 @@ export function docPdf(d) {
   return renderDesignPdf(d.design, { title: `${d.title} ${d.kind}`, author: s.agency.name, items: d.items, settings: s });
 }
 
+/**
+ * "Approve SWOT" (SWOT guide 5.6): a person confirms a finished SWOT of a live CRM lead. Only approved SWOTs feed the
+ * brochure and proposal (leadSwot). Errors carry an HTTP status: 404 unknown, 409 not a finished SWOT / already approved.
+ */
+export async function approveSwot(id, by) {
+  const d = await getDoc(id);
+  const fail = (status, msg) => Object.assign(new Error(msg), { status });
+  if (!d || d.kind !== 'script') throw fail(404, 'SWOT not found');
+  const live = d.lead_id && await get(`SELECT id FROM leads WHERE id = :id AND external_id LIKE 'atomic:%' AND crm_removed_at IS NULL`, { id: d.lead_id });
+  if (!live) throw fail(404, 'This SWOT is not for a lead in the CRM');
+  if (d.status !== 'ready' || !d.content?.swot) throw fail(409, 'Only a finished SWOT can be approved');
+  if (d.approved_at) throw fail(409, 'This SWOT is already approved');
+  const at = nowISO();
+  await update('docs', id, { approved_at: at, approved_by: String(by || 'someone').slice(0, 120) });
+  const { logEvent } = await import('./pipeline/log.js');
+  await logEvent(d.lead_id, 'tools', 'swot-approved', 'ok', `SWOT #${id} approved by ${by || 'someone'}`).catch(() => {});
+  return { ok: true, id, approved_at: at, approved_by: by };
+}
 export async function docSummary(d) {
   const s = getSettings();
   const total = (d.items || []).reduce((a, i) => a + i.price, 0);

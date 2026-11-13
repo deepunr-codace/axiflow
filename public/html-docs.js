@@ -83,7 +83,9 @@ export async function renderHtmlDoc(kind, d, noun) {
   const { $, api, toast, busy, modal, view } = H;
   const r = await api(`/tools/docs/${d.id}/html`);
   let data = JSON.parse(JSON.stringify(r.data));
-  SKIP = new Set(r.template === 'builtin-html-brochure-ps' ? SKIP_BASE : [...SKIP_BASE, 'idea_pages', 'new']);
+  SKIP = new Set(r.template === 'builtin-html-brochure-ps' ? SKIP_BASE : r.template === 'builtin-designed' ? [...SKIP_BASE, 'images', 'claims', 'theme', 'fonts']
+    : [...SKIP_BASE, 'idea_pages', 'new']);
+  const ck = r.check;
   document.getElementById('pageTitle').textContent = '';
   const isProposal = kind === 'proposal';
   view.innerHTML = `
@@ -103,6 +105,11 @@ export async function renderHtmlDoc(kind, d, noun) {
       <button id="regenBtn">Write it again</button>
       <button class="danger" id="delBtn">Delete</button></div></details>
   </div>
+  ${ck?.needs_look ? `<div class="card hd-look" style="margin:0 0 12px;border-left:4px solid #E0A100"><div class="row" style="gap:12px;align-items:flex-start">
+    <span class="mi" style="color:#E0A100">visibility</span><div class="grow"><b>Needs a look before it goes to the client.</b> It was not sent to the CRM. Fix what is listed (Design or Words), then send it.
+    <ul class="small" style="margin:6px 0 0 18px;padding:0">${(ck.reasons || []).slice(0, 8).map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>
+    <button class="btn sm primary" id="hdRelease"><span class="mi">send</span>Send to the CRM</button></div></div>`
+    : ck?.claims || ck?.review ? `<p class="small muted" style="margin:0 0 10px"><span class="mi in">fact_check</span> Checked: ${ck.claims?.status === 'checked' ? `${(ck.claims.checks || []).length} claims (${ck.claims.applied || 0} fixed)` : 'claims not checked'} · ${ck.review?.status === 'reviewed' ? `pages reviewed (${(ck.review.changes || []).length} redone)` : 'pages not reviewed'}${ck.released_at ? ` · sent by hand ${esc(String(ck.released_at).slice(0, 10))}` : ''}</p>` : ''}
   <div class="hd-layout">
     <div class="hd-pages" id="hdPages"></div>
     <aside class="hd-form card" id="hdDesign" hidden></aside>
@@ -167,6 +174,11 @@ export async function renderHtmlDoc(kind, d, noun) {
   $('.ed-title').onchange = (e) => api(`/tools/docs/${d.id}`, { method: 'PUT', body: { title: e.target.value } }).then(() => toast('Renamed')).catch((err) => toast(err.message, true));
   $('#dlBtn').onclick = async (e) => { e.preventDefault(); await flush(); location.href = e.currentTarget.href; };
   $('#copyLink').onclick = async () => { await flush(); try { await navigator.clipboard.writeText(d.share_url); toast('Share link copied'); } catch { prompt('Copy this link:', d.share_url); } };
+  if ($('#hdRelease')) $('#hdRelease').onclick = (e) => busy(e.target, async () => { // a person looked: the brochure goes to the CRM
+    await api(`/tools/docs/${d.id}/release`, { body: {} });
+    toast('Sent to the CRM (waiting for approval there)');
+    location.reload();
+  });
   $('#regenBtn').onclick = (e) => { if (!confirm('Write it again? Your edits to the words will be replaced.')) return; busy(e.target, async () => { await api(`/tools/docs/${d.id}/regenerate`, { body: {} }); location.reload(); }); };
   $('#delBtn').onclick = async () => { if (!confirm(`Delete this ${noun}?`)) return; await api(`/tools/docs/${d.id}`, { method: 'DELETE' }); location.hash = `#/${kind}`; };
   // ---------------------------------------------------------------- Design mode (drag and drop on the pages)

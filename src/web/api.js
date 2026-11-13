@@ -9,7 +9,7 @@ import { getSettings, saveSettings, getTemplates } from '../settings.js';
 import { STAGES, STAGE_IDS, SERVICES, SOURCES, PIPES } from '../stages.js';
 import { BASE_URL, nowISO, addDays, parseCSV, toCSV } from '../util.js';
 import { channelStatus } from '../pipeline/channels.js';
-import { auditWebsite, recommendPackage } from '../pipeline/enrich.js';
+import { collectFacts, saveFacts, recommendPackage } from '../pipeline/enrich.js';
 import { logEvent, addActivity, addTask } from '../pipeline/log.js';
 import * as engine from '../pipeline/engine.js';
 import { schedulerInfo, refreshBriefing } from '../scheduler.js';
@@ -198,7 +198,7 @@ api.post('/leads/:id/actions/:action', async (req, res) => {
   const b = req.body || {};
   switch (req.params.action) {
     case 'approve': await engine.approveBrochure(id, 'admin'); await engine.advance(id); break;
-    case 'regenerate': await engine.regenerateBrochure(id); if (getSettings().automation.auto_tools?.brochure) await engine.runLeadTools(id, { script: false }); break;
+    case 'regenerate': await engine.regenerateBrochure(id); break; // a new brochure written by the AI
     case 'disqualify': await engine.setStage(lead, 'lost', b.reason || 'disqualified', { lost_reason: b.reason || 'disqualified', next_action_at: null }); break;
     case 'send_now': await engine.advance(id, { force: true }); break;
     case 'run': await engine.advance(id); break;
@@ -209,17 +209,19 @@ api.post('/leads/:id/actions/:action', async (req, res) => {
     case 'book': await engine.bookMeeting(id, b.start_at); break;
     case 'rescore': await engine.rescore(id); break;
     case 'reaudit': {
-      const audit = await auditWebsite(lead.website);
+      const collected = await collectFacts(lead); // the verified facts too (Stage 1 of the SWOT guide)
+      await saveFacts(id, collected);
+      const audit = collected.audit;
       await update('leads', id, { audit_json: audit, recommended_package: recommendPackage(lead, audit, getSettings().packages) });
       await engine.rescore(id);
       await addActivity(id, 'system', `Website re-audited: ${audit.issues} finding(s)`);
       break;
     }
-    case 'repitch': await engine.runPitchMaker(id); break;
+    case 'repitch': await engine.runLeadTools(id, { brochure: false, force: true }); break; // a new SWOT written by the AI (the rule-based pitch was removed)
     case 'redesign': throw new Error('Homepage designs were removed (owner, 2026-11-05)');
     case 'proposal_decision': await engine.decideProposal(id, b.decision, { reason: b.reason, by: 'admin' }); break;
     case 'test_crm_call': await engine.logCrmCall(id, b.outcome, { notes: b.notes }); break;
-    case 'pitch_note': await update('leads', id, { pitch: String(b.pitch || '').slice(0, 2000) }); await engine.generateBrochure(id); break;
+    case 'pitch_note': await update('leads', id, { pitch: String(b.pitch || '').slice(0, 2000) }); break;
     case 'call_outcome': await engine.logCallOutcome(Number(b.task_id), b.outcome, { notes: b.notes, callbackAt: b.callback_at }); break;
     case 'log_call': {
       const taskId = await insert('tasks', { lead_id: id, kind: 'call', title: `📞 Call ${lead.company}`, created_at: nowISO() });
@@ -401,14 +403,86 @@ api.post('/axicore/changed', (req, res) => {
 api.get('/axicore/company/:id/docs', async (req, res) => {
   const lead = await get(`SELECT id, company, crm_brochure_state, crm_proposal_state FROM leads WHERE external_id = :ext AND crm_removed_at IS NULL`, { ext: `atomic:co:${Number(req.params.id)}` });
   if (!lead) return res.json({ lead: null, docs: [] });
-  const docs = await all(`SELECT id, kind, title, status, source, error, updated_at, token FROM docs WHERE lead_id = :id ORDER BY id DESC LIMIT 30`, { id: lead.id });
-  res.json({ lead: { id: lead.id, company: lead.company, brochure_state: lead.crm_brochure_state, proposal_state: lead.crm_proposal_state },
+  const docs = await all(`SELECT id, kind, title, status, source, error, updated_at, token, approved_at, approved_by, content_json FROM docs WHERE lead_id = :id ORDER BY id DESC LIMIT 30`, { id: lead.id });
+  const canApprove = !req.user || axicoreRoles().includes(req.user.role); // the Approve SWOT step: AxiCore roles (admin, manager)
+  const newestSwot = docs.find((d) => d.kind === 'script' && d.status === 'ready')?.id;
+  // the lead's research pack (SWOT guide stage 2): when it was made and how much evidence passed the gate
+  const rrow = await get(`SELECT research_json, website FROM leads WHERE id = :id`, { id: lead.id });
+  let pack = null; try { pack = typeof rrow?.research_json === 'string' ? JSON.parse(rrow.research_json) : rrow?.research_json; } catch { /* old row */ }
+  const { researchSummary } = await import('../pipeline/research.js');
+  const research = researchSummary(pack?.researched_at ? pack : null, pack?.researched_at ? tools.usableResearch(pack, { hasWebsite: !!rrow?.website }) : null);
+  res.json({ lead: { id: lead.id, company: lead.company, brochure_state: lead.crm_brochure_state, proposal_state: lead.crm_proposal_state, research, researching: researchRunning.has(lead.id) },
     docs: docs.map((d) => ({ ...d, pdf: d.status === 'ready' ? `/pdf/doc/${d.token}.pdf` : null, token: undefined,
-      error: d.status === 'error' ? plainDocError(d.error) : null, detail: d.status === 'error' ? String(d.error || '').slice(0, 300) : null, can_retry: d.status === 'error' })) });
+      error: d.status === 'error' ? plainDocError(d.error) : null, detail: d.status === 'error' ? String(d.error || '').slice(0, 300) : null, can_retry: d.status === 'error',
+      content_json: undefined, ...(d.kind === 'script' ? swotState(d, { canApprove, newest: d.id === newestSwot }) : {}), ...lookState(d) })) });
+});
+// "Refresh research" in the CRM (SWOT guide 5.2): the facts are collected again and the research runs again now,
+// whatever the 30-day cache says; documents made after it use the new pack. Any signed-in CRM user.
+const researchRunning = new Set();
+api.post('/axicore/company/:id/research', async (req, res) => {
+  const lead = await get(`SELECT * FROM leads WHERE external_id = :ext AND crm_removed_at IS NULL`, { ext: `atomic:co:${Number(req.params.id)}` });
+  if (!lead) return res.status(404).json({ error: 'This company is not in AxiCore yet' });
+  if (researchRunning.has(lead.id)) return res.status(409).json({ error: 'Research is already running for this company' });
+  researchRunning.add(lead.id);
+  background(async () => {
+    try {
+      const { crmLead } = await import('../crm-leads.js');
+      const crm = await crmLead(`co-${Number(req.params.id)}`).catch(() => null);
+      const collected = await collectFacts({ website: crm?.company?.website || lead.website || '' }, { crm });
+      await saveFacts(lead.id, collected);
+      const { runResearch } = await import('../pipeline/research.js');
+      await runResearch(lead.id, { facts: collected.facts, fingerprint: collected.fingerprint, crm, force: true });
+      await logEvent(lead.id, 'research', 'refresh', 'ok', `research refreshed from the CRM by ${req.user?.email || req.user?.name || 'crm'}`);
+    } catch (e) { await logEvent(lead.id, 'research', 'refresh', 'error', e.message).catch(() => {}); }
+    finally { researchRunning.delete(lead.id); }
+  }, 'research-refresh');
+  res.json({ ok: true, status: 'researching' });
+});
+/** A SWOT's review state for the CRM panel (guide 5.5-5.6): approved or not, and what the critic removed or reworded. */
+/** A designed brochure's "needs a look" state for the CRM's Documents panel (brochure fix guide 2026-11-13, 6.5). */
+function lookState(d) {
+  if (d.kind !== 'brochure' || d.status !== 'ready') return {};
+  let c = d.content_json;
+  if (typeof c === 'string') { try { c = JSON.parse(c); } catch { c = null; } }
+  const k = c?.html?.check;
+  if (!k?.needs_look) return {};
+  return { needs_look: true, look_reasons: (k.reasons || []).slice(0, 6), can_release: true, note: 'Needs a look before it goes to the client: open it in AxiCore, fix or release it.' };
+}
+function swotState(d, { canApprove, newest }) {
+  let c = d.content_json; try { if (typeof c === 'string') c = JSON.parse(c); } catch { c = null; }
+  const chk = c?.swot_check;
+  return { approved_at: d.approved_at || null, approved_by: d.approved_by || null, can_approve: !!(canApprove && newest && d.status === 'ready' && !d.approved_at),
+    check: chk ? { status: chk.status, removed: (chk.removed || []).length, changed: (chk.changed || []).length, reason: chk.reason || null } : null,
+    to_confirm: (c?.swot?.to_confirm || []).length };
+}
+// "Approve SWOT" (guide 5.6): a person confirms the SWOT; only approved SWOTs feed the brochure and proposal.
+// The CRM panel (AxiCore roles only) and AxiFlow's script page use it.
+async function approveRoute(req, res) {
+  try { res.json(await tools.approveSwot(Number(req.params.id), req.user?.email || req.user?.name || 'AxiFlow admin')); }
+  catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+}
+api.post('/axicore/docs/:id/approve', approveRoute);
+api.post('/tools/docs/:id/approve', approveRoute);
+// the lead's brochure brief (brochure fix guide 6.1 / 6.6): built from what earlier stages stored, no AI; with the style
+// note and the design guidance, ready to paste into Claude web (the comparison baseline)
+api.get('/tools/brief/:leadId', async (req, res) => {
+  try {
+    const { buildBrief } = await import('../brochure/brief.js');
+    const { STYLE_NOTE } = await import('../brochure/writer.js');
+    const b = await buildBrief(Number(req.params.leadId));
+    const copy = `Design and write a landscape sales brochure (8-12 pages) for this business, from this brief only. Sell exactly the offer.\n\n<brief>\n${b.text}\n</brief>\n\n<style_note>\n${STYLE_NOTE}\n</style_note>`;
+    res.json({ text: b.text, chars: copy.length, copy, offer: b.offer?.blocked ? null : b.offer, blocked: b.offer?.blocked || null, images: (b.images || []).length });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+// a designed brochure that "needs a look" (its final check found something): a person looked, send it to the CRM
+api.post('/tools/docs/:id/release', async (req, res) => {
+  try { res.json(await tools.releaseDoc(Number(req.params.id), req.user?.name || req.user?.email || 'admin')); }
+  catch (e) { res.status(409).json({ error: e.message }); }
 });
 /** A failed document's reason in plain words for the CRM panel (the technical text goes along as detail). */
 function plainDocError(e) {
   const t = String(e || '');
+  if (/^Research thin/i.test(t)) return 'Research thin, needs a look: too little was found with a source to write from. Check the website in the CRM, use Refresh research, then Try again.';
   if (/switched off|only on the live site|cannot write/i.test(t)) return t.slice(0, 200);
   if (/hit your .{0,20}limit|usage limit/i.test(t)) return 'The Claude subscription reached its usage limit. Try again after it resets.';
   if (/Daily AI budget/i.test(t)) return "Today's AI spending limit was reached. Try again tomorrow, or raise the limit on AxiFlow's AI page.";
@@ -448,7 +522,8 @@ api.get('/tools/docs/:id/html', async (req, res) => {
   const d = await tools.getDoc(Number(req.params.id));
   if (!d || !h.isHtmlDoc(d)) return res.status(404).json({ error: 'Not an HTML document' });
   const t = h.HTML_TEMPLATES[d.content.html.template];
-  res.json({ html: await h.htmlDocHtml(d), size: t.size, data: d.content.html.data, template: d.content.html.template, photos: t.photos || [], edits: d.content.html.edits || { els: {}, added: [] }, verification: d.content.html.verification || null });
+  res.json({ html: await h.htmlDocHtml(d), size: t.size, data: d.content.html.data, template: d.content.html.template, photos: t.photos || [], edits: d.content.html.edits || { els: {}, added: [] }, verification: d.content.html.verification || null,
+    check: d.content.html.check || null }); // the designed brochure's checks (claims, review, layout; "needs a look")
 });
 // An HTML template's sample (the Nirapara reference) as a PDF: no document, no CRM write (also proves Chromium works)
 api.get('/design/templates/:id/sample.pdf', async (req, res) => {

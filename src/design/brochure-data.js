@@ -10,7 +10,7 @@
  * Data comes from the AI pipeline (src/ai/brochure-deck.js) or, without AI, from contentToData()
  * (the brochure copy written by src/ai/brochure.js plus the agency defaults).
  */
-export const DESIGNS = ['classic', 'editorial', 'signature-precision', 'signature-mono', 'signature-bold', 'signature-commerce'];
+export const DESIGNS = ['classic', 'editorial', 'signature-precision', 'signature-mono', 'signature-bold', 'signature-commerce', 'growth'];
 export const THEMES = {
   classic: { primary: '#2d4bd8', ink: '#0b1033', paper: '#f3f4f9', accent: '#d7ff3f' },
   editorial: { primary: '#2d4bd8', ink: '#121a4a', paper: '#f4f1fb', accent: '#ffb8cc' },

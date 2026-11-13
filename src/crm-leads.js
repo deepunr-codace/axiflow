@@ -111,12 +111,14 @@ export async function crmLead(key) {
     ? await get(`deals?select=*&company_id=eq.${id}&order=updated_at.desc`)
     : await get(`deals?select=*&contact_ids=cs.{${cids.join(',')}}&order=updated_at.desc`);
   const dids = deals.map((d) => d.id);
-  const [contactNotes, dealNotes, tasks, brochures, salesRows] = await Promise.all([
+  const [contactNotes, dealNotes, tasks, brochures, salesRows, callRows] = await Promise.all([
     cids.length ? get(`contact_notes?select=*&contact_id=${inList(cids)}&order=date.desc&limit=200`) : [],
     dids.length ? get(`deal_notes?select=*&deal_id=${inList(dids)}&order=date.desc&limit=200`) : [],
     cids.length ? get(`tasks?select=*&contact_id=${inList(cids)}&order=due_date.desc&limit=200`) : [],
     co ? get(`brochures?select=*&company_id=eq.${id}&order=id.desc`).catch(() => []) : [],
     get('sales?select=id,first_name,last_name,email').catch(() => []),
+    // the telecaller's call results with their notes (SWOT guide 2026-11-13, input bugs: call_logs were not read)
+    cids.length ? get(`call_logs?select=*&contact_id=${inList(cids)}&order=id.desc&limit=50`).catch(() => []) : [],
   ]);
   const sales = new Map(salesRows.map((r) => [r.id, r]));
   const cname = new Map(contacts.map((c) => [c.id, personName(c) || 'Contact']));
@@ -131,12 +133,15 @@ export async function crmLead(key) {
     company: co ? {
       id: co.id, name: co.name, sector: co.sector, size: co.size, website: co.website, phone: co.phone_number, email: co.email, whatsapp: co.whatsapp_number,
       address: [co.address, co.city, co.state_abbr, co.zipcode, co.country].filter(Boolean).join(', ') || null,
-      description: co.description, pitch_point: co.pitch_point, lead_date: co.lead_date, created_at: co.created_at, linkedin_url: co.linkedin_url,
+      description: co.description, business_description: co.business_description || null, pitch_point: co.pitch_point, lead_date: co.lead_date, created_at: co.created_at, linkedin_url: co.linkedin_url,
       owner: salesName(sales, co.sales_id),
     } : null,
     contacts: contacts.map(contactView), deals: deals.map(dealView), notes,
     tasks: tasks.map((t) => ({ id: t.id, type: t.type, text: t.text, due_date: t.due_date, done_date: t.done_date, on: cname.get(t.contact_id) })),
-    brochures: brochures.map((b) => ({ id: b.id, title: b.title, url: b.brochure_url, status: b.status })),
+    // rejection_reason: the reason a manager gives with "not approved" (brochure fix guide 6.6; a CRM column still to be
+    // added by the CRM team: until then it is undefined and the brief says "no reason given")
+    brochures: brochures.map((b) => ({ id: b.id, title: b.title, url: b.brochure_url, status: b.status, rejection_reason: b.rejection_reason ?? null, updated_at: b.updated_at || null })),
+    calls: callRows.map((c) => ({ id: c.id, outcome: c.outcome || null, notes: c.notes || '', date: c.created_at || c.called_at || null, next_attempt_at: c.next_attempt_at || null, by: salesName(sales, c.sales_id), on: cname.get(c.contact_id) })),
     axiflow: linked,
   };
 }

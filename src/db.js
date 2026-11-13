@@ -102,6 +102,7 @@ let readyPromise = null;
 export function ready() {
   if (!readyPromise) readyPromise = (async () => {
     driver = await makeDriver();
+    if (READ_ONLY) return; // DB_READ_ONLY=1 (checks and comparison scripts against the live data): no schema changes
     const ddl = schema.flatMap((b) => (b.sql ? statements(pgDDL(b.sql))
       : Object.entries(b.cols).map(([c, type]) => `ALTER TABLE ${b.table} ADD COLUMN IF NOT EXISTS ${c} ${pgDDL(type)}`)));
     const hash = crypto.createHash('sha1').update(ddl.join(';')).digest('hex');
@@ -150,9 +151,15 @@ function compile(sql, params) {
   return { text: out, values };
 }
 
+/**
+ * DB_READ_ONLY=1: every statement but SELECT / WITH is refused and the schema is left alone. For scripts that read the
+ * live database to check or compare documents (scripts/compare-brochures.js) without changing anything.
+ */
+const READ_ONLY = /^(1|true|yes)$/i.test(process.env.DB_READ_ONLY || '');
 async function query(sql, params = {}) {
   await ready();
   const { text, values } = compile(sql, params);
+  if (READ_ONLY && !/^\s*(SELECT|WITH)\s/i.test(text)) throw new Error(`Read-only database (DB_READ_ONLY): refused ${text.replace(/\s+/g, ' ').slice(0, 60)}`);
   const c = txStore.getStore() || driver;
   try {
     return await c.query(text, values);

@@ -781,6 +781,7 @@ async function renderLead(id) {
   const quick = l.stage === 'do_not_contact' ? '' : A('message', 'Message') + A('book', 'Book meeting');
   const more = [
     `<a href="#/script/new" data-script-lead="${l.id}"><span class="mi">analytics</span>Write a SWOT</a>`,
+    `<a href="#" data-copy-brief="${l.id}"><span class="mi">content_copy</span>Copy brief for Claude</a>`, // brochure fix guide 6.6
     M('pitch_note', 'Edit personal note in brochure'), M('note', 'Add note'), M('plan_next', '<span class="mi">auto_awesome</span>Ask manager for next step'),
     l.stage !== 'do_not_contact' ? M('repitch', l.pitch_json ? '<span class="mi">auto_awesome</span>Redo research & pitch' : '<span class="mi">auto_awesome</span>Make pitch now') : '',
     l.brochure_version ? `<a target="_blank" href="/pdf/brochure/${l.token}.pdf">Open brochure PDF<span class="mi">open_in_new</span></a>` : '',
@@ -802,6 +803,15 @@ async function renderLead(id) {
   <div class="tabs">${[['overview', 'Overview'], ['messages', `Messages (${d.messages.length})`], ['pitch', 'Pitch'], ['design', 'Design'], ['deal', 'Deal'], ['timeline', 'History']]
     .map(([k, label]) => `<button data-tab="${k}" class="${leadTab === k ? 'active' : ''}">${label}</button>`).join('')}</div>
   <div id="tabBody"></div>`;
+  // the lead's brochure brief + the style note, for pasting into Claude web (the comparison baseline)
+  view.querySelectorAll('[data-copy-brief]').forEach((a) => (a.onclick = async (e) => {
+    e.preventDefault();
+    toast('Building the brief…');
+    try {
+      const r = await api(`/tools/brief/${a.dataset.copyBrief}`);
+      try { await navigator.clipboard.writeText(r.copy); toast(`Brief copied (${r.chars.toLocaleString()} characters)`); } catch { prompt('Copy the brief:', r.copy); }
+    } catch (err) { toast(err.message, true); }
+  }));
 
   const tabs = {
     tasks: () => `${d.tasks.filter((t) => !t.done && t.kind === 'call').map((t) => callCard({ ...t, company: l.company, phone: l.phone })).join('')}${d.tasks.filter((t) => !t.done && t.kind === 'reply_draft').map((t) => draftCard({ ...t, company: l.company, last_inbound_channel: l.last_inbound_channel })).join('')}`,
@@ -1128,7 +1138,7 @@ async function renderSettings(section) {
   <div class="card"><h2>Your business</h2><div class="form-grid">${inp('agency.review_link', 'Google review link')}</div></div>
   <div class="card"><h2>Connections</h2><div class="conn">
     ${[['Email', env.channels.email === 'live', 'Add SMTP details in .env'], ['WhatsApp', env.channels.whatsapp === 'live', 'Add WA_TOKEN + WA_PHONE_NUMBER_ID in .env'],
-      ['AI (' + (env.ai.provider === 'openrouter' ? 'OpenRouter' : 'Claude API') + ')', env.ai.enabled, env.ai.key_set ? 'Turn on below' : 'Add OPENROUTER_API_KEY or ANTHROPIC_API_KEY'], ['Team CRM', env.crm_webhook || env.atomic_keys, 'Add CRM_SUPABASE_URL + CRM_SUPABASE_SECRET_KEY']]
+      ['AI (Claude API)', env.ai.enabled, env.ai.key_set ? 'Turn on below' : 'Add the Anthropic API key on the AI page'], ['Team CRM', env.crm_webhook || env.atomic_keys, 'Add CRM_SUPABASE_URL + CRM_SUPABASE_SECRET_KEY']]
       .map(([n, on, how]) => `<div class="row"><i class="dot-s ${on ? 'on' : ''}"></i><b>${n}</b><span class="spacer"></span><span class="small ${on ? 'ok' : 'muted'}">${on ? 'Connected' : how}</span></div>`).join('')}
     <p class="small muted">Not connected = messages are only saved here (safe test mode), not delivered.</p>
     <div class="form-grid">${inp('automation.auto_approve_brochure', 'Send pitches without my approval', 'bool')}</div></div></div>
@@ -1158,7 +1168,7 @@ async function renderSettings(section) {
     <tr><td>Payment webhook</td><td class="mono">POST ${esc(env.webhooks.payment)}</td></tr>
     <tr><td>From the CRM to us (update)</td><td class="mono">PATCH ${esc(env.webhooks.crm_update)}<br>header X-API-Key</td></tr>
     <tr><td>From us to the CRM (sync)</td><td>${env.crm_webhook ? '<span class="ok">CRM_WEBHOOK_URL set</span>' : '<span class="bad">CRM_WEBHOOK_URL not set</span>'}</td></tr>
-    <tr><td>AI</td><td>OpenRouter: ${env.ai.keys?.openrouter ? '<span class="ok">OPENROUTER_API_KEY set</span>' : '<span class="muted">not set</span>'} · Claude API: ${env.ai.keys?.anthropic ? '<span class="ok">ANTHROPIC_API_KEY set</span>' : '<span class="muted">not set</span>'}</td></tr></table>
+    <tr><td>AI</td><td>Claude API: ${env.ai.keys?.anthropic ? '<span class="ok">ANTHROPIC_API_KEY set</span>' : '<span class="muted">not set</span>'}</td></tr></table>
 </div>
   </div>
   </details>
@@ -1223,7 +1233,7 @@ async function renderSettings(section) {
  */
 async function renderIntegrations(section) {
   const [st, { settings: s }, kk] = await Promise.all([api('/integrations'), api('/settings'), api('/keys')]);
-  const KEY_GROUPS = [ // AI keys (Anthropic, OpenRouter, the GitHub token and return key) are on the AI page (#/ai) since 2026-11-12
+  const KEY_GROUPS = [ // AI keys (Anthropic, the GitHub token and return key) are on the AI page (#/ai) since 2026-11-12
     ['images', 'Stock photos', 'Free photo libraries. With a key, every brochure gets real photos that fit the lead\'s vertical and business (Claude picks them; only the chosen ones are saved, with the photographer recorded).'],
     ['crm', 'Team CRM', 'Where the CRM lives and the key AxiFlow reads it with.'],
     ['sync', 'Live sync and scheduler', 'Secrets that protect the CRM trigger and the scheduler URL.'],
@@ -1237,7 +1247,7 @@ async function renderIntegrations(section) {
         <button class="btn sm primary" data-key-save>Save</button>
         ${k.gen ? '<button class="btn sm" data-key-gen title="Make a new random secret">Generate</button>' : ''}
         ${k.source === 'app' || k.source === 'unreadable' ? `<button class="btn sm ghost" data-key-del title="${st.live ? 'Remove the key saved here' : 'Remove'}">Remove</button>` : ''}
-        ${k.name === 'ANTHROPIC_API_KEY' ? '<button class="btn sm" data-key-test="anthropic">Test</button>' : k.name === 'OPENROUTER_API_KEY' ? '<button class="btn sm" data-key-test="openrouter">Test</button>' : k.group === 'images' ? '<button class="btn sm" data-key-test="stock">Test</button>' : ''}</div>
+        ${k.name === 'ANTHROPIC_API_KEY' ? '<button class="btn sm" data-key-test="anthropic">Test</button>' : k.group === 'images' ? '<button class="btn sm" data-key-test="stock">Test</button>' : ''}</div>
       <div class="int-test" data-key-res></div></div>`;
   const ghSeen = kk.github_secrets || {};
   const ghRow = (name, desc, from) => `<div class="key-row"><div class="key-meta"><b>${name}</b><span class="small muted key-hint">${desc}</span>${ghSeen[name] ? `<span class="tag green">Saved to GitHub ${fmtDate(ghSeen[name])}</span>` : ''}</div>
@@ -1246,7 +1256,7 @@ async function renderIntegrations(section) {
     <p class="small muted">Add API keys and secrets here instead of in .env or Vercel. They are stored encrypted in AxiFlow's database, used at once (no redeploy), and never shown again: only the last 4 characters. A key saved here wins over the same variable on the server; Remove goes back to the server's value. The database URL, login password and session secret stay on the server.</p>
     ${KEY_GROUPS.map(([g, title, text]) => `<div class="key-group"><h3>${title}</h3>${text ? `<p class="small muted">${text}</p>` : ''}${kk.keys.filter((k) => k.group === g).map(keyRow).join('')}
       ${g === 'sync' ? ghRow('CRON_SECRET', 'Lets the 30-minute GitHub pinger call the scheduler (saved into the GitHub repo).', 'CRON_SECRET') : ''}</div>`).join('')}
-    <p class="small muted">AI keys (Anthropic, OpenRouter, the Claude subscription's GitHub key) are on the <a href="#/ai">AI page</a>.</p></div>`;
+    <p class="small muted">AI keys (Anthropic, the Claude subscription's GitHub key) are on the <a href="#/ai">AI page</a>.</p></div>`;
   const val = (path) => path.split('.').reduce((o, k) => o?.[k], s);
   const field = (path, label, type = 'text', opts) => {
     const v = val(path);
@@ -1290,7 +1300,7 @@ async function renderIntegrations(section) {
     <div class="form-grid">${field('automation.auto_template.brochure', 'Automatic brochures use', 'select', tplOpts('brochure'))}${field('automation.auto_template.proposal', 'Automatic proposals use', 'select', tplOpts('proposal'))}</div>
     <h3>Brochure template per website type</h3>
     <p class="small muted">When a lead turns Interested, the CRM asks which website the client wants. The brochure uses the template set here for that type (and Claude writes it around that build). "The default template" falls back to the choice above.</p>
-    <div class="form-grid">${Object.entries(st.templates.website_types || {}).map(([k, n]) => field(`automation.website_templates.brochure.${k}`, n, 'select', [[0, `Automatic: ${({ 'business-website': 'Codeace Precision', 'ecommerce-store': 'Codeace Bold', 'shopify-store': 'Codeace Commerce', 'landing-page': 'Codeace Mono', 'website-seo': 'CodeAce Website & SEO' })[k] || 'the default template'}`], ...tplOpts('brochure').slice(1)])).join('')}</div>
+    <div class="form-grid">${Object.entries(st.templates.website_types || {}).map(([k, n]) => field(`automation.website_templates.brochure.${k}`, n, 'select', [[0, `Automatic: ${({ 'business-website': 'Codeace Business Website', 'ecommerce-store': 'Codeace Bold', 'shopify-store': 'Codeace Commerce', 'landing-page': 'Codeace Mono', 'website-seo': 'CodeAce Website & SEO' })[k] || 'the default template'}`], ...tplOpts('brochure').slice(1)])).join('')}</div>
     <p class="small muted" style="margin-top:8px">Pitch scripts have no template. <a href="#/designs">Manage templates</a></p></div>
 
   <div class="card" id="i-crm"><div class="sec-h"><h2>Team CRM (Atomic CRM on Supabase)</h2><span class="spacer"></span><button class="btn sm" data-test="crm"><span class="mi">network_check</span>Test</button><button class="btn sm" id="intCrmSync"><span class="mi">sync</span>Read the CRM now</button></div>

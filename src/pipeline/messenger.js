@@ -21,7 +21,7 @@ export function buildVars(lead, settings, extra = {}) {
   let audit = null;
   try { audit = lead.audit_json ? JSON.parse(lead.audit_json) : null; } catch { /* ignore */ }
   const pkg = settings.packages.find((p) => p.id === lead.recommended_package) || settings.packages[0];
-  const issue = audit?.findings?.[0]?.text || 'there is room to turn more visitors into enquiries';
+  const issue = audit?.findings?.find((f) => f.severity !== 'info')?.text || 'there is room to turn more visitors into enquiries';
   return {
     first_name: firstName(lead.contact_name),
     contact_name: lead.contact_name || '',

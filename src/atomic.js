@@ -36,7 +36,8 @@ addColumns('leads', { crm_script_note_id: 'INTEGER', crm_script_note_on: 'TEXT' 
 addColumns('leads', { crm_removed_at: 'TEXT', crm_brochure_folder: 'TEXT' });
 addColumns('leads', { crm_brochure_state: 'TEXT', crm_proposal_state: 'TEXT' });
 addColumns('leads', { crm_lead_stage: 'TEXT' });
-addColumns('leads', { crm_created_at: 'TEXT' }); // creation time of the CRM record: a reused id with another time is another lead // last contacts.lead_stage seen (the telecaller's call stage) // last brochure/proposal status seen in or written to the CRM // set when the lead was deleted in the CRM: no more CRM writes for it
+addColumns('leads', { crm_created_at: 'TEXT' });
+addColumns('leads', { crm_brochure_note_id: 'INTEGER' }); // the one "Brochure ready" deal note per lead, updated with each new version // creation time of the CRM record: a reused id with another time is another lead // last contacts.lead_stage seen (the telecaller's call stage) // last brochure/proposal status seen in or written to the CRM // set when the lead was deleted in the CRM: no more CRM writes for it
 
 export const ACTIONS = ['script', 'interested', 'proposal', 'won', 'lost', 'nurture', 'not_interested', 'ignore'];
 
@@ -528,6 +529,25 @@ const brochureLink = (lead) => `${BASE_URL}/pdf/brochure/${lead.token}.pdf`;
 export const publicLinks = () => /^https:\/\//.test(BASE_URL);
 const pdf = (src, title) => ({ src, title, type: 'application/pdf' });
 
+/**
+ * The one "Brochure ready" deal note of a lead, updated with each new version instead of a new note every time
+ * (brochure fix guide 2026-11-13, B12: deal 38 had three identical notes). Recreated if it was deleted in the CRM.
+ */
+async function upsertBrochureNote(lead) {
+  const attachments = [pdf(brochureLink(lead), `${lead.company} - website plan.pdf`)];
+  const body = { text: `Brochure ready for ${lead.company}. Send it to the client from the link below (it always shows the latest version).`, date: nowISO(), attachments };
+  if (lead.crm_brochure_note_id) {
+    const r = await rest('PATCH', `deal_notes?id=eq.${lead.crm_brochure_note_id}`, body, 'return=representation');
+    if (r?.length) return;
+  }
+  const row = { ...body, deal_id: lead.crm_deal_id, sales_id: lead.crm_sales_id ?? null };
+  let r;
+  try { r = await rest('POST', 'deal_notes', row, 'return=representation'); } catch { // the CRM refused the attachment: the link goes in the text (as note() does)
+    r = await rest('POST', 'deal_notes', { ...row, attachments: undefined, text: `${body.text}\n\n${attachments.map((a) => `${a.title}: ${a.src}`).join('\n')}` }, 'return=representation');
+  }
+  await update('leads', lead.id, { crm_brochure_note_id: r?.[0]?.id ?? null });
+}
+
 async function note(lead, text, attachments = []) {
   const body = { deal_id: lead.crm_deal_id, text, date: nowISO(), sales_id: lead.crm_sales_id ?? null };
   try {
@@ -683,7 +703,7 @@ export async function pushEvent(row) {
     if (!s.brochures_table) return 'skipped';
     if (event === 'lead.pitch_ready' && !lead.brochure_version) return 'skipped';
     const st = await upsertBrochure(lead);
-    if (st === 'sent' && event === 'lead.brochure_ready' && s.notes && lead.crm_deal_id && canWrite('deal_notes')) await note(lead, `Brochure ready for ${lead.company}. Send it to the client from the link below (it always shows the latest version).`, [pdf(brochureLink(lead), `${lead.company} - website plan.pdf`)]);
+    if (st === 'sent' && event === 'lead.brochure_ready' && s.notes && lead.crm_deal_id && canWrite('deal_notes')) await upsertBrochureNote(lead);
     return st;
   }
   // Call scripts: one CRM note per lead (on the main contact, else the deal), kept up to date.
@@ -706,7 +726,7 @@ export async function pushEvent(row) {
       return 'sent';
     case 'lead.brochure_ready':
       if (s.brochures_table) await upsertBrochure(lead);
-      if (s.notes) await note(lead, `Brochure ready for ${lead.company}. Send it to the client from the link below (it always shows the latest version).`, [pdf(brochureLink(lead), `${lead.company} - website plan.pdf`)]);
+      if (s.notes) await upsertBrochureNote(lead);
       return 'sent';
     case 'lead.call_requested': {
       if (!s.call_tasks || !lead.crm_contact_id) return 'skipped';

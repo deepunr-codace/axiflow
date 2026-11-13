@@ -1,9 +1,10 @@
 // Lean jobs (SWOT): save Claude's answer as work/out/result.json for validate/post. With --json-schema the answer is
 // the structured output; otherwise (older CLI) the JSON is taken from the final message. A message without parseable
 // JSON leaves no result file, so post.mjs reports it and AxiFlow retries.
+// Argument: the Claude Code output file in work/ (default claude.json; the repair round passes claude-repair.json).
 import fs from 'node:fs';
 const dir = new URL('./work/', import.meta.url);
-const j = JSON.parse(fs.readFileSync(new URL('claude.json', dir), 'utf8'));
+const j = JSON.parse(fs.readFileSync(new URL(process.argv[2] || 'claude.json', dir), 'utf8'));
 const save = (out, how) => {
   fs.mkdirSync(new URL('out/', dir), { recursive: true });
   fs.writeFileSync(new URL('out/result.json', dir), JSON.stringify(out, null, 2));

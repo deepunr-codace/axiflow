@@ -85,9 +85,8 @@ export const DEFAULT_SETTINGS = {
   milestones: ['Discovery & sitemap', 'UI design', 'Development', 'Content & SEO setup', 'Client review', 'Launch'],
   ai: {
     enabled: true,
-    provider: 'auto', // auto | anthropic | openrouter (auto: Anthropic if ANTHROPIC_API_KEY is set, else OpenRouter)
+    provider: 'anthropic', // the Claude API only (OpenRouter removed 2026-11-13)
     model: 'claude-opus-5-5',
-    openrouter_model: '', // empty: the Claude model above on OpenRouter (anthropic/claude-opus-5.5)
     effort_research: 'high',
     effort_writing: 'medium',
     effort_light: 'low',
@@ -214,10 +213,10 @@ export const DEFAULT_SETTINGS = {
    * Claude mode (owner, 2026-11-05): the three tools write their documents with Claude Code on GitHub
    * (src/claude-worker.js, .github/workflows/claude-generate.yml). Switched with the Claude button in the sidebar.
    */
-  // engine: github (Claude Code, subscription) | anthropic (own API key) | openrouter (own key); api_model per API engine
+  // engine: github (Claude Code, subscription) | anthropic (own API key); api_model per API engine
   // fonts for brochures / proposals: 'auto' = Claude picks a pairing for the lead (src/design/fonts.js), 'template' = the template's own fonts, or a pairing id
   fonts: { brochure: 'auto', proposal: 'auto' },
-  claude: { mode: false, engine: 'github', api_model: { anthropic: 'claude-opus-5-5', openrouter: 'anthropic/claude-opus-5.5' }, fallback_engine: 'anthropic', github_repo: 'deepunr-codace/axiflow', timeout_minutes: 12, max_attempts: 3, web_research: true },
+  claude: { mode: false, engine: 'github', api_model: { anthropic: 'claude-opus-5-5' }, fallback_engine: 'anthropic', github_repo: 'deepunr-codace/axiflow', timeout_minutes: 12, max_attempts: 3, web_research: true },
   brochure_ai: {
     enabled: true,
     pipeline: 'staged',
@@ -564,8 +563,29 @@ function deepMerge(base, over) {
 let cached = null;
 export async function loadSettings() {
   const row = await get(`SELECT value FROM settings WHERE key='app'`);
-  cached = deepMerge(DEFAULT_SETTINGS, row ? JSON.parse(row.value) : {});
+  cached = dropOpenRouter(deepMerge(DEFAULT_SETTINGS, row ? JSON.parse(row.value) : {}));
   return structuredClone(cached);
+}
+/**
+ * OpenRouter was removed on 2026-11-13 (owner: "remove all free ai from our axiflow(openrouter)"): a saved choice of it
+ * becomes the Anthropic API key (a main engine or the assistant) or no backup. Applied on every load, saved with the
+ * next save.
+ */
+function dropOpenRouter(s) {
+  const OR = 'openrouter';
+  if (s.ai) {
+    s.ai.provider = 'anthropic';
+    delete s.ai.openrouter_model;
+    if (s.ai.backup_provider === OR) s.ai.backup_provider = '';
+  }
+  if (s.claude) {
+    if (s.claude.engine === OR) s.claude.engine = 'anthropic';
+    for (const k of Object.keys(s.claude.engines || {})) if (s.claude.engines[k] === OR) s.claude.engines[k] = 'anthropic';
+    if (s.claude.fallback_engine === OR) s.claude.fallback_engine = '';
+    for (const k of Object.keys(s.claude.fallbacks || {})) if (s.claude.fallbacks[k] === OR) s.claude.fallbacks[k] = 'none';
+    if (s.claude.api_model) delete s.claude.api_model[OR];
+  }
+  return s;
 }
 export function getSettings() {
   return structuredClone(cached || DEFAULT_SETTINGS);

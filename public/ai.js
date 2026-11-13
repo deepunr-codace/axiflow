@@ -3,7 +3,7 @@
  * key adding options, fallback options… user friendly"). Everything about AI in one place, in plain words:
  *   1. one switch: AI writes your documents (on/off), with a sentence saying who writes what;
  *   2. who writes what: main AI + backup for SWOTs, brochures, proposals and the editor assistant;
- *   3. your AI accounts: Claude subscription (through GitHub), Anthropic API key, OpenRouter key: status, key, test,
+ *   3. your AI accounts: Claude subscription (through GitHub) and the Anthropic API key (OpenRouter removed 2026-11-13): status, key, test,
  *      what each is used for; the subscription's setup as a 3-step checklist that folds away once it works;
  *   4. paid AI spending (today / this month / daily limit); 5. recent AI work; 6. advanced (models, retries), folded.
  * Server: src/ai-setup.js (GET/PUT /api/ai-setup, check-github, return-key); keys: the existing /api/keys routes.
@@ -11,8 +11,8 @@
 let H = null; // helpers from app.js: $, $$, api, esc, toast, busy, fmtDate, view, onMode
 export function setupAi(helpers) { H = helpers; }
 
-const NAME = { github: 'Claude subscription', anthropic: 'Anthropic API', openrouter: 'OpenRouter', none: 'No backup', off: 'Off' };
-const ICON = { github: 'workspace_premium', anthropic: 'key', openrouter: 'alt_route' };
+const NAME = { github: 'Claude subscription', anthropic: 'Anthropic API', none: 'No backup', off: 'Off' };
+const ICON = { github: 'workspace_premium', anthropic: 'key' };
 const JOB_ICON = { script: 'record_voice_over', brochure: 'menu_book', proposal: 'request_quote', assistant: 'chat' };
 const MODELS = [['claude-opus-5-5', 'Claude Opus 5.5 (best writing)'], ['claude-sonnet-5-5', 'Claude Sonnet 5.5 (cheaper)'], ['claude-haiku-5-5', 'Claude Haiku 5.5 (cheapest)']];
 const usd = (n) => `$${Number(n || 0).toFixed(2)}`;
@@ -24,7 +24,7 @@ const ago = (iso) => {
 };
 const list = (a) => (a.length <= 1 ? a.join('') : `${a.slice(0, -1).join(', ')} and ${a.at(-1)}`);
 const lc = (label) => (label === 'SWOTs' ? label : label.toLowerCase()); // "SWOTs" stays as it is in a sentence
-const OWN = { github: 'your Claude subscription', anthropic: 'your Anthropic API key', openrouter: 'your OpenRouter key' };
+const OWN = { github: 'your Claude subscription', anthropic: 'your Anthropic API key' };
 const cap = (s) => s[0].toUpperCase() + s.slice(1);
 let lastCheck = null; // the last "Check" result for the subscription, kept across redraws
 const dot = (tone) => `<i class="ai-dot ${tone}"></i>`;
@@ -46,7 +46,7 @@ function facts(d) {
 /** One or two sentences: who writes what, and what happens when it fails. */
 function summary(d) {
   const { A, resting, spentOut } = facts(d);
-  if (!d.mode) return '<b>Off.</b> New documents get your standard text. Turn this on to let AI write them for each lead.';
+  if (!d.mode) return '<b>Off.</b> No documents are written: new ones fail with Try again. Turn this on so the AI researches and writes them for each lead.';
   const by = (key) => { const m = new Map(); for (const j of d.jobs) { const k = key(j); if (k) m.set(k, [...(m.get(k) || []), j]); } return m; };
   const mains = by((j) => j.main);
   const all = (jobs) => (jobs.length === d.jobs.length ? 'SWOTs, brochures and proposals' : list(jobs.map((j) => lc(j.label))));
@@ -109,8 +109,8 @@ function accountStatus(d, e) {
 function selectFor(d, id, kind, value, main) {
   const { A } = facts(d);
   const opts = kind === 'main'
-    ? (id === 'assistant' ? ['anthropic', 'openrouter', 'off'] : ['github', 'anthropic', 'openrouter'])
-    : ['none', ...(id === 'assistant' ? ['anthropic', 'openrouter'] : ['github', 'anthropic', 'openrouter']).filter((e) => e !== main)];
+    ? (id === 'assistant' ? ['anthropic', 'off'] : ['github', 'anthropic'])
+    : ['none', ...['github', 'anthropic'].filter((e) => e !== main)];
   // the chosen value reads plainly (the "Now" column says when it is not set up); other options say why they are greyed out
   const label = (e) => (e === 'none' || e === 'off' || e === value || A[e].ready ? NAME[e] : `${NAME[e]} (not set up)`);
   return `<select data-job="${id}" data-part="${kind}" aria-label="${kind === 'main' ? 'Written by' : 'Backup'}">${opts.map((e) => `<option value="${e}" ${e === value ? 'selected' : ''} ${e !== value && e !== 'none' && e !== 'off' && !A[e].ready ? 'disabled' : ''}>${H.esc(label(e))}</option>`).join('')}</select>`;
@@ -118,8 +118,8 @@ function selectFor(d, id, kind, value, main) {
 
 function keyBlock(d, e) {
   const a = d.accounts[e];
-  const name = e === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENROUTER_API_KEY';
-  const where = e === 'anthropic' ? ['console.anthropic.com', 'https://console.anthropic.com/settings/keys'] : ['openrouter.ai', 'https://openrouter.ai/settings/keys'];
+  const name = 'ANTHROPIC_API_KEY';
+  const where = ['console.anthropic.com', 'https://console.anthropic.com/settings/keys'];
   const k = a.key;
   const saved = k && k.source && k.source !== 'unreadable';
   return `<div class="ai-key" data-key="${name}">
@@ -162,7 +162,6 @@ function accountCard(d, e) {
   const about = {
     github: ['Uses your Claude plan: no extra cost per document', 'Has a 5-hour usage limit; rests, then continues by itself', 'Takes about 1 to 5 minutes per document'],
     anthropic: ['Pay per document: about $0.10 for a SWOT, about $1 for a brochure', 'Fast (1 to 3 minutes) and no 5-hour limit', 'Counts towards your daily spending limit'],
-    openrouter: ['Pay per use through OpenRouter, many AI models', 'Web research needs credits on your OpenRouter account', 'Counts towards your daily spending limit'],
   }[e];
   return `<article class="card ai-acct${e === 'github' ? ' wide' : ''}" id="ai-${e}">
     <header class="ai-acct-h"><span class="ai-acct-ic mi">${ICON[e]}</span><div class="grow"><h3>${NAME[e]}${e === 'github' ? ' <small>through GitHub</small>' : ''}</h3>${accountStatus(d, e)}</div>
@@ -183,7 +182,7 @@ function draw(d) {
   const row = (id, label, detail, main, backup) => `<div class="ai-job">
       <div class="ai-job-name"><span class="mi">${JOB_ICON[id]}</span><div><b>${esc(label)}</b><small>${esc(detail)}</small></div></div>
       <label class="ai-job-cell"><span class="ai-job-l">Written by</span>${selectFor(d, id, 'main', main)}</label>
-      <label class="ai-job-cell"><span class="ai-job-l">If that fails</span>${main === 'off' ? '<span class="muted small">–</span>' : selectFor(d, id, 'backup', backup, main)}</label>
+      <label class="ai-job-cell"><span class="ai-job-l">If that fails</span>${main === 'off' || id === 'assistant' ? '<span class="muted small">–</span>' : selectFor(d, id, 'backup', backup, main)}</label>
       <div class="ai-job-cell ai-job-st">${jobStatus(d, main, backup)}</div>
     </div>`;
   H.view.innerHTML = `
@@ -207,11 +206,11 @@ function draw(d) {
       ${d.jobs.map((j) => row(j.id, j.label, j.detail, j.main, j.backup)).join('')}
       ${row('assistant', 'Editor assistant', 'The chat in the document editor (needs an instant answer, so not the subscription)', d.assistant.main, d.assistant.backup)}
     </div>
-    <label class="te-opt ai-research"><span class="grow"><b>Research each business on the web first</b><small>Better, more specific documents; takes a little longer.</small></span><input type="checkbox" class="te-sw" id="aiResearch" ${d.options.web_research ? 'checked' : ''} aria-label="Research each business on the web first"></label>
+    <p class="ai-note ai-research-note">The AI researches every business on the web first (its website, Google listing, social pages) and writes only from what it finds. Nothing is ever filled in with standard text: if the AI cannot finish a document, it shows the reason and a Try again button.</p>
   </section>
 
   <h2 class="ai-sec-title">Your AI accounts</h2>
-  <div class="ai-accts">${['github', 'anthropic', 'openrouter'].map((e) => accountCard(d, e)).join('')}</div>
+  <div class="ai-accts">${['github', 'anthropic'].map((e) => accountCard(d, e)).join('')}</div>
 
   <div class="ai-two">
     <section class="card ai-spend">
@@ -219,7 +218,7 @@ function draw(d) {
       <div class="ai-spend-row"><span class="ai-big">${usd(d.spend.today)}</span><span class="muted">of ${usd(d.spend.limit)} today</span><span class="spacer"></span><span class="muted small">This month: <b>${usd(d.spend.month)}</b></span></div>
       <div class="ai-bar ${pct >= 100 ? 'full' : pct >= 80 ? 'high' : ''}" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct)}"><i style="width:${pct}%"></i></div>
       <form class="ai-limit" id="aiLimitForm"><label>Daily limit (US$)<input type="number" min="0" max="1000" step="1" id="aiLimit" value="${esc(d.spend.limit)}"></label><button class="btn sm" type="submit">Save limit</button></form>
-      <p class="ai-help">Counts the Anthropic and OpenRouter keys. The Claude subscription is part of your plan, so it is not counted. When the limit is reached, paid AI stops until midnight and jobs go to their backup, or wait. $0 means never use paid AI.</p>
+      <p class="ai-help">Counts the Anthropic API key. The Claude subscription is part of your plan, so it is not counted. When the limit is reached, paid AI stops until midnight and jobs go to their backup, or wait. $0 means never use paid AI.</p>
     </section>
 
     <section class="card ai-recent">
@@ -236,9 +235,7 @@ function draw(d) {
     <summary><h2>Advanced</h2><span class="small muted">Models, waiting time, tries, repository</span></summary>
     <form id="aiAdvForm" class="form-grid">
       <label>Model for documents on the Anthropic API<select name="anthropic_docs">${modelOpts(d.options.models.anthropic_docs)}</select></label>
-      <label>Model for documents on OpenRouter<input name="openrouter_docs" value="${esc(d.options.models.openrouter_docs)}" spellcheck="false"></label>
       <label>Model for the editor assistant on the Anthropic API<select name="anthropic_chat">${modelOpts(d.options.models.anthropic_chat)}</select></label>
-      <label>Model for the editor assistant on OpenRouter<input name="openrouter_chat" value="${esc(d.options.models.openrouter_chat)}" placeholder="Same as the Anthropic model" spellcheck="false"></label>
       <label>Wait for an answer before trying again (minutes)<input type="number" name="timeout_minutes" min="3" max="60" value="${esc(d.options.timeout_minutes)}"></label>
       <label>Tries before a document shows an error<input type="number" name="max_attempts" min="1" max="5" value="${esc(d.options.max_attempts)}"></label>
       <label class="wide">GitHub repository that runs the Claude subscription (owner/name)<input name="github_repo" value="${esc(d.options.github_repo)}" spellcheck="false"></label>
@@ -268,7 +265,7 @@ function wire(d) {
   const root = H.view;
   $('#aiMode', root).onchange = async (ev) => {
     const on = ev.target.checked;
-    try { await save({ mode: on }, on ? 'AI writing is on' : 'AI writing is off: new documents get your standard text'); } catch (e) { ev.target.checked = !on; toast(e.message, true); }
+    try { await save({ mode: on }, on ? 'AI writing is on' : 'AI writing is off: new documents fail until it is back on'); } catch (e) { ev.target.checked = !on; toast(e.message, true); }
   };
   $$('select[data-job]', root).forEach((sel) => (sel.onchange = async () => {
     const id = sel.dataset.job, part = sel.dataset.part;
@@ -277,13 +274,12 @@ function wire(d) {
     const label = id === 'assistant' ? 'Editor assistant' : d.jobs.find((x) => x.id === id).label;
     try { await save(body, part === 'main' ? `${label}: ${NAME[sel.value]}${sel.value === 'off' ? '' : ' writes'}` : `${label}: backup is ${NAME[sel.value]}`); } catch (e) { toast(e.message, true); draw(d); }
   }));
-  $('#aiResearch', root).onchange = async (ev) => { try { await save({ web_research: ev.target.checked }, ev.target.checked ? 'AI researches each business first' : 'AI writes without web research'); } catch (e) { toast(e.message, true); } };
   $('#aiLimitForm', root).onsubmit = (ev) => { ev.preventDefault(); busy(ev.submitter, async () => save({ limit: Number($('#aiLimit', root).value) }, 'Daily limit saved')); };
   $('#aiAdvForm', root).onsubmit = (ev) => {
     ev.preventDefault();
     const f = new FormData(ev.target);
     const g = (k) => String(f.get(k) ?? '');
-    busy(ev.submitter, async () => save({ options: { timeout_minutes: Number(g('timeout_minutes')), max_attempts: Number(g('max_attempts')), github_repo: g('github_repo'), models: { anthropic_docs: g('anthropic_docs'), openrouter_docs: g('openrouter_docs'), anthropic_chat: g('anthropic_chat'), openrouter_chat: g('openrouter_chat') } } }, 'Advanced settings saved'));
+    busy(ev.submitter, async () => save({ options: { timeout_minutes: Number(g('timeout_minutes')), max_attempts: Number(g('max_attempts')), github_repo: g('github_repo'), models: { anthropic_docs: g('anthropic_docs'), anthropic_chat: g('anthropic_chat') } } }, 'Advanced settings saved'));
   };
   // keys
   $$('.ai-key[data-key]', root).forEach((box) => {
@@ -303,7 +299,7 @@ function wire(d) {
           const fresh = await H.api('/ai-setup');
           draw(fresh);
           toast('Key saved');
-          const prov = name === 'ANTHROPIC_API_KEY' ? 'anthropic' : name === 'OPENROUTER_API_KEY' ? 'openrouter' : null;
+          const prov = name === 'ANTHROPIC_API_KEY' ? 'anthropic' : null;
           if (prov) { const t = await api(`/keys-test/${prov}`, { body: {} }); result($(`#ai-${prov} [data-result]`, H.view), t.ok, t.ok ? `${t.detail}. Ready to use.` : `Saved, but the test failed: ${t.detail}`); }
         } catch (e) { result(res, false, e.message); }
       });
@@ -312,7 +308,7 @@ function wire(d) {
     }
     const rm = $('[data-remove]', box);
     if (rm) rm.onclick = () => busy(rm, async () => {
-      const used = d.jobs.some((j) => (j.main === 'anthropic' && name === 'ANTHROPIC_API_KEY') || (j.main === 'openrouter' && name === 'OPENROUTER_API_KEY'));
+      const used = d.jobs.some((j) => (j.main === 'anthropic' && name === 'ANTHROPIC_API_KEY'));
       if (!confirm(used ? 'This key writes some of your documents. Remove it anyway? Those documents will use their backup, or wait.' : 'Remove this key from AxiFlow?')) return;
       await api(`/keys/${name}`, { method: 'DELETE' });
       draw(await H.api('/ai-setup'));

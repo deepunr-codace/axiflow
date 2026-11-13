@@ -19,7 +19,8 @@ concurrency:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # 35: the designed brochure makes up to four calls (write, claims check, review; one repair) plus two renders
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
 
@@ -36,6 +37,12 @@ jobs:
           key: claude-code-npm-${{ steps.week.outputs.n }}
       - name: Install Claude Code
         run: npm install -g --prefer-offline --no-audit --no-fund @anthropic-ai/claude-code@latest
+
+      # The designed brochure renders its pages here for the visual review: AxiFlow's own packages (puppeteer-core,
+      # cheerio) and the runner's Chrome (/usr/bin/google-chrome). Other jobs do not need them.
+      - name: Install the render packages (designed brochure)
+        if: github.event.client_payload.job.purpose == 'brochure_designed'
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Write the job (not printed)
         env:
@@ -56,20 +63,33 @@ jobs:
           rm -rf CLAUDE.md .claude
           W=claude-worker/work
           WEB="$(node -p "require('./$W/job.json').web ? 1 : 0")"
+          # the model is pinned by AxiFlow per job (job.model; empty = Claude Code's default), and so is the turn limit
+          MODEL="$(node -p "require('./$W/job.json').model || ''")"
+          JOB_TURNS="$(node -p "require('./$W/job.json').max_turns || ''")"
+          M=(); [ -n "$MODEL" ] && M=(--model "$MODEL")
+          PURPOSE="$(node -p "require('./$W/job.json').purpose || ''")"
           OK=1
-          if [ -f $W/PROMPT-inline.txt ]; then
-            # SWOT, lean (measured 2026-11-09: 73k tokens per run, ~60k of it Claude Code's own default system prompt
-            # and tools): our short system prompt instead, only the web tools, no MCP, and --json-schema so the answer
-            # is always valid JSON (a malformed answer had cost a second paid run)
+          if [ "$PURPOSE" = "brochure_designed" ]; then
+            # the designed brochure: write, claims check, render, visual review, all on the subscription
+            # (claude-worker/designed.mjs; it writes out/result.json, claude.json with the usage of all calls, and
+            # claude-error.txt when it fails)
+            node claude-worker/designed.mjs || exit 1
+          elif [ -f $W/PROMPT-inline.txt ]; then
+            # Lean (SWOT since 2026-11-09, the HTML brochures and proposals since 2026-11-13; measured: ~60k tokens per
+            # run were Claude Code's own default system prompt and tools): our short system prompt instead, only the web
+            # tools, no MCP. --json-schema when the job has a schema small enough for it (schema-inline.json); else the
+            # schema is in the prompt and the answer is checked below with one repair round.
             if [ "$WEB" = "1" ]; then EXTRA=(--tools "WebSearch,WebFetch" --allowedTools "WebSearch,WebFetch"); TURNS=10
             else EXTRA=(--tools ""); TURNS=3; fi
-            claude -p "$(cat $W/PROMPT-inline.txt)" --system-prompt "$(cat $W/SYSTEM-inline.txt)" "${EXTRA[@]}" \
-              --strict-mcp-config --json-schema "$(cat $W/schema-inline.json)" \
+            [ -n "$JOB_TURNS" ] && TURNS="$JOB_TURNS"
+            SCHEMA=(); [ -f $W/schema-inline.json ] && SCHEMA=(--json-schema "$(cat $W/schema-inline.json)")
+            claude -p "$(cat $W/PROMPT-inline.txt)" --system-prompt "$(cat $W/SYSTEM-inline.txt)" "${EXTRA[@]}" "${M[@]}" \
+              --strict-mcp-config "${SCHEMA[@]}" \
               --max-turns "$TURNS" --output-format json > $W/claude.json || OK=0
           else
             TOOLS="Read,Write,Edit,Bash(node claude-worker/validate.mjs),Bash(node claude-worker/validate.mjs:*)"
             [ "$WEB" = "1" ] && TOOLS="$TOOLS,WebSearch,WebFetch"
-            claude -p "$(cat claude-worker/PROMPT.txt)" \
+            claude -p "$(cat claude-worker/PROMPT.txt)" "${M[@]}" \
               --allowedTools "$TOOLS" --max-turns 60 --output-format json > $W/claude.json || OK=0
           fi
           if [ "$OK" = "0" ]; then
@@ -78,6 +98,12 @@ jobs:
           fi
           # lean jobs: save the structured answer as out/result.json
           [ -f $W/PROMPT-inline.txt ] && node claude-worker/inline-result.mjs
+          # lean jobs without --json-schema (kind html): one repair round when the answer does not pass the checks
+          if node claude-worker/repair-prompt.mjs; then
+            claude -p "$(cat $W/PROMPT-repair.txt)" --system-prompt "$(cat $W/SYSTEM-inline.txt)" --tools "" "${M[@]}" \
+              --strict-mcp-config --max-turns 2 --output-format json > $W/claude-repair.json \
+              && node claude-worker/inline-result.mjs claude-repair.json || true
+          fi
           # usage only (numbers, no lead data): turns, tokens, cost, time, per model
           node -e "const j=require('./claude-worker/work/claude.json');const u=j.usage||{};console.log('USAGE', JSON.stringify({kind:require('./claude-worker/work/job.json').kind,turns:j.num_turns,cost_usd:j.total_cost_usd,ms:j.duration_ms,input:u.input_tokens,cache_write:u.cache_creation_input_tokens,cache_read:u.cache_read_input_tokens,output:u.output_tokens,web_search:u.server_tool_use&&u.server_tool_use.web_search_requests,models:Object.fromEntries(Object.entries(j.modelUsage||{}).map(([k,v])=>[k,{in:v.inputTokens,out:v.outputTokens,cache_read:v.cacheReadInputTokens,cache_write:v.cacheCreationInputTokens,usd:v.costUSD}]))}))" || true
 

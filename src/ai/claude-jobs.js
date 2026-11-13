@@ -32,27 +32,48 @@ function craft() {
 
 const leadBlock = (dossier) => (dossier ? section('lead', `What the CRM and AxiFlow know about this lead (the team's own records):\n${dossier}`) : '');
 
-/** The lead's SWOT report and how our services solve it, built by Claude from research and the CRM record. */
-export function claudeScriptJob(input, research, audit, dossier = '') {
-  const base = scriptJob(input, research, audit);
+/**
+ * The lead's SWOT report and how our services solve it, written by Claude from the verified facts (V-ids), the gated
+ * evidence (E-ids) and the CRM record only (SWOT fix guide 2026-11-13, stage 4: no browsing while writing).
+ */
+// The guide's guardrail lines for script jobs (6.2), added to guardrails().
+export const SWOT_GUARDRAILS = `- Every SWOT point must rest on <verified_facts> or <evidence> and cite their ids, e.g. [V3] or [E7].
+- A claim that something is missing (no phone, no blog, no reviews, not on Google) needs a verified
+  fact of kind "absent" or an evidence item of kind "not_found_after_check". Otherwise put it in
+  to_confirm or leave it out.
+- <verified_facts> override <evidence>. <evidence> overrides everything else in the job.
+- The vertical playbook describes typical businesses in this sector, not this one. It may shape
+  solutions and strategy only. Never use it as the source of a SWOT point.`;
+export function claudeScriptJob(input, research, facts = [], dossier = '') {
+  const base = scriptJob(input, research, facts);
   const s = getSettings();
   return {
     ...base,
     system: [
       section('identity', `You are a senior digital strategist at ${s.agency.name}, a digital agency in Kerala that builds websites and does SEO, AEO (answer engine optimisation), GEO (generative engine optimisation, being recommended by AI assistants) and business automation. You write a short SWOT analysis of one business and show how our services solve what it found. The sales team reads it before talking to the business. Success: an analyst would sign it; every point is specific to this business and backed by what you found.`),
-      guardrails('- A point you could not verify is stated as unknown or "to confirm", never as fact.'),
+      guardrails(`- A point you could not verify is stated as unknown or "to confirm", never as fact.\n${SWOT_GUARDRAILS}`),
       craft(),
-      section('output_contract', 'Return JSON matching the schema. pitch_point: one line for the CRM naming the main problem we solve for this business (it must name the business). swot: summary plus 2-4 points per dimension, each one factual sentence. solutions: 4-6 rows, each one concrete problem of this business mapped to one service (Website development, SEO, AEO, GEO or Automation), what we would do and the practical result.'),
+      // the guide's output contract (6.2), word for word
+      section('output_contract', `Return JSON matching the schema. pitch_point: one line for the CRM naming the main problem we solve
+for this business; it must name the business and rest on a cited weakness. swot: summary, 2-4 points
+per dimension, each {text, refs, basis}; to_confirm lists what could not be verified. solutions: 4-6
+rows, each answering one cited SWOT point, mapped to one service (Website development, SEO, AEO, GEO or
+Automation), what we would do and the practical result. strategy: derived from the SWOT.`),
     ].join('\n\n'),
     prompt: [
       base.prompt,
       leadBlock(dossier),
+      // the guide's <process> (6.2), word for word: no research step, the sources are in the job
       section('process', `Work in this order:
-1. Research the business (if web search is allowed): its website, Google / Maps listing and reviews, Instagram or Facebook page, and two or three competitors in the same place. Find what it offers, who its customers are, how they enquire, book or buy today, how it shows up on Google and in AI answers, and what is missing online.
-2. Read the CRM record: the call results, the team's notes and open tasks.
-3. Write the SWOT from what you found: strengths and weaknesses are about the business itself (offer, reputation, website, search presence, response speed); opportunities and threats are outside it (demand, search and AI-assistant behaviour, competitors).
-4. Map the weaknesses, threats and opportunities that matter most to our services, so each solution answers a specific finding.
-5. Check every line against <craft> and <guardrails>; rewrite what fails.`),
+1. Read <verified_facts> and <evidence>. Do not browse; everything you may state about the business is
+   there.
+2. Read the CRM record: call results, team notes, open tasks.
+3. Write the SWOT from those sources only, citing ids on every point.
+4. Map the weaknesses, threats and opportunities that matter most to our services.
+5. Derive the strategy from the SWOT. The vertical playbook may guide the angle, tone and offer.
+6. Check every point: does it cite an id? Is every "missing" claim backed by an absent fact or a
+   not_found_after_check item? Rewrite or move to to_confirm what fails. Then check <craft> and
+   <guardrails>.`),
     ].filter(Boolean).join('\n\n'),
     kind: 'script',
   };

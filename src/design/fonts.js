@@ -43,6 +43,9 @@ export const EXTRA_FONTS = {
   BB4: F('BebasNeue-400.ttf', 'Bebas Neue', 400, 'Bebas Neue', 'Helvetica-Bold'),
   AN4: F('Anton-400.ttf', 'Anton', 400, 'Anton', 'Helvetica-Bold'),
   AF4: F('AbrilFatface-400.ttf', 'Abril Fatface', 400, 'Abril Fatface', 'Times-Bold'),
+  // Codeace Growth (owner's "Digital Growth Solutions" deck, 2026-11-10): bold Inter headings, mono eyebrows
+  IB7: F('Inter-Bold.ttf', 'InterDeck', 700, 'Inter Bold', 'Helvetica-Bold'),
+  JM5: F('JetBrainsMono-500.ttf', 'JetBrains Mono', 500, 'JetBrains Mono Medium', 'Courier'),
 };
 export const EXTRA_CODES = Object.keys(EXTRA_FONTS);
 

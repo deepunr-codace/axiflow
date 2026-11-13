@@ -1,0 +1,31 @@
+{
+  "about": "SWOT golden set (SWOT fix guide 2026-11-13, section 8). One entry per lead the team knows well: 8-10 things that are true and 3-4 tempting things that are false. scripts/golden-set.js checks each lead's latest SWOT against them. A false statement matches when any of its patterns (case-insensitive regular expressions) matches a SWOT point, the summary, the pitch point or a solution's problem. A true statement is 'covered' when one of its patterns matches (for information: a SWOT need not repeat every truth). type: 'absence' for false 'missing' claims (target: zero), 'fact' for other false claims (target: zero). Only Thread Stories is filled in so far, from AxiFlow's own website check of 13 Nov 2026 (facts V1-V33): the owner should review it and add the other 9 leads.",
+  "leads": [
+    {
+      "company": "Thread Stories",
+      "crm_company_id": null,
+      "lead_id": 276,
+      "website": "https://threadstories.in",
+      "written_by": "AxiFlow from its verified facts (13 Nov 2026); owner to review",
+      "true": [
+        { "text": "Phone +91 90742 25900 and email contact@threadstories.in are on the home page and the contact page (/contact-us/)", "patterns": ["90742\\s?25900", "contact@threadstories\\.in"] },
+        { "text": "There is a WhatsApp link or button on the home page and the contact page", "patterns": ["whatsapp"] },
+        { "text": "There is an enquiry / contact form", "patterns": ["(enquiry|contact) form"] },
+        { "text": "The business is in Palakkad, Kerala", "patterns": ["palakkad"] },
+        { "text": "Healing Crystals comes before the sarees in the main menu", "patterns": ["healing crystals"] },
+        { "text": "2 of 8 home page best sellers are marked out of stock", "patterns": ["out of stock", "sold[- ]out"] },
+        { "text": "8 of 113 images have AI-tool (ChatGPT) file names", "patterns": ["chatgpt", "ai[- ](tool|image)"] },
+        { "text": "The category pages have no meta description", "patterns": ["meta description"] },
+        { "text": "The site runs on WordPress + WooCommerce", "patterns": ["wordpress", "woocommerce"] },
+        { "text": "Instagram, Facebook and YouTube pages are linked on the website", "patterns": ["instagram", "youtube", "facebook"] }
+      ],
+      "false": [
+        { "type": "absence", "text": "The website has no phone number or email", "patterns": ["\\b(no|lacks?|missing|without|absent|not (list|show|have|display)\\w*|doesn'?t (list|show|have|display))\\b[^.;]{0,40}\\b(phone|e-?mail|contact (number|details))", "\\b(phone|e-?mail|contact details)\\b[^.;]{0,30}\\b(missing|absent|not (listed|shown|found|available))"] },
+        { "type": "absence", "text": "There is no WhatsApp button or link", "patterns": ["\\b(no|lacks?|missing|without)\\b[^.;]{0,25}\\bwhats\\s?app", "whats\\s?app\\b[^.;]{0,25}\\b(missing|absent|not (found|available|offered))"] },
+        { "type": "absence", "text": "There is no contact or enquiry form", "patterns": ["\\b(no|lacks?|missing|without)\\b[^.;]{0,25}\\b(contact|enquiry|inquiry) form"] },
+        { "type": "absence", "text": "There is no blog", "patterns": ["\\b(no|lacks?|missing|without)\\b[^.;]{0,15}\\bblog\\b"] },
+        { "type": "fact", "text": "The business is in Mumbai (that is threadstories.co.in, a different business)", "patterns": ["mumbai"] }
+      ]
+    }
+  ]
+}

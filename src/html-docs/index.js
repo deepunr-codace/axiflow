@@ -10,9 +10,16 @@ import { brochurePsHtml, pagePlan as psPagePlan, ideaPlan as psIdeaPlan, SIZE as
 import { NIRAPARA_BROCHURE_PS, NIRAPARA_PS_INPUT } from './samples/nirapara-brochure-ps.js';
 const PS = 'builtin-html-brochure-ps';
 import { applyEdits, cleanEdits, hasEdits } from './edits.js';
+import { WEBSITE_CHECK_RULE } from '../pipeline/enrich.js';
 import { brochureSeoHtml, SIZE as SEO_SIZE, PHOTOS as SEO_PHOTOS } from './brochure-seo.js';
 import { SEO_BROCHURE } from './samples/codeace-seo-brochure.js';
 export const SEO = 'builtin-html-brochure-seo';
+// the designed brochure (brochure fix guide 2026-11-13, phases 2-4): Claude composes the pages from the CodeAce design
+// system (src/brochure/); a template like the others, so the page view, design mode, PDF and CRM delivery all apply
+import { designedHtml, SIZE as DESIGNED_SIZE, sanitizePage } from '../brochure/render.js';
+import { DESIGNED, checkOutput } from '../brochure/writer.js';
+import { DESIGNED_SAMPLE } from './samples/designed-sample.js';
+export { DESIGNED };
 export { cleanEdits, hasEdits };
 
 /*
@@ -30,6 +37,8 @@ export const HTML_TEMPLATES = {
   [PS]: { kind: 'brochure', name: 'CodeAce Growth Brochure', size: PS_SIZE, photos: PS_PHOTOS },
   // owner, 2026-11-13: Codeace's Website & SEO services brochure, tailored per lead; default for "Website + SEO" leads
   [SEO]: { kind: 'brochure', name: 'CodeAce Website & SEO', size: SEO_SIZE, photos: SEO_PHOTOS },
+  // pages written as HTML by Claude from the CodeAce design system; not the default until it beats the baseline
+  [DESIGNED]: { kind: 'brochure', name: 'Designed brochure', size: DESIGNED_SIZE, photos: [] },
 };
 export const isHtmlTemplate = (tpl) => tpl?.mode === 'html' && !!HTML_TEMPLATES[tpl.source];
 export const isHtmlDoc = (d) => !!d?.content?.html?.template && !!HTML_TEMPLATES[d.content.html.template];
@@ -96,6 +105,12 @@ export async function resolveSrc(src) {
 async function context(kind, d, { client, items, created, website, template }) {
   const s = getSettings();
   const a = s.agency || {};
+  if (template === DESIGNED) { // the client's pictures (stored copies) by id, the CodeAce contact block for the last page
+    const src = {};
+    for (const im of d.images || []) if (im?.id && im.src) src[im.id] = await resolveSrc(im.src);
+    return { client, date: monthYear(created, s), docName: d.doc_name || 'Growth Brochure', title: `${client} ${d.doc_name || 'Growth Brochure'} — CodeAce`,
+      contact: { agency: 'CodeAce IT Solutions LLP', phone: a.phone, email: a.email, website: site(a.website) }, imageSrc: (id) => src[id] || null };
+  }
   if (template === SEO) {
     const p = s.seo_brochure || {};
     return { client, title: `${client ? `${client} · ` : ''}CodeAce Website & SEO`, contact: { email: a.email, phone: a.phone, website: site(a.website) },
@@ -131,7 +146,7 @@ export async function htmlFor({ template, data, split, edits }, { client, compan
   const t = HTML_TEMPLATES[template];
   const d = template === 'builtin-html-proposal' ? { ...data, eyebrow: data.eyebrow || `${data.doc_type || 'Website Proposal'} · ${monthYear(created, getSettings())}` } : data;
   const ctx = await context(t.kind, d, { client: template === SEO ? (company ?? client) : client, items, created, website, template });
-  const html = template === SEO ? brochureSeoHtml(d, ctx) : template === PS ? brochurePsHtml(d, ctx, split || {}) : t.kind === 'brochure' ? brochureHtml(d, ctx, split || {}) : proposalHtml(d, ctx, split || {});
+  const html = template === DESIGNED ? designedHtml(d, ctx) : template === SEO ? brochureSeoHtml(d, ctx) : template === PS ? brochurePsHtml(d, ctx, split || {}) : t.kind === 'brochure' ? brochureHtml(d, ctx, split || {}) : proposalHtml(d, ctx, split || {});
   return applyEdits(html, edits, resolveSrc); // data-k keys for the page editor + what was moved / retyped / added on the pages
 }
 const docArgs = (doc) => ({ client: doc.input?.company || doc.title || 'Client', company: doc.input?.company || '', items: doc.items, created: doc.created_at, website: doc.input?.website || '' });
@@ -160,7 +175,7 @@ export async function fitPlan(doc) {
   for (let i = 0; i < 3 && !hasEdits(h.edits); i++) {
     const over = await withPage(html, t.size, overflowCheck);
     if (!over.length) break;
-    const next = h.template === SEO ? null /* fixed 18 pages */ : h.template === PS ? replanPs(h.data, split, over) : replan(t.kind, h.data, split, over);
+    const next = h.template === SEO || h.template === DESIGNED ? null /* fixed pages; the designed brochure is checked by its own layout check */ : h.template === PS ? replanPs(h.data, split, over) : replan(t.kind, h.data, split, over);
     if (!next) break;
     split = next;
     html = await htmlFor({ ...h, split }, docArgs(doc));
@@ -204,19 +219,42 @@ function replanPs(data, split, over) {
   return changed ? { ...split, ideaPages: next } : null;
 }
 
+/**
+ * Page numbers (1-based) whose content runs past the page (rendered in Chromium; the page clips it). Used to keep a
+ * picture only where it fits (brochure fix guide 2026-11-13: the idea-page photo squeezed four cards into a 2 × 2 grid).
+ */
+export async function overflowingPages(doc) {
+  const { withPage } = await import('./chrome.js');
+  const html = await htmlFor(doc.content.html, docArgs(doc));
+  return withPage(html, HTML_TEMPLATES[doc.content.html.template].size, (page) => page.evaluate(() => [...document.querySelectorAll('[data-page]')]
+    .map((p, i) => ({ n: i + 1, over: p.scrollHeight > p.clientHeight + 1 || [...p.querySelectorAll('*')].some((e) => e.getBoundingClientRect().bottom > p.getBoundingClientRect().bottom + 1) }))
+    .filter((x) => x.over).map((x) => x.n)));
+}
+
+/** The designed brochure's layout check on its final pages (src/brochure/render.js checkInPage), in AxiFlow's Chromium. */
+export async function designedIssues(doc) {
+  const { withPage } = await import('./chrome.js');
+  const { checkInPage } = await import('../brochure/render.js');
+  const html = await htmlFor(doc.content.html, docArgs(doc));
+  return withPage(html, HTML_TEMPLATES[DESIGNED].size, async (page) => {
+    await page.evaluate(async () => { await Promise.all([...document.images].map((im) => (im.complete ? null : new Promise((ok) => { im.onload = im.onerror = ok; })))); });
+    return page.evaluate(checkInPage);
+  });
+}
+
 /** HTML for the page view and the template preview (no fit check; the saved plan is used). */
 export async function htmlDocHtml(doc) { return htmlFor(doc.content.html, docArgs(doc)); }
 /** The Nirapara reference of an HTML template, as a document (template preview, sample PDF). */
 export function sampleDoc(source) {
   const t = HTML_TEMPLATES[source];
-  const data = source === SEO ? SEO_BROCHURE : source === PS ? NIRAPARA_BROCHURE_PS : t.kind === 'brochure' ? NIRAPARA_BROCHURE : { ...NIRAPARA_PROPOSAL, doc_type: 'Shopify Store Proposal' };
-  return { id: 0, kind: t.kind, title: source === SEO ? 'CodeAce Website & SEO' : 'Nirapara sample', input: source === PS ? { ...NIRAPARA_PS_INPUT } : source === SEO ? { company: '' } : { company: 'Nirapara' }, status: 'ready', created_at: new Date().toISOString(),
+  const data = source === DESIGNED ? DESIGNED_SAMPLE : source === SEO ? SEO_BROCHURE : source === PS ? NIRAPARA_BROCHURE_PS : t.kind === 'brochure' ? NIRAPARA_BROCHURE : { ...NIRAPARA_PROPOSAL, doc_type: 'Shopify Store Proposal' };
+  return { id: 0, kind: t.kind, title: source === DESIGNED ? 'Designed brochure sample' : source === SEO ? 'CodeAce Website & SEO' : 'Nirapara sample', input: source === PS ? { ...NIRAPARA_PS_INPUT } : source === SEO ? { company: '' } : source === DESIGNED ? { company: 'Sample Boutique' } : { company: 'Nirapara' }, status: 'ready', created_at: new Date().toISOString(),
     items: t.kind === 'proposal' ? NIRAPARA_ITEMS.map((name) => ({ name, price: 0 })) : null,
     content: { html: { template: source, data: JSON.parse(JSON.stringify(data)), split: {} } } };
 }
 export async function templatePreviewHtml(tpl) {
   const t = HTML_TEMPLATES[tpl.source];
-  if (tpl.source === PS || tpl.source === SEO) return { html: await htmlFor(sampleDoc(tpl.source).content.html, docArgs(sampleDoc(tpl.source))), size: t.size, html_template: true };
+  if (tpl.source === PS || tpl.source === SEO || tpl.source === DESIGNED) return { html: await htmlFor(sampleDoc(tpl.source).content.html, docArgs(sampleDoc(tpl.source))), size: t.size, html_template: true };
   if (t.kind === 'brochure') return { html: await htmlFor({ template: tpl.source, data: NIRAPARA_BROCHURE }, { client: 'Nirapara', created: null }), size: t.size, html_template: true };
   return { html: await htmlFor({ template: tpl.source, data: { ...NIRAPARA_PROPOSAL, doc_type: 'Shopify Store Proposal' } }, { client: 'Nirapara', items: NIRAPARA_ITEMS.map((name) => ({ name, price: 0 })), created: null }), size: t.size, html_template: true };
 }
@@ -310,6 +348,16 @@ export function fitLen(text, max) {
 }
 function cleanSeo(out) {
   const t = clean(out, BROCHURE_SEO_SCHEMA);
+  // CodeAce's own facts (stats, work, brands, prices) stay as in the brochure; every text written for the lead must be
+  // there: an empty one fails the try instead of leaving the sample's general text (owner, 2026-11-13: no default content)
+  const missing = [
+    !t.toc_lead && 'toc_lead', !t.intro_text && 'intro_text', !t.who_text && 'who_text', !t.website?.lead && 'website.lead',
+    (t.website?.items || []).filter((x) => x.title && x.text).length < 3 && 'website.items',
+    (t.capabilities || []).filter((x) => x.title && x.text).length < 3 && 'capabilities',
+    (t.seo_texts || []).length < 6 && 'seo_texts', !t.breakdown_quote && 'breakdown_quote', !t.packages_lead && 'packages_lead',
+    (t.package_texts || []).length < 3 && 'package_texts',
+  ].filter(Boolean);
+  if (missing.length) throw new Error(`the brochure answer was incomplete (${missing.join(', ')})`);
   const d = structuredClone(SEO_BROCHURE);
   const set = (v, max, apply) => { const x = fitLen(v, max); if (x) apply(x); };
   set(t.toc_lead, 110, (x) => { d.toc.lead = x; });
@@ -328,33 +376,57 @@ function cleanSeo(out) {
   return d;
 }
 
-/** Output → the template's data: only known fields, strings trimmed, list lengths kept to what the layout holds. */
-function clean(v, schema) {
-  if (schema.type === 'string') return String(v ?? '').replace(/\s+\n/g, '\n').trim().slice(0, (schema.maxLength || 400) + 40);
+/**
+ * Output → the template's data: only known fields, strings trimmed, list lengths kept to what the layout holds.
+ * A text over its limit is cut at the last whole word within it (brochure fix guide 2026-11-13, section 8: before, it
+ * was cut mid-word at limit + 40). opts.slack = characters allowed over the limit (0 where the job states the limits as
+ * numbers, i.e. the brochures; 40 for the others, whose guides do not); opts.cuts collects every cut { path, length, max }.
+ */
+function cutAtWord(t, max) {
+  const head = t.slice(0, max);
+  // the next character a space: the limit falls exactly at the end of a word
+  const sp = /\s/.test(t[max] || '') ? max : Math.max(head.lastIndexOf(' '), head.lastIndexOf('\n'));
+  return (sp > 0 ? head.slice(0, sp) : head).replace(/[\s,;:—–-]+$/, ''); // a single long word is cut inside it
+}
+function clean(v, schema, opts = {}, path = '') {
+  if (schema.type === 'string') {
+    const t = String(v ?? '').replace(/\s+\n/g, '\n').trim();
+    const max = schema.maxLength || 400;
+    if (t.length <= max + (opts.slack ?? 40)) return t;
+    opts.cuts?.push({ path, length: t.length, max });
+    return cutAtWord(t, max);
+  }
   if (schema.type === 'integer') return Math.max(schema.minimum ?? 0, Math.min(schema.maximum ?? 99, Math.round(Number(v) || 0)));
   if (schema.type === 'boolean') return !!v;
-  if (schema.type === 'array') return (Array.isArray(v) ? v : []).slice(0, schema.maxItems || 50).map((x) => clean(x, schema.items)).filter((x) => x !== '' && x != null);
+  if (schema.type === 'array') {
+    const list = Array.isArray(v) ? v : [];
+    if (list.length > (schema.maxItems || 50)) opts.cuts?.push({ path, items: list.length, max: schema.maxItems || 50 });
+    return list.slice(0, schema.maxItems || 50).map((x, i) => clean(x, schema.items, opts, `${path}[${i}]`)).filter((x) => x !== '' && x != null);
+  }
   const o = {};
-  for (const [k, sub] of Object.entries(schema.properties || {})) o[k] = clean(v?.[k], sub);
+  for (const [k, sub] of Object.entries(schema.properties || {})) o[k] = clean(v?.[k], sub, opts, path ? `${path}.${k}` : k);
   return o;
 }
-export function cleanHtmlData(template, out) {
+/** cuts: an array that receives every text cut to fit (see clean). */
+export function cleanHtmlData(template, out, cuts = []) {
+  if (template === DESIGNED) return cleanDesigned(out);
   if (template === SEO) return cleanSeo(out);
   if (template === PS) {
-    const d = clean(out, BROCHURE_PS_SCHEMA);
+    const d = clean(out, BROCHURE_PS_SCHEMA, { slack: 0, cuts });
     d.ideas = d.ideas.map((it) => ({ ...it, short: it.short || it.title }));
-    d.idea_pages = d.idea_pages.map((p) => ({ ...p, title: p.title || 'The Ideas' }));
+    // every idea page needs its own heading from the answer (no standard 'The Ideas' heading any more, 2026-11-13)
+    if (!d.idea_pages.length || d.idea_pages.some((p) => !p.title)) throw new Error('the brochure answer was incomplete (idea_pages titles)');
     return d;
   }
   if (template === 'builtin-html-brochure') {
-    const d = clean(out, BROCHURE_SCHEMA);
+    const d = clean(out, BROCHURE_SCHEMA, { slack: 0, cuts });
     d.ideas = d.ideas.map((it) => ({ ...it, short: it.short || it.title, intro: it.intro || '', why: it.why || '' }));
     if (!d.ideas.some((x) => x.featured)) d.ideas = d.ideas.map((x) => ({ ...x, featured: false }));
     else { let seen = false; d.ideas = d.ideas.map((x) => { const f = x.featured && !seen; if (f) seen = true; return { ...x, featured: f }; }); }
     d.cover.script_word = /[ഀ-ൿ]/.test(d.cover.script_word) ? d.cover.script_word : ''; // Malayalam script only
     return d;
   }
-  const d = clean(out, PROPOSAL_SCHEMA);
+  const d = clean(out, PROPOSAL_SCHEMA, { cuts });
   d.summary.approach = d.summary.approach.replace(/\s*\/\s*|\s*\|\s*/g, '\n');
   d.features = d.features.map((g) => ({ ...g, note: g.note ? (g.note_bold ? { bold: g.note_bold, text: g.note } : g.note) : '' }));
   return d;
@@ -362,8 +434,8 @@ export function cleanHtmlData(template, out) {
 
 const BROCHURE_GUIDE = `Write the content of Codeace's growth-plan brochure for this one business, in the fixed design (landscape A4,
 12 pages). It is Codeace's plan for the client: their situation, where they lose customers today, and the ideas Codeace
-will build to win them. The reference below is a finished brochure for Nirapara (a Kerala spice and rice brand): match
-its depth, specificity and tone, but every fact must be about THIS business; never reuse Nirapara's facts or ideas.
+will build to win them. Write in the voice of the <style_note>, keep every field within the <limits>, and sell exactly
+the <offer>.
 Fields:
 - tag: the brochure's name in sentence case, e.g. "Ecommerce growth plan", "Website growth plan".
 - cover.script_word: the business's name written in Malayalam script when it is a Kerala business and you are sure of
@@ -385,12 +457,13 @@ Plain sentences, British spelling, no emoji, no exclamation marks, no claims you
 
 const BROCHURE_PS_GUIDE = `Write the content of CodeAce's growth brochure for this one business, in the fixed design (landscape,
 about 13 pages, the CodeAce proposal look: big two-line headings, short cards). It is CodeAce's plan for the client:
-their situation, where they lose customers today, and the ideas CodeAce will build to win them. The reference below
-is a finished brochure for Nirapara (a Kerala spice and rice brand): match its depth, specificity, brevity and tone,
-but every fact must be about THIS business; never reuse Nirapara's facts or ideas.
+their situation, where they lose customers today, and the ideas CodeAce will build to win them. Write in the voice of
+the <style_note> and sell exactly the <offer>.
 Every heading (cover.title, contents.title and each page title) is two short lines in Title Case, split with "\\n"
-(e.g. "Everywhere,\\nBut Not First"). Text is short: cards hold a few words per line, so keep to the reference's length.
-In a lead, wrap a few words in **double asterisks** to set them in bold (as in the reference); use it sparingly.
+(e.g. "Everywhere,\\nBut Not First"): each line of cover.title at most 16 characters, of the other headings at most 20,
+so no heading wraps to a third line. Text is short: the boxes have fixed sizes, so
+keep every field within the <limits> (a shorter line is always better than a cut one).
+In a lead, wrap a few words in **double asterisks** to set them in bold; use it sparingly.
 Fields:
 - doc_name: the brochure's name in the page headers, e.g. "Ecom Growth Brochure", "Website Growth Brochure".
 - cover: label (eyebrow, e.g. "Ecommerce growth brochure"), title (two lines), lead (one line, may bold 1-2 phrases),
@@ -499,37 +572,104 @@ const SEO_PROCESS = processFor(`3. Write each field from those sources: the webs
    lack (the SWOT weaknesses, the website check); the SEO lines and the highlighted service from how its customers
    search for it (Google, Maps, AI answers) and what competitors show there; the package texts and the recommended
    package from its size, its goals and how much search support it needs.`);
-/** Words particular to the Nirapara reference: in another lead's brochure they mean the example was copied. */
-const EXAMPLE_TERMS = ['Nirapara', 'Kalady', 'Blinkit', 'Instamart', 'BigBasket', 'Reliance Smart', 'puttu', 'palappam', 'appam', 'podi', 'Kerala Kitchen Box', 'pack QR', 'purity report', 'batch report', 'chilli powder', 'curry masala', 'kirana'];
-/** What the job says about the lead itself (not the guide, which names the example). */
-const leadContext = (prompt) => [...String(prompt || '').matchAll(/<(lead|crm_and_notes|research|website_check|swot)\b[^>]*>([\s\S]*?)<\/\1>/g)].map((m) => m[2]).join('\n').toLowerCase();
-export function exampleLeaks(output, job) {
-  const lead = leadContext(job?.prompt);
-  const text = JSON.stringify({ ...output, verification: undefined, strategy: undefined, review: undefined }).toLowerCase();
-  const confirmed = JSON.stringify((output?.verification?.facts || []).filter((f) => f.status === 'confirmed' && /^https?:\/\//.test(f.source || ''))).toLowerCase();
-  return EXAMPLE_TERMS.filter((t) => { const w = t.toLowerCase(); return new RegExp(`\\b${w}\\b`).test(text) && !lead.includes(w) && !confirmed.includes(w); });
+// The Nirapara reference example and its copy guard (EXAMPLE_TERMS) were removed from the brochure jobs (brochure fix
+// guide 2026-11-13, section 8): the example was 41% of the prompt, anchored every vertical to a food brand, and the
+// guard refused true facts. The brochures get the short style note below instead.
+/** How CodeAce writes (brochure fix guide, section 7.5): replaces the Nirapara example in the brochure jobs. */
+export const STYLE_NOTE = `Voice: a senior consultant talking to an owner: direct, specific, warm, no jargon.
+Headlines name a change the owner wants, in their terms: "From Instagram likes to paid orders",
+not "Unlock your growth".
+Every page supports the one sentence the brochure proves.
+A card is a 2-5 word title and one line that is only true of this business.
+  Good: "Kota Doria and Jamdani buyers ask about weave and care before they pay."
+  Weak: "Customers want quality information."
+Numbers only from the brief. When there are none, describe the mechanism instead of inventing a figure.
+End on the next step the client takes, not on a slogan.`;
+/**
+ * The limits of a schema as numbers, for the prompt (brochure fix guide, section 8): "cover.title: max 30 characters"
+ * etc., generated from the schema so the prompt never drifts from what clean() enforces.
+ */
+export function limitsText(schema, path = '') {
+  const out = [];
+  const walk = (s, p) => {
+    if (s.type === 'string' && s.maxLength) out.push(`${p}: max ${s.maxLength} characters`);
+    if (s.type === 'integer' && (s.minimum != null || s.maximum != null)) out.push(`${p}: ${s.minimum ?? 0} to ${s.maximum ?? 'any'}`);
+    if (s.type === 'array') {
+      if (s.minItems || s.maxItems) out.push(`${p}: ${s.minItems ?? 0}-${s.maxItems ?? 'any'} items`);
+      walk(s.items, `${p}[]`);
+    }
+    for (const [k, v] of Object.entries(s.properties || {})) walk(v, p ? `${p}.${k}` : k);
+  };
+  walk(schema, path);
+  return `<limits>\nHard limits: the boxes have fixed sizes, and text over these is cut at the last whole word.\n${out.join('\n')}\n</limits>`;
+}
+/**
+ * The lead's SWOT as numbered lines (S1, W1, O1, T1, X1 for the solutions), never cut (brochure fix guide, section 8:
+ * the JSON was cut mid-sentence at 4,000 characters). Points may be strings or { text, refs } objects.
+ */
+export function swotLines(sw) {
+  const s = sw?.swot || {};
+  const txt = (p) => (typeof p === 'string' ? p : [p?.text || p?.point || '', p?.refs?.length ? `[${p.refs.join(', ')}]` : ''].filter(Boolean).join(' ')).trim();
+  const out = [];
+  if (s.summary) out.push(`Summary: ${txt(s.summary)}`);
+  for (const [k, letter] of [['strengths', 'S'], ['weaknesses', 'W'], ['opportunities', 'O'], ['threats', 'T']]) {
+    (s[k] || []).map(txt).filter(Boolean).forEach((p, i) => out.push(`${letter}${i + 1} ${p}`));
+  }
+  const sol = (sw?.solutions || []).filter((x) => x && (x.problem || x.how));
+  if (sol.length) {
+    out.push('How CodeAce solves it:');
+    sol.forEach((x, i) => out.push(`X${i + 1} ${[x.service, x.problem].filter(Boolean).join(': ')} → ${x.how || ''}${x.outcome ? ` → ${x.outcome}` : ''}`));
+  }
+  return out.join('\n');
+}
+/**
+ * The designed brochure's answer → its data. Every page is sanitised again here (never trust the writer or the
+ * runner): only design-system tags, classes and image ids stay. Fewer than 8 pages (or an empty one) fails the try.
+ */
+function cleanDesigned(out) {
+  const pages = (Array.isArray(out?.pages) ? out.pages : []).slice(0, 14).map((p) => {
+    const s = sanitizePage(p?.html);
+    return { name: String(p?.name || '').trim().slice(0, 60), html: `<section class="${['page', ...s.variants].join(' ')}">${s.html}</section>`, empty: !s.html.replace(/<[^>]+>/g, '').trim() };
+  });
+  if (pages.length < 8 || pages.some((p) => p.empty)) throw new Error(`the brochure answer was incomplete (${pages.length} pages${pages.some((p) => p.empty) ? ', an empty page' : ''}; 8 to 14 needed)`);
+  const s = (v, n) => String(v ?? '').trim().slice(0, n);
+  return {
+    story: s(out.story, 400), theme: s(out.theme, 30), fonts: s(out.fonts, 30), doc_name: s(out.doc_name, 40) || 'Growth Brochure',
+    pages: pages.map(({ name, html }) => ({ name, html })),
+    claims: (Array.isArray(out.claims) ? out.claims : []).slice(0, 80).map((c) => ({ text: s(c?.text, 300), refs: (Array.isArray(c?.refs) ? c.refs : []).map((r) => s(r, 12)).slice(0, 8) })),
+  };
 }
 /** Claude's answer for an HTML template → the document content (with the fact check), or an error that retries. */
 export function acceptHtml(template, output, job) {
-  if (HTML_TEMPLATES[template]?.kind === 'brochure' && template !== SEO) { // the SEO example is CodeAce's own general wording
-    const leaks = exampleLeaks(output, job);
-    if (leaks.length) throw new Error(`facts copied from the Nirapara example (${leaks.join(', ')}): written again`);
+  const cuts = [];
+  if (template === DESIGNED) { // + the client's pictures (stored copies) and the runner's checks (claims check, review)
+    const data = cleanHtmlData(template, output);
+    data.images = (job?.images || []).map((i) => ({ id: i.id, src: i.src, alt: i.alt || '' })).filter((i) => /^upload:/.test(i.src || ''));
+    const problems = checkOutput(output, { ids: job?.brief_ids || [], images: job?.images || [] });
+    return { html: { template, data, split: {}, check: { ...(output.check || {}), output_problems: problems.slice(0, 20), engine_checked: !!output.check } } };
   }
-  const content = htmlContent(template, cleanHtmlData(template, output));
+  const content = htmlContent(template, cleanHtmlData(template, output, cuts));
   if (output?.verification) content.html.verification = clean(output.verification, VERIFICATION);
+  if (cuts.length) content.html.cuts = cuts; // texts cut to fit, logged by the caller (claude-worker postProcess)
   return content;
 }
 
-/** The Claude job for an HTML template (the caller appends the playbook, strategy and review sections). */
-export function htmlJob(template, { input, dossier, research, swot, settings, items, audit }) {
+/**
+ * The Claude job for an HTML template (the caller appends the website type, playbook and, for proposals, the strategy
+ * and review sections). offer = the decided offer for brochures (src/brochure/offer.js): one sentence plus the package.
+ */
+export function htmlJob(template, { input, dossier, research, swot, settings, items, audit, offer }) {
   const brochure = HTML_TEMPLATES[template]?.kind === 'brochure';
   const ps = template === PS;
   const seo = template === SEO;
+  const designed = brochure && !seo; // the brochures Claude writes in full (not the SEO brochure, which fills fixed copy)
   const lead = [`Business: ${input.company}`, input.industry && `Industry: ${input.industry}`, input.city && `Place: ${input.city}`, input.website && `Website: ${input.website}`,
-    input.website_type && `Website type ordered: ${input.website_type}`, input.package && `Package: ${input.package}`].filter(Boolean).join('\n');
+    input.website_type && `Website type ordered: ${input.website_type}`, !offer?.package && input.package && `Package: ${input.package}`].filter(Boolean).join('\n');
   const facts = brochure ? '' : `\n<commercial_terms>\nPayment terms: ${settings.proposal?.payment_terms || ''}\nOther terms: ${(settings.proposal?.terms || []).join(' | ')}\nExcluded from the price: ${settings.proposal?.investment_note || ''}\nSupport after launch: ${settings.proposal?.support_days || 90} days\nPrice table rows (from our price list, shown as is): ${(items || []).map((i) => i.name).join('; ')}\n</commercial_terms>`;
-  const example = seo ? seoExample() : ps ? { ...NIRAPARA_BROCHURE_PS, photos: undefined, idea_pages: NIRAPARA_BROCHURE_PS.idea_pages.map(({ title, lead, statement }) => ({ title, lead, statement })) }
-    : brochure ? NIRAPARA_BROCHURE : { ...NIRAPARA_PROPOSAL, photos: undefined };
+  // brochures: the style note replaces the Nirapara example (brochure fix guide 2026-11-13); the SEO brochure keeps its
+  // own general wording as the example, proposals keep theirs
+  const example = seo ? seoExample() : brochure ? null : { ...NIRAPARA_PROPOSAL, photos: undefined };
+  const offerBlock = offer?.text ? `<offer>\n${offer.text}${offer.package ? `\nPackage: ${offer.package}` : ''}\nThis offer is decided: sell exactly this. Do not suggest a different build, and do not contradict it anywhere.\n</offer>` : '';
   return {
     kind: 'html',
     template,
@@ -538,18 +678,21 @@ export function htmlJob(template, { input, dossier, research, swot, settings, it
     prompt: [
       seo ? BROCHURE_SEO_GUIDE : ps ? BROCHURE_PS_GUIDE : brochure ? BROCHURE_GUIDE : PROPOSAL_GUIDE,
       `<lead>\n${lead}\n</lead>`,
+      offerBlock,
       seo ? SEO_PROCESS : brochure ? BROCHURE_PROCESS : '',
       dossier ? `<crm_and_notes>\n${dossier}\n</crm_and_notes>` : '',
       research ? `<research>\n${typeof research === 'string' ? research : JSON.stringify(research).slice(0, 6000)}\n</research>` : '',
-      audit?.findings?.length ? `<website_check url="${String(input.website || '').replace(/"/g, '')}">\n${audit.findings.map((f) => `- ${f.text}`).join('\n')}\n</website_check>` : '',
-      swot ? `<swot>\n${JSON.stringify(swot).slice(0, 4000)}\n</swot>` : brochure ? '<swot>No SWOT has been made for this lead yet: work out its strengths, weaknesses, opportunities and threats from your research first.</swot>' : '',
+      audit?.findings?.length ? `<website_check url="${String(input.website || '').replace(/"/g, '')}">\n${audit.findings.map((f) => `- ${f.text}`).join('\n')}\n(${WEBSITE_CHECK_RULE})\n</website_check>` : '',
+      // the SWOT as numbered lines, never cut (it was JSON cut mid-sentence at 4,000 characters)
+      swot ? `<swot>\n${swotLines(swot)}\n</swot>` : brochure ? '<swot>No SWOT has been made for this lead yet: work out its strengths, weaknesses, opportunities and threats from your research first.</swot>' : '',
       facts,
-      `<reference_example business="${seo ? "none: the brochure's own general wording" : 'Nirapara'}">\n${JSON.stringify(example)}\n</reference_example>`,
+      designed ? `<style_note>\n${STYLE_NOTE}\n</style_note>` : '',
+      designed ? limitsText(ps ? BROCHURE_PS_SCHEMA : BROCHURE_SCHEMA) : '',
+      example ? `<reference_example business="${seo ? "none: the brochure's own general wording" : 'Nirapara'}">\n${JSON.stringify(example)}\n</reference_example>` : '',
     ].filter(Boolean).join('\n\n'),
     // limits (lengths, counts, ranges) are kept out of the schema Claude gets: strict structured output refuses them;
-    // the guide states them and cleanHtmlData enforces them on the answer
+    // the <limits> section states them (brochures) and cleanHtmlData enforces them on the answer
     schema: stripLimits(seo ? withVerification(BROCHURE_SEO_SCHEMA) : ps ? withVerification(BROCHURE_PS_SCHEMA) : brochure ? withVerification(BROCHURE_SCHEMA) : PROPOSAL_SCHEMA),
-    ...(brochure && !seo ? { example_terms: EXAMPLE_TERMS } : {}), // the GitHub worker's validator refuses copies of the example too
     maxTokens: 16000,
   };
 }
@@ -572,108 +715,6 @@ export function sanitizeEdit(v, depth = 0) {
 
 // (The general Codeace copy for documents without the AI, fallbackData, was removed on 2026-11-13: owner, "remove rule
 // based default generation from the system completely". Every document is written by the AI from research.)
-
-/** A ready HTML-template content block for a document. */
-/** Content without Claude (Claude mode off, or a local server): the reference structure with general Codeace copy. */
-export function fallbackData(template, input, settings = getSettings()) {
-  const c = input.company || 'your business';
-  const type = ({ 'business-website': 'website', 'ecommerce-store': 'online store', 'shopify-store': 'Shopify store', 'landing-page': 'landing page' })[input.website_type] || 'website';
-  if (template === PS) {
-    const store = /store/.test(type);
-    const Type = type.replace(/^./, (x) => x.toUpperCase());
-    return cleanHtmlData(PS, {
-      doc_name: store ? 'Ecom Growth Brochure' : 'Website Growth Brochure',
-      cover: { label: `${type} growth brochure`, title: store ? 'Ecom Growth\nBrochure' : 'Website Growth\nBrochure', lead: `Where **${store ? 'orders' : 'enquiries'}**, **trust** and **repeat customers** come together.`,
-        stats: [{ value: '8', label: 'Growth ideas' }, { value: store ? '6 wks' : '4 wks', label: `To ${type} launch` }],
-        headline: 'From being found\nto being chosen.', text: `A ${type} that brings ${c} more ${store ? 'orders' : 'enquiries'} and keeps customers coming back.` },
-      contents: { title: "What's Inside\nThis Brochure", lead: 'Four parts: the problem, the opportunity, the plan, and how we deliver it.',
-        parts: [{ title: 'The challenge', text: 'Customers compare before they choose.' }, { title: 'The opportunity', text: `What a better ${type} changes for ${c}.` }, { title: 'The plan', text: 'Eight ideas to attract, convert and retain.' }, { title: 'Delivery', text: 'Working figures, the build, results and next steps.' }] },
-      challenge: { label: 'The challenge', title: 'Found Online,\nNot Yet Chosen', lead: `People look up ${c} on their phone before they call, visit or buy.`, statement: 'Being found is not enough. Being chosen is.',
-        rows: [{ title: 'On Google', points: ['Searches decide who gets the call', 'Listings without proof lose', 'Competitors look bigger online'] }, { title: 'On social media', points: ['Followers see posts but cannot act', 'Enquiries get lost in messages'] }, { title: `On the current ${store ? 'site' : 'website'}`, points: ['No clear next step on the page', 'Slow on mobile data', 'Nothing brings visitors back'] }] },
-      opportunity: { label: 'The opportunity', title: `Why a Better\n${Type} Wins`, lead: `**One place that works for ${c}.** Every channel points to it, and every visit ends with a clear next step.`,
-        items: [{ title: 'Be found first', text: 'Search and maps bring nearby customers who are ready to buy.' }, { title: 'Look premium', text: 'A design that matches the quality of the business.' }, { title: 'Make it easy to act', text: `Calls, WhatsApp${store ? ', checkout' : ', bookings'} in one tap.` },
-          { title: 'Own the relationship', text: 'Enquiries and customer details stay with the business.' }, { title: 'Earn trust faster', text: 'Reviews, photos and proof on every page.' }, { title: 'Measure what works', text: 'Monthly numbers on visits, enquiries and sales.' }] },
-      journey: { label: 'The decision', title: `How Customers\nChoose ${c}`.slice(0, 60), lead: 'Most decisions happen online, in a few minutes, before any call.', think_label: 'They ask', do_label: `The ${store ? 'store' : 'site'} answers`, highlight: 2,
-        steps: [{ title: 'Searching', quote: 'Who is good near me?', text: 'Search and maps show the business with reviews.' }, { title: 'Comparing', quote: 'Can I trust them?', text: 'Proof, prices and real photos on every page.' }, { title: 'Deciding', quote: 'How do I start?', text: `One clear button: call, WhatsApp${store ? ' or buy' : ' or book'}.` }, { title: 'Coming back', quote: 'That went well.', text: 'Follow-ups and offers bring the customer back.' }],
-        bridge: { title: 'One clear next step', text: 'Every visit ends with an easy way to act, so attention becomes business.' } },
-      plan: { label: 'The plan', title: 'Eight Ideas,\nThree Goals', lead: 'Each idea serves one goal: bring customers in, turn visits into business, and bring them back.',
-        goals: [{ name: 'Attract', sub: `Bring customers to ${c}`, note: '' }, { name: 'Convert', sub: `Turn visits into ${store ? 'orders' : 'enquiries'}`, note: '' }, { name: 'Retain', sub: 'Make customers regulars', note: '' }] },
-      ideas: [
-        { goal: 0, title: 'Search-ready pages', short: 'Search-ready pages', tone: 'red', points: ['Pages written for what people search', 'Google Business Profile linked', 'Fast on mobile data'] },
-        { goal: 1, title: 'Clear offer up front', short: 'Clear offer', tone: 'grey', points: ['What you do, for whom, in one line', 'Prices or packages where it helps', 'One main button on every page'] },
-        { goal: 1, title: 'Proof on every page', short: 'Proof on every page', tone: 'grey', points: ['Reviews and real photos', 'Results and short case notes', 'Certificates and partners'] },
-        { goal: 2, title: 'WhatsApp follow-up', short: 'WhatsApp follow-up', tone: 'dark', points: ['Every enquiry gets a quick reply', 'Reminders and offers by WhatsApp', 'Nothing lost in the inbox'] },
-        { goal: 0, title: 'Content that ranks', short: 'Content that ranks', tone: 'dark', points: ['Answers to the questions customers ask', 'Local pages for each area served', 'Ready for AI search answers'] },
-        { goal: 1, title: store ? 'Easy checkout' : 'Easy enquiry', short: store ? 'Easy checkout' : 'Easy enquiry', tone: 'grey', points: store ? ['UPI, cards and COD', 'One-page checkout', 'Order updates on WhatsApp'] : ['Short form, call and WhatsApp', 'Booking where it fits', 'Instant confirmation'] },
-        { goal: 2, title: 'Reviews and referrals', short: 'Reviews and referrals', tone: 'red', points: ['Ask happy customers at the right time', 'Simple referral rewards', 'Reviews shown on the site'] },
-        { goal: 0, title: 'Campaign landing pages', short: 'Campaign pages', tone: 'grey', points: ['One page per offer or season', 'Ads and posts point to it', 'Results measured per campaign'] },
-      ],
-      idea_pages: [{ title: 'Be Found,\nBe Chosen', lead: `The core of the plan: how ${c} is found, trusted and contacted.`, statement: '' }, { title: 'Keep Growing,\nMonth by Month', lead: 'Content, offers and follow-ups that bring more customers every month.', statement: '' }],
-      economics: { label: 'Working figures', title: 'What We Track\nFrom Day One', lead: 'Targets are agreed together after the first month of live data.',
-        figures: [{ value: '30 days', title: 'First review', text: 'Numbers checked together after launch.' }, { value: '1 tap', title: 'To act', text: `Call, WhatsApp or ${store ? 'buy' : 'enquire'} on every page.` }, { value: '< 3 s', title: 'Page load', text: 'Fast on mobile data.' }, { value: '24/7', title: 'Always open', text: 'Enquiries and orders arrive any time.' }, { value: '100%', title: 'Ownership', text: 'The site and its data belong to you.' }, { value: 'Monthly', title: 'Report', text: 'Visits, enquiries and sales in one page.' }],
-        note: 'Working figures for discussion, set together in the discovery call.' },
-      delivery: { label: 'Delivery', title: 'What We Build,\nHow It Rolls Out', lead: `A ${type} live in a few weeks, then improved from real data.`, includes_title: `The ${type} includes`,
-        includes: ['Custom mobile-first design', 'Pages written for search', 'Call, WhatsApp and forms', store ? 'Catalogue and checkout' : 'Services and booking', 'Reviews and proof', 'Google Business Profile', 'Analytics and reports', 'Training and handover'],
-        phases: [{ title: 'Launch', when: store ? 'About 6 weeks' : 'About 4 weeks', text: `Design, build and launch of the ${type}.` }, { title: 'First 90 days', when: 'Months 1 to 3', text: 'Content, search and conversion improvements.' }, { title: 'Scale', when: 'Month 4 onward', text: 'New pages, campaigns and automation.' }] },
-      results: { label: 'Results and next steps', title: 'How We Measure\nSuccess', lead: 'Eight numbers, reported monthly. Targets are set together after 30 days.', highlight: 1,
-        metrics: ['Website visits', store ? 'Orders' : 'Enquiries', 'Conversion rate', 'Search rankings', 'Calls and WhatsApp clicks', 'Returning visitors', 'Cost per enquiry', 'Reviews'],
-        next: ['Discovery call on goals and priorities', 'Content, photos and access review', 'Final scope, timeline and investment'], closing: `Let us make ${c}\nthe first choice online.` },
-    });
-  }
-  if (template === 'builtin-html-brochure') {
-    const services = (settings.brochure?.services || []).slice(0, 8);
-    const ideas = services.map((s, i) => ({ goal: i % 3, title: s.name || s.title || `Idea ${i + 1}`, short: s.name || `Idea ${i + 1}`, intro: '', points: (s.bullets || s.points || [s.description || s.summary || 'Planned with you in the discovery call.']).slice(0, 3), why: '', featured: i === 0 }));
-    return cleanHtmlData(template, {
-      tag: 'Growth plan',
-      cover: { script_word: '', title: 'A clear plan to grow', title_em: `${c} online.`, subtitle: `How a ${type} built by Codeace can bring ${c} more enquiries, orders and repeat customers.` },
-      challenge: { label: 'The challenge', title: 'Customers look online before they choose', lead: `People compare ${c} with others on their phone before they call, visit or buy.`, statement: 'Being found is not enough. Being chosen is.',
-        rows: [{ title: 'On Google', points: ['Searches decide who gets the call.', 'Listings without reviews or a site lose.'] }, { title: 'On social media', points: ['Followers see posts but have no easy way to act.', 'Enquiries get lost in messages.'] }, { title: 'On the website', points: ['Visitors need prices, proof and one clear next step.', 'Slow or unclear pages send them away.'] }],
-        gap: `${c} has customers' attention, but no single place that turns it into enquiries and repeat business.` },
-      opportunity: { label: 'The opportunity', title: 'What a better online home changes', items: [
-        { title: 'Be found first', text: 'Search and maps bring nearby customers who are ready to buy.' }, { title: 'Look premium', text: 'A design that matches the quality of the business.' },
-        { title: 'Make it easy to act', text: 'Calls, WhatsApp, bookings or orders in one tap.' }, { title: 'Own the relationship', text: 'Enquiries and customers stay with the business.' },
-        { title: 'Earn trust faster', text: 'Reviews, photos and proof on every page.' }, { title: 'Measure what works', text: 'Monthly numbers on visits, enquiries and sales.' }],
-        approach: { title: 'Built around how customers decide', text: 'Codeace plans the site from the questions customers ask before they choose, then builds, launches and improves it with you.' } },
-      journey: { label: 'The customer journey', title: 'How a customer chooses', lead: 'Most decisions happen online, in a few minutes, before any call.', highlight: 2,
-        steps: [{ title: 'Searching', quote: 'Who is good near me?', text: 'Search and maps show the business with reviews.' }, { title: 'Comparing', quote: 'Can I trust them?', text: 'The site answers with proof, prices and photos.' }, { title: 'Deciding', quote: 'How do I start?', text: 'One clear button: call, WhatsApp, book or order.' }, { title: 'Coming back', quote: 'That went well.', text: 'Follow-ups and offers bring the customer back.' }],
-        bridge: { title: 'One clear next step on every page.', text: 'Every visit ends with an easy way to act, so attention becomes business.' } },
-      plan: { label: 'The plan', title: 'Ideas across three goals', goals: [{ name: 'Attract', sub: `Bring customers to ${c}` }, { name: 'Convert', sub: 'Turn visits into enquiries' }, { name: 'Retain', sub: 'Make customers regulars', note: '' }] },
-      idea_titles: ['The core of the plan', 'Growth that keeps going', 'More ways to win', 'Finishing touches'],
-      ideas,
-      economics: { label: 'Working figures', title: 'What we will track from day one', lead: 'Targets are agreed together after the first month of live data.',
-        figures: [{ value: '30 days', title: 'First review', text: 'Numbers checked together a month after launch.' }, { value: '1 tap', title: 'To enquire', text: 'Call, WhatsApp or form on every page.' }, { value: '< 3 s', title: 'Page load', text: 'Fast on mobile data.' }, { value: '24/7', title: 'Always open', text: 'Enquiries and orders arrive any time.' }, { value: '100%', title: 'Ownership', text: 'The site and its data belong to the business.' }, { value: 'Monthly', title: 'Report', text: 'Visits, enquiries and sales in one page.' }],
-        note: 'Working figures for discussion.' },
-      delivery: { label: 'Delivery', title: 'What we build, and how it rolls out', includes_title: `The ${type} includes`.replace(/^The (w)/, (m, c) => 'The ' + c.toUpperCase()),
-        includes: ['Custom, mobile-first design', 'Pages written for search', 'Enquiry, WhatsApp and call buttons', 'Reviews and proof sections', 'Google Business Profile set-up', 'Analytics and monthly reporting'],
-        phases: [{ when: 'First weeks', title: 'Phase 1 · Launch', text: 'Design, build and launch of the core site.' }, { when: 'First 90 days', title: 'Phase 2 · Grow', text: 'Content, search and conversion improvements.' }, { when: 'Ongoing', title: 'Phase 3 · Scale', text: 'New pages, campaigns and automation.' }] },
-      results: { label: 'Results and next steps', title: 'How we will measure success', metrics: ['Website visits', 'Enquiries', 'Conversion rate', 'Search rankings', 'Calls and WhatsApp clicks', 'Returning visitors', 'Cost per enquiry', 'Reviews'], note: 'Reported monthly.',
-        next: ['Discovery call to align on goals and priorities', 'Content, photos and access review', 'Detailed proposal with scope, timeline and investment'], cta_before: `Let us make ${c} the`, cta_em: 'first choice', cta_after: ' online.' },
-    });
-  }
-  const pkg = (settings.packages || []).find((p) => p.id === input.package) || (settings.packages || [])[0] || { name: 'Website', includes: [], timeline: '3 weeks' };
-  const weeks = Math.max(1, Math.min(6, parseInt(pkg.timeline, 10) || 3));
-  return cleanHtmlData(template, {
-    doc_type: `${pkg.name} Proposal`, title: `${pkg.name} Design & Development Proposal`,
-    summary: { paragraphs: [`${c} is ready for a ${String(pkg.name).toLowerCase()} that brings in enquiries and shows the quality of the business.`, `We propose a fast, mobile-first ${String(pkg.name).toLowerCase()} built by CodeAce, with clear pages, strong calls to action and search basics in place from day one.`], approach: 'Built to be found / and to be chosen.',
-      stats: [{ value: pkg.timeline || `${weeks} weeks`, label: 'to launch' }, { value: String((pkg.includes || []).length || 6), label: 'key features' }, { value: 'Mobile', label: 'first design' }], closing: 'Every page ends with one clear next step: a call, a WhatsApp message or an enquiry.' },
-    scope: { intro: `We will design and build a new ${String(pkg.name).toLowerCase()} for ${c}.`, items: [
-      { title: 'Discovery & Planning', text: 'Goals, audience, pages and content plan.' }, { title: 'Custom UI/UX Design', text: 'A premium, mobile-first design in your brand.' },
-      { title: 'Development', text: 'A fast, secure build that your team can update.' }, { title: 'Content & SEO', text: 'Page copy structure, metadata and search basics.' },
-      { title: 'Integrations', text: 'Forms, WhatsApp, maps and analytics.' }, { title: 'Testing, Launch & Support', text: `Testing on every device, launch and ${settings.proposal?.support_days || 90} days of support.`, dark: true }] },
-    structure: { intro: 'A clear structure that answers what customers ask before they choose.', pages: ['Home', 'About', 'Services', 'Gallery', 'Reviews', 'FAQs', 'Contact', 'Privacy & Terms'], note_bold: 'Every page mobile-first.', note: 'Each page ends with a clear call to action.' },
-    features: [
-      { title: 'Design & Experience', cards: [{ title: 'Home Page', tone: 'grey', points: ['Clear headline and offer', 'Proof: reviews and photos', 'One-tap call and WhatsApp'] }, { title: 'Inner Pages', tone: 'grey', points: ['Service and about pages', 'Gallery and FAQs', 'Enquiry form on every page'] }, { title: 'Mobile First', tone: 'dark', points: ['Fast on mobile data', 'Thumb-friendly buttons', 'Readable on any screen'] }], note_bold: '', note: '' },
-      { title: 'Search & Growth', cards: [{ title: 'SEO Basics', tone: 'red', points: ['Page titles and descriptions', 'Schema and sitemap', 'Google Business Profile link'] }, { title: 'Analytics', tone: 'grey', points: ['GA4 set-up', 'Enquiry and call tracking', 'Monthly report'] }, { title: 'Speed & Security', tone: 'grey', points: ['SSL', 'Image optimisation', 'Spam protection'] }], note_bold: '', note: '' },
-      { title: 'Handover & Support', cards: [{ title: 'Training', tone: 'grey', points: ['Admin walkthrough', 'Short usage guide'] }, { title: 'Support', tone: 'dark', points: [`${settings.proposal?.support_days || 90} days of post-launch support`, 'Fixes and small changes'] }, { title: 'Ownership', tone: 'grey', points: ['Full access on completion', 'Your domain, your data'] }], note_bold: '', note: '' },
-    ],
-    timeline: { intro: `The site goes live in about ${pkg.timeline || `${weeks} weeks`} from sign-off.`, steps: Array.from({ length: weeks }, (_, i) => ({ label: `Week ${i + 1}`, title: ['Discovery & Design', 'Design Approval & Build', 'Content & Integrations', 'Testing & Launch', 'Launch', 'Handover'][Math.min(i, 5)], text: ['Kick-off, sitemap and page designs.', 'Sign-off and development.', 'Content, forms, WhatsApp and analytics.', 'Testing on devices and go-live.', 'Go-live and checks.', 'Training and handover.'][Math.min(i, 5)] })),
-      after: [{ label: 'After launch · Months 1 to 3', title: 'First 90 Days', text: 'Search improvements, content and conversion fixes.' }, { label: 'Month 4 onward', title: 'Scale', text: 'New pages, campaigns and automation.' }] },
-    investment: { intro: `Module-wise pricing for the ${String(pkg.name).toLowerCase()}.`, retainer_bold: 'Post-launch growth.', retainer: 'Ongoing SEO, content and campaigns run as a monthly retainer, quoted separately.', note: settings.proposal?.investment_note || '' },
-    deliverables: { items: (pkg.includes || []).slice(0, 8).concat(['Admin training and usage guide']).slice(0, 10), note: settings.proposal?.deliverables_note || '' },
-    terms: [settings.proposal?.payment_terms, ...(settings.proposal?.terms || [])].filter(Boolean).slice(0, 7),
-    closing: `Let's Make ${c} the First Choice.`,
-  });
-}
 
 /** A ready HTML-template content block for a document. */
 export const htmlContent = (template, data) => ({ html: { template, data, split: {} } });

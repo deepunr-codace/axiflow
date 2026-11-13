@@ -1,13 +1,12 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { get, insert } from '../db.js';
 import { getSettings } from '../settings.js';
-import { nowISO, tzParts, zonedToUtc, BASE_URL } from '../util.js';
+import { nowISO, tzParts, zonedToUtc } from '../util.js';
 
 /**
- * Thin wrapper over the AI provider used by the pitch maker, the manager and the tools.
- * Providers: Anthropic (Claude API, ANTHROPIC_API_KEY) or OpenRouter (OPENROUTER_API_KEY, OpenAI-style
- * chat completions with structured outputs and the "web" plugin). settings.ai.provider: auto | anthropic | openrouter
- * (auto = Anthropic when its key is set, otherwise OpenRouter).
+ * Thin wrapper over the Claude API (ANTHROPIC_API_KEY), used by the API engine of the tools, the editor assistant and
+ * the manager. The only provider: OpenRouter (and its free models) was removed on 2026-11-13 (owner: "remove all free
+ * ai from our axiflow(openrouter)").
  * - every call is logged to ai_calls with an estimated cost
  * - a daily USD budget and a concurrency limit protect the account
  * - server-side refusal fallback is enabled (fallbacks: "default")
@@ -28,22 +27,13 @@ const api = () => (client ??= new Anthropic());
 export function resetClient() { client = null; }
 
 const anthropicKey = () => !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
-const openrouterKey = () => !!process.env.OPENROUTER_API_KEY;
-
-/** Which provider runs the calls: the setting, or (auto) whichever key is present. */
-export function aiProvider(s = getSettings()) {
-  const want = s.ai.provider || 'auto';
-  if (want === 'anthropic' || want === 'openrouter') return want;
-  return anthropicKey() ? 'anthropic' : openrouterKey() ? 'openrouter' : 'anthropic';
-}
-const keyFor = (p) => (p === 'openrouter' ? openrouterKey() : anthropicKey());
-/** OpenRouter model id: the setting, or the Claude model mapped to OpenRouter's naming (claude-opus-5-5 → anthropic/claude-opus-5.5). */
-const orModel = (s) => s.ai.openrouter_model || `anthropic/${String(s.ai.model).replace(/-(\d+)-(\d+)$/, '-$1.$2')}`;
-export const activeModel = (s = getSettings()) => (aiProvider(s) === 'openrouter' ? orModel(s) : s.ai.model);
+/** The provider: always the Claude API (kept as a function for the callers that show it). */
+export const aiProvider = () => 'anthropic';
+export const activeModel = (s = getSettings()) => s.ai.model;
 
 export function aiEnabled() {
   const s = getSettings();
-  return !!s.ai.enabled && keyFor(aiProvider(s));
+  return !!s.ai.enabled && anthropicKey();
 }
 
 export async function aiStatus() {
@@ -52,8 +42,8 @@ export async function aiStatus() {
   return {
     enabled: aiEnabled(),
     provider,
-    key_set: keyFor(provider),
-    keys: { anthropic: anthropicKey(), openrouter: openrouterKey() },
+    key_set: anthropicKey(),
+    keys: { anthropic: anthropicKey() },
     model: activeModel(s),
     spent_today_usd: Number((await spentToday(s)).toFixed(4)),
     daily_budget_usd: s.ai.daily_budget_usd,
@@ -103,19 +93,19 @@ function addUsage(acc, u) {
 }
 
 /**
- * force = { provider, model }: the Claude engines of Claude mode (src/claude-worker.js) run on that provider whatever
- * the editor assistant uses, and do not need "Use AI" switched on; the daily budget still applies.
+ * force = { provider, model }: the Claude engines of Claude mode (src/claude-worker.js) run with that model and do not
+ * need "Use AI" switched on; the daily budget still applies.
  */
 async function preflight(force = null) {
   const s = getSettings();
   if (force?.provider) {
-    s.ai.provider = force.provider;
-    if (force.model) { if (force.provider === 'openrouter') s.ai.openrouter_model = force.model; else s.ai.model = force.model; }
-    if (!keyFor(force.provider)) throw new AiError(`No API key for ${force.provider} (add it in Integrations)`);
+    if (force.provider !== 'anthropic') throw new AiError(`Unknown AI provider ${force.provider}`);
+    if (force.model) s.ai.model = force.model;
+    if (!anthropicKey()) throw new AiError('No Anthropic API key (add it on the AI page)');
     if (await spentToday(s) >= s.ai.daily_budget_usd) throw new AiError(`Daily AI budget of $${s.ai.daily_budget_usd} reached`);
     return s;
   }
-  if (!aiEnabled()) throw new AiError(!s.ai.enabled ? 'AI is turned off in Settings' : `No API key for ${aiProvider(s)} (set ${aiProvider(s) === 'openrouter' ? 'OPENROUTER_API_KEY' : 'ANTHROPIC_API_KEY'})`);
+  if (!aiEnabled()) throw new AiError(!s.ai.enabled ? 'AI is turned off (AI page)' : 'No Anthropic API key (add it on the AI page)');
   if (await spentToday(s) >= s.ai.daily_budget_usd) throw new AiError(`Daily AI budget of $${s.ai.daily_budget_usd} reached`);
   return s;
 }
@@ -132,38 +122,19 @@ function describeError(e) {
  * outputs don't hit HTTP timeouts, and resumes `pause_turn` from long server-tool loops.
  * Returns { text, sources }.
  */
-/*
- * Backup for the in-app AI (editor assistant, briefing; owner, 2026-11-12, the AI page): ai.backup_provider
- * ('anthropic' | 'openrouter' | ''). When the main provider fails (or has no key), the same call runs once on the backup.
- * Not when AI is off or the daily spend limit is reached, and never for forced calls (the Claude engines have their own backup).
- */
-async function withBackup(force, run) {
-  try { return await run(force); } catch (e) {
-    if (force) throw e;
-    const s = getSettings();
-    const b = s.ai.backup_provider;
-    if (!s.ai.enabled || !b || b === aiProvider(s) || !keyFor(b) || /budget/i.test(e.message)) throw e;
-    return run({ provider: b, model: b === 'openrouter' ? orModel(s) : s.ai.model });
-  }
-}
-export const runText = (args) => withBackup(args.force || null, (force) => runTextOnce({ ...args, force }));
-export const runJson = (args) => withBackup(args.force || null, (force) => runJsonOnce({ ...args, force }));
+// (The backup provider for the in-app AI, ai.backup_provider, went with OpenRouter on 2026-11-13: one provider only.)
+export const runText = (args) => runTextOnce({ ...args, force: args.force || null });
+export const runJson = (args) => runJsonOnce({ ...args, force: args.force || null });
 
 async function runTextOnce({ purpose, leadId, system, prompt, tools, effort = 'medium', maxTokens = 32000, force = null }) {
   const s = await preflight(force);
-  if (aiProvider(s) === 'openrouter') {
-    const web = (tools || []).some((t) => /web_search|web_fetch/.test(t.type || t.name || ''));
-    // OpenRouter bills web search separately, so free models (":free") cannot use it on an account without credits:
-    // fail fast and let the caller use its no-AI fallback instead of a model guessing "research" from memory.
-    if (web && /:free$/.test(orModel(s))) throw new AiError('Web research needs OpenRouter credits (free models cannot search the web)');
-    return limited(() => orRun({ s, purpose, leadId, system, prompt, effort, maxTokens, web }));
-  }
   return limited(async () => {
     const t0 = Date.now();
     const usage = { in: 0, out: 0, ws: 0 };
     const messages = [{ role: 'user', content: prompt }];
     const texts = [];
     const sources = new Map();
+    const blocks = []; // every content block of every turn (SWOT guide 5.2: the research gate needs the URLs the run saw)
     try {
       let final;
       for (let i = 0; i < 6; i++) {
@@ -178,6 +149,7 @@ async function runTextOnce({ purpose, leadId, system, prompt, tools, effort = 'm
           fallbacks: 'default',
         }).finalMessage();
         addUsage(usage, final.usage);
+        blocks.push(...final.content);
         for (const b of final.content) {
           if (b.type === 'text') texts.push(b.text);
           if (b.type === 'web_search_tool_result' && Array.isArray(b.content)) {
@@ -189,7 +161,7 @@ async function runTextOnce({ purpose, leadId, system, prompt, tools, effort = 'm
       }
       if (final.stop_reason === 'refusal') throw new AiError(`declined (${final.stop_details?.category || 'policy'})`);
       await logCall({ leadId, purpose, model: final.model || s.ai.model, usage, ms: Date.now() - t0, status: 'ok' });
-      return { text: texts.join('\n').trim(), sources: [...sources].map(([url, title]) => ({ url, title })) };
+      return { text: texts.join('\n').trim(), sources: [...sources].map(([url, title]) => ({ url, title })), message: { content: blocks, stop_reason: final.stop_reason, model: final.model } };
     } catch (e) {
       const msg = e instanceof AiError ? e.message : describeError(e);
       await logCall({ leadId, purpose, model: s.ai.model, usage, ms: Date.now() - t0, status: 'error', error: msg });
@@ -201,11 +173,10 @@ async function runTextOnce({ purpose, leadId, system, prompt, tools, effort = 'm
 /** Schema-constrained JSON call (structured outputs). Returns the parsed object. */
 /**
  * messages: a whole conversation after the system prompt ([{ role: 'user'|'assistant', content }]) instead of one prompt.
- * temperature / model (OpenRouter model override) / timeoutMs are optional; temperature is only sent to OpenRouter.
+ * temperature / model / timeoutMs are accepted for older callers and not used.
  */
 async function runJsonOnce({ purpose, leadId, system, prompt, messages = null, schema, effort = 'low', maxTokens = 16000, temperature, model, timeoutMs, force = null }) {
   const s = await preflight(force);
-  if (aiProvider(s) === 'openrouter') return limited(async () => (await orRun({ s, purpose, leadId, system, prompt, messages, effort, maxTokens, schema, temperature, modelOverride: model, timeoutMs })).data);
   return limited(async () => {
     const t0 = Date.now();
     const usage = { in: 0, out: 0, ws: 0 };
@@ -233,73 +204,6 @@ async function runJsonOnce({ purpose, leadId, system, prompt, messages = null, s
       throw new AiError(msg);
     }
   });
-}
-
-// ------------------------------------------------------------------ OpenRouter
-const OR_URL = `${(process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '')}/chat/completions`;
-
-function orError(status, body) {
-  const m = body?.error?.message || body?.error || '';
-  if (status === 401) return 'invalid OpenRouter API key';
-  if (status === 402) return 'OpenRouter credits used up (add credits at openrouter.ai)';
-  if (status === 429) return 'rate limited by OpenRouter';
-  return `OpenRouter error ${status}: ${String(m).slice(0, 200)}`;
-}
-
-/** JSON from a model reply, tolerating a ```json fence around it. */
-function parseJson(text) {
-  try { return JSON.parse(text); } catch { /* try fenced or embedded */ }
-  const m = /```(?:json)?\s*([\s\S]*?)```/.exec(text) || /(\{[\s\S]*\})/.exec(text);
-  if (m) return JSON.parse(m[1]);
-  throw new SyntaxError('no JSON');
-}
-
-/**
- * One OpenRouter chat completion. schema → structured output (strict JSON schema); web → the "web" plugin
- * (search results come back as url_citation annotations). Returns { text, data, sources }.
- */
-async function orRun({ s, purpose, leadId, system, prompt, messages = null, effort, maxTokens, schema = null, web = false, temperature, modelOverride, timeoutMs = 280000 }) {
-  const t0 = Date.now();
-  const model = modelOverride || orModel(s);
-  const usage = { in: 0, out: 0, ws: 0 };
-  try {
-    const body = {
-      model,
-      max_tokens: maxTokens,
-      messages: [{ role: 'system', content: system }, ...(messages || [{ role: 'user', content: prompt }])],
-      ...(typeof temperature === 'number' ? { temperature } : {}),
-      reasoning: { effort: ['low', 'medium', 'high'].includes(effort) ? effort : 'medium', exclude: true },
-      usage: { include: true },
-      // require_parameters: only route to providers that honour response_format (some free endpoints ignore it)
-      ...(schema ? { response_format: { type: 'json_schema', json_schema: { name: 'output', strict: true, schema } }, provider: { require_parameters: true } } : {}),
-      ...(web ? { plugins: [{ id: 'web', max_results: Math.max(1, Math.min(10, s.ai.web_search_max_uses || 5)) }] } : {}),
-    };
-    const r = await fetch(OR_URL, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'content-type': 'application/json', 'HTTP-Referer': BASE_URL, 'X-Title': 'AxiFlow' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(Math.max(10000, Math.min(280000, timeoutMs || 280000))),
-    });
-    const res = await r.json().catch(() => ({}));
-    if (!r.ok || res.error) throw new AiError(orError(r.status === 200 ? res.error?.code || 500 : r.status, res));
-    const choice = res.choices?.[0] || {};
-    usage.in = res.usage?.prompt_tokens || 0;
-    usage.out = res.usage?.completion_tokens || 0;
-    if (typeof res.usage?.cost === 'number') usage.cost = res.usage.cost;
-    if (web) usage.ws = 1;
-    if (choice.finish_reason === 'length') throw new AiError('response truncated (max_tokens)');
-    const text = typeof choice.message?.content === 'string' ? choice.message.content
-      : (choice.message?.content || []).map((p) => p.text || '').join('');
-    const sources = new Map();
-    for (const a of choice.message?.annotations || []) if (a.type === 'url_citation' && a.url_citation?.url) sources.set(a.url_citation.url, a.url_citation.title || a.url_citation.url);
-    const data = schema ? parseJson(text) : null;
-    await logCall({ leadId, purpose, model: res.model || model, usage, ms: Date.now() - t0, status: 'ok' });
-    return { text: String(text || '').trim(), data, sources: [...sources].map(([url, title]) => ({ url, title })) };
-  } catch (e) {
-    const msg = e instanceof AiError ? e.message : e instanceof SyntaxError ? 'invalid JSON from model' : e.name === 'TimeoutError' ? 'OpenRouter timed out' : e.message;
-    await logCall({ leadId, purpose, model, usage, ms: Date.now() - t0, status: 'error', error: msg });
-    throw new AiError(msg);
-  }
 }
 
 /** Helper for strict JSON schemas: every property required, no extras. */

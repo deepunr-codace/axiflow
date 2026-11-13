@@ -70,10 +70,10 @@ pub.post('/f', limiter, form, async (req, res) => {
 
 // ------------------------------------------------------------------ brochure
 pub.get('/b/:token', async (req, res) => {
+  // the old built-in HTML brochure is gone (2026-11-13): this link now opens the AI-written brochure's PDF
   const lead = await leadByToken(req.params.token);
-  if (!lead?.brochure_html) return notFound(res);
-  await logEvent(lead.id, 'engagement', 'brochure_view', 'ok', req.get('user-agent')?.slice(0, 120) || '');
-  res.send(lead.brochure_html);
+  if (!lead || !(await readyBrochure(lead))) return notFound(res);
+  res.redirect(302, `/pdf/brochure/${lead.token}.pdf`);
 });
 
 // ------------------------------------------------------------------ PDFs

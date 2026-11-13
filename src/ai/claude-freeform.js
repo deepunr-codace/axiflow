@@ -94,7 +94,7 @@ Image catalogue (use the id): ${JSON.stringify(IMAGES(brief))}`,
 3. Lay out every slide on the ${W}×${H} canvas and write the copy.
 4. Write out/result.json, run the validator and fix every problem it reports (text running off a slide, overlapping text, unknown images).`),
     ].filter(Boolean).join('\n\n'),
-    web: s.claude?.web_research !== false,
+    web: true, // always research first (2026-11-13)
   };
 }
 

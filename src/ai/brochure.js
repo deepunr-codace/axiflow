@@ -63,9 +63,14 @@ function schema(serviceIds) {
 }
 
 export function postBrochure(out, input, selected) {
-  const base = templateBrochure(input, selected);
   out = out || {};
   const byId = Object.fromEntries((out.services || []).map((sv) => [sv.id, sv]));
+  // no part of the brochure copy is filled in from the agency's standard text (owner, 2026-11-13: no default content)
+  const missing = ['cover_title', 'cover_subtitle', 'shift_title', 'shift_paragraphs', 'help_intro', 'help_bullets', 'why_paragraphs', 'cta_title', 'cta_text']
+    .filter((k) => !out[k] || (Array.isArray(out[k]) && !out[k].length))
+    .concat(selected.filter((id) => !byId[id]?.paragraphs?.length || !byId[id]?.bullets?.length).map((id) => `service ${id}`));
+  if (missing.length) throw new Error(`the brochure answer was incomplete (${missing.join(', ')})`);
+  const base = templateBrochure(input, selected); // agency facts (contact, portfolio, logo) only; the copy is the answer's
   return {
     ...base,
     cover_title: out.cover_title || base.cover_title,
@@ -81,8 +86,3 @@ export function postBrochure(out, input, selected) {
   };
 }
 
-/** Writes the brochure with the AI, falling back to the template on any failure. Returns { content, source }. */
-/** Without Claude: the agency copy with the client filled in (the in-app AI writer was removed, owner 2026-11-05). */
-export async function writeBrochure(input, selected, research = null) {
-  return { content: templateBrochure(input, selected), source: 'template' };
-}
