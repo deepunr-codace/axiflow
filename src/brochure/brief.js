@@ -89,10 +89,10 @@ export function briefText({ lead = {}, crm = null, facts = [], research = null, 
   // LAST REJECTION: only when this is a new version after "not approved"
   if (rejection) out.push('', 'LAST REJECTION', rejection.reason ? `The last brochure was not approved: ${clip(rejection.reason, 300)}` : 'The last brochure was not approved (no reason given in the CRM).');
 
-  // IMAGES: from the client's own website
+  // IMAGES: CodeAce's own design photos (owner, 2026-11-13), or the client's when a caller passes those
   if (images?.length) {
-    out.push('', 'IMAGES (from the client\'s own website)');
-    for (const i of images) { ids.add(i.id); out.push(`${i.id} ${i.kind}, ${i.w}x${i.h} ${i.orientation}${i.alt ? `, "${clip(i.alt, 80)}"` : ''}${i.ai ? ' (file name suggests an AI image: prefer real photos)' : ''}`); }
+    out.push('', images.every((i) => i.design) ? 'IMAGES (CodeAce\'s own design photos: decorative, they do not show this business)' : 'IMAGES (from the client\'s own website)');
+    for (const i of images) { ids.add(i.id); out.push(`${i.id} ${i.kind}, ${i.w}x${i.h} ${i.orientation}${i.alt ? `, "${clip(i.alt, 80)}"` : ''}${i.note ? ` (${i.note})` : ''}${i.ai ? ' (file name suggests an AI image: prefer real photos)' : ''}`); }
   } else out.push('', 'IMAGES', 'None usable on the client\'s website: use the photo-free layouts.');
 
   const text = out.join('\n');
@@ -120,7 +120,8 @@ export async function buildBrief(leadId, parts = {}) {
     swot = parse(row?.content_json);
   }
   const website = crm?.company ? crm.company.website || '' : lead.website || '';
-  const images = parts.images ?? await (await import('./images.js')).leadImages(leadId, website).catch(() => []);
+  // the template's own photos, not the client's (owner, 2026-11-13: "use same image used in the template")
+  const images = parts.images ?? (await import('./images.js')).templateImages();
   const offer = parts.offer ?? decideOffer({ websiteType: lead.website_type, website, facts, audit: parts.audit, settings: getSettings() });
   const rejection = parts.rejection !== undefined ? parts.rejection : rejectionOf(crm?.brochures);
   const b = briefText({ lead: { ...lead, website }, crm, facts, research, swot: swot?.swot ? swot : null, offer: offer?.blocked ? null : offer, images, rejection });

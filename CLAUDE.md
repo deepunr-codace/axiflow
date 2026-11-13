@@ -44,6 +44,41 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - Not seen yet: a real Delete / Edit click in the CRM brochure list.
 - **Still to tell the co-worker:** CRM commits 45365434 and d5289f71.
 
+## Status (2026-11-13): brochures use the template's own photos, not the client's (local, NOT pushed)
+- **Owner:** "use same image used in the template". Chose "Template's own photos" for "Both" brochure templates.
+- **Now:** no photos are collected from client websites for brochures (`collectImages` / `leadImages` / `pickPhotos` stay in images.js, unused).
+  - **Growth Brochure (template 25):** `tools.addTemplatePhotos()` (replaced `addClientPhotos`) sets cover = sample-strip, challenge = sample-shelf, closing = sample-cta, as in the template's own sample. Photos added by hand still win.
+  - **Designed brochure:** `templateImages()` offers 4 photos (I1 strip, I2 bowl, I3 shelf, I4 wide band) as JPEG copies `assets/html-docs/img/design-*.jpg`. A PDF cannot hold WebP, so Chromium stored them raw: 6.5 MB, now 948 KB.
+    - The writer must place at least 3 (`MIN_DESIGN_PHOTOS`; `checkOutput` sends an answer without them back once).
+    - The visual review is told to keep them, and `applyReview` refuses a change that drops one. In an earlier run the reviewer removed them all as "off-topic spices for a saree store".
+  - **Brief / writer:** they say the photos are CodeAce's decorative design photos, never the client's products.
+- **Left out on purpose:** the template's idea-page picture `sample-phone.webp` shows Nirapara's brand (logo, nirapara.com/scan), so no idea-page picture is used.
+- **Note for the owner:** the template photos are food and spices (rice, chilli, curry leaves, jars). For non-food clients the review model calls them off-topic.
+- **Tested:**
+  - Template 25 re-rendered for Thread Stories (template photos, 721 KB).
+  - The Designed brochure was generated again on the local CLI (3.3 min, 0 layout issues, photos on cover / drop-off page / closing, 948 KB after the JPEG change).
+  - 12 + 22 checks pass.
+
+## Status (2026-11-13): brochure fix guide, Phases 1-5 LIVE in 361f050 (pushed by the SWOT session with its phases, owner: "push all to axiflow"); follow-up fixes local
+- **End-to-end run** (`compare-brochures.js 276 --only designed`, local Claude CLI, read-only, no API key): **3.3 min in all**.
+  - Opus wrote 10 pages in 115 s; the claims check found all supported (11 s).
+  - The first render had 5 layout issues; the Sonnet visual review (26 s, 12 turns) redid those pages, and the second render had 0 issues → not "needs a look".
+  - The output is clearly better than template 25: real composition, the client's photos, specific facts (244 products, WooCommerce → Shopify, "Share WordPress admin access").
+  - **Watch:** the first live brochure run's time (template 25 now runs lean with Opus pinned; one local run took 48 min, the next only 2 min).
+- **Follow-up fixes (local, NOT pushed; waiting for the owner):**
+  1. **Cover photo was a crystal tree:** the og:image was labelled with the page title ("Handloom Sarees Online…"), so the writer took it for a saree photo. It now has alt '' and a note ("the website's share image; what it shows is not described").
+  2. **PDF size:** big photos are scaled to 2,000 px and heavy photo PNGs re-encoded as JPEG (`shrink()` in images.js, through Chromium, no new dependency). The PDF went from 17.6 MB to 2.6 MB; it was over the 4.5 MB a /pdf link can serve on Vercel.
+  3. **Dark-page numbers:** card numbers on dark pages were unreadable; they are light now.
+  4. **Bottom alignment:** bottom-aligned boxes use `safe flex-end`, so the layout check still sees text that overflows a card (found by the render test after the card change).
+  - Checked: 12 + 22 checks pass, and the Thread Stories brochure re-renders with 0 issues.
+- **CRM side, not done:**
+  - `crm/brochure-rejection-reason.sql` (CRM team);
+  - the Documents panel should show `needs_look` / `look_reasons` with a link to AxiCore (the API already returns them).
+- **Next:**
+  1. Owner: push the follow-up fixes.
+  2. Watch the first live brochure (time, PDF size).
+  3. Pick the Designed brochure for one real lead, or run `scripts/compare-brochures.js` on the golden set and do the blind review against Claude web (guide section 10) before making it the default.
+
 ## Status (2026-11-13): brochure fix guide, Phases 2-5 built: the "Designed brochure" (local, NOT pushed)
 - **Owner:** "do all remaining without using our key" (after Phase 1 below).
 - **Rules:**
@@ -82,7 +117,7 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - 12 render / unit checks: sanitiser, data-fit, output check, claims and review applied, designed job, brief text, rejection, acceptHtml, every theme × font renders, the layout check finds overflow and 3-line headings, sample preview + PDF;
   - the 22 Phase 1 checks still pass; all modules import.
   - The sample pages were looked at, and the card / row layout was fixed after the first look.
-  - **End-to-end run** (`compare-brochures.js 276 --only designed`): see the result in the next note.
+  - **End-to-end run** (`compare-brochures.js 276 --only designed`): see the note above.
 
 ## Status (2026-11-13): brochure fix guide, Phase 1 of 5 (quick wins) built (local, NOT pushed; waiting for the owner's OK)
 - **Owner:** "downloads/AxiFlow-Brochure-Fix-Guide.pdf do this". The guide's Appendix A says: one phase at a time, do not push, after each phase rebuild Thread Stories (lead 276, doc 489) read-only, render it to PNG, show the diff + job prompt + pages, wait for the OK. Owner, same session: **"dont use our anthropic key for any testing purpose this task"**.

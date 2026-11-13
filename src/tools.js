@@ -22,6 +22,7 @@ import { claudeOn, claudeBroken, dispatchJob, claudeState } from './claude-worke
 import { claudeScriptJob, claudeProposalJob } from './ai/claude-jobs.js';
 import { decideOffer } from './brochure/offer.js';
 import { buildBrief as buildLeadBrief } from './brochure/brief.js';
+import { TEMPLATE_PS_PHOTOS } from './brochure/images.js';
 import { designedJob } from './brochure/writer.js';
 
 /**
@@ -464,10 +465,11 @@ export async function buildClaudeJob(doc, s = getSettings(), opts = {}) {
       if (offer?.blocked) throw new Error(offer.blocked);
       if (tpl.source === htmlDocs.DESIGNED) {
         // the designed brochure (brochure fix guide 2026-11-13, phases 2-4): a short brief built by code (facts, evidence,
-        // approved SWOT, CRM, decided offer, the client's images), then one writing call that composes the pages from the
-        // CodeAce design system; the claims check and the visual review run on the same GitHub run (claude-worker/designed.mjs)
-        const { leadImages } = await import('./brochure/images.js');
-        const images = await leadImages(doc.lead_id, base.website).catch(() => []);
+        // approved SWOT, CRM, decided offer, the template's own photos), then one writing call that composes the pages from
+        // the CodeAce design system; the claims check and the visual review run on the same GitHub run (claude-worker/designed.mjs)
+        // photos: the template's own (owner, 2026-11-13: "use same image used in the template"), not the client's website
+        const { templateImages } = await import('./brochure/images.js');
+        const images = templateImages();
         const b = await buildLeadBrief(doc.lead_id, { crm, facts: collected?.facts || [], research, offer, audit: collected?.audit, images });
         const a = s.agency || {};
         job = designedJob({ brief: b.text, ids: b.ids, images, model: s.claude?.api_model?.anthropic || 'claude-opus-5-5', client: base.company,
@@ -566,7 +568,7 @@ export async function completeDoc(id, { content, source }) {
   // HTML documents are delivered as the Chromium print of their pages (brochure fix guide 2026-11-13, section 8: the
   // CRM got a pdfkit re-render of a converted design, 3-7.6% off, italics lost, other line breaks). They are converted
   // for the classic editor only when someone opens them there (POST /api/tools/docs/:id/to-design), never for delivery.
-  if (content?.html && doc.kind === 'brochure') await addClientPhotos(doc, content);
+  if (content?.html && doc.kind === 'brochure') addTemplatePhotos(content);
   // the designed brochure: AxiFlow's own layout check on the final pages; anything still wrong (or claims nobody
   // checked) = "needs a look": shown in AxiFlow and the CRM's Documents panel, and not sent to the CRM as finished
   const look = content?.html?.template === htmlDocs.DESIGNED ? await designedLook({ ...doc, content }) : null;
@@ -607,39 +609,14 @@ export async function releaseDoc(id, by = '') {
   return { ok: true };
 }
 /**
- * The client's own photos in the brochure's photo areas (brochure fix guide 2026-11-13, section 8: they shipped as dark
- * gradients unless someone uploaded pictures by hand): collected from the client's website once per lead
- * (src/brochure/images.js) and placed by shape: wide ones on the cover and the closing panel, tall ones on the challenge
- * card and beside one idea page. Photos added by hand are kept. Never stops the document.
+ * The CodeAce Growth Brochure's photo areas get the template's own photos, as in its sample (owner, 2026-11-13: "use same
+ * image used in the template"; before, photos were taken from the client's website): cover, challenge card and closing
+ * panel. Not the idea-page picture: the template's one shows another client's brand. Photos added by hand are kept.
  */
-export async function addClientPhotos(doc, content) {
-  const h = content.html;
-  if (h?.template !== 'builtin-html-brochure-ps' || !doc.lead_id) return;
-  try {
-    const { leadImages, pickPhotos } = await import('./brochure/images.js');
-    const lead = await get(`SELECT website FROM leads WHERE id = :id`, { id: doc.lead_id });
-    const images = await leadImages(doc.lead_id, lead?.website || doc.input.website);
-    const { photos, alt } = pickPhotos(images);
-    if (!Object.keys(photos).length) return;
-    h.data.photos = { ...photos, ...(h.data.photos || {}) };
-    if (photos.ideas) { // one idea page without a statement card shows the picture beside its ideas, if they still fit
-      const before = await htmlDocs.overflowingPages({ ...doc, content }).catch(() => null);
-      const pages = h.data.idea_pages || [];
-      let placed = false;
-      for (let k = 0; k < pages.length && before && !placed; k++) {
-        if (pages[k].statement) continue;
-        pages[k] = { ...pages[k], photo: true, photo_alt: alt.ideas || '' };
-        const after = await htmlDocs.overflowingPages({ ...doc, content }).catch(() => null);
-        if (after && after.length <= before.length) placed = true;
-        else pages[k] = { ...pages[k], photo: false, photo_alt: '' }; // the cards no longer fit beside it: no picture here
-      }
-      if (!placed && h.data.photos.ideas === photos.ideas) delete h.data.photos.ideas; // a picture added by hand stays
-    }
-    h.images = images.map(({ id, kind, w, h: ht, orientation, alt: a, src }) => ({ id, kind, w, h: ht, orientation, alt: a, src }));
-  } catch (e) {
-    const { logEvent } = await import('./pipeline/log.js');
-    await logEvent(doc.lead_id, 'tools', 'brochure_images', 'error', `doc ${doc.id}: ${e.message}`).catch(() => {});
-  }
+export function addTemplatePhotos(content) {
+  const h = content?.html;
+  if (h?.template !== 'builtin-html-brochure-ps') return;
+  h.data.photos = { ...TEMPLATE_PS_PHOTOS, ...(h.data.photos || {}) };
 }
 /**
  * The classic editor's design of a Codeace HTML document (owner, 2026-11-12: "use classic editor always. but i need my

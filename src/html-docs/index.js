@@ -644,7 +644,7 @@ export function acceptHtml(template, output, job) {
   const cuts = [];
   if (template === DESIGNED) { // + the client's pictures (stored copies) and the runner's checks (claims check, review)
     const data = cleanHtmlData(template, output);
-    data.images = (job?.images || []).map((i) => ({ id: i.id, src: i.src, alt: i.alt || '' })).filter((i) => /^upload:/.test(i.src || ''));
+    data.images = (job?.images || []).map((i) => ({ id: i.id, src: i.src, alt: i.alt || '' })).filter((i) => /^(upload:|asset:html-docs\/)/.test(i.src || '')); // stored copies or the template's own photos
     const problems = checkOutput(output, { ids: job?.brief_ids || [], images: job?.images || [] });
     return { html: { template, data, split: {}, check: { ...(output.check || {}), output_problems: problems.slice(0, 20), engine_checked: !!output.check } } };
   }

@@ -48,7 +48,10 @@ A card is a 2-5 word title and one line that is only true of this business.
 Numbers only from the brief. When there are none, describe the mechanism instead of inventing a figure.
 End on the next step the client takes, not on a slogan.`;
 
-/** The guide's writer system prompt (section 7.1), word for word. */
+/**
+ * The guide's writer system prompt (section 7.1), word for word except the two image lines: the brochures use
+ * CodeAce's own design photos, not the client's (owner, 2026-11-13: "use same image used in the template").
+ */
 export const WRITER_SYSTEM = `You are the creative director and lead copywriter at CodeAce, a web and growth agency in Kerala. You design
 and write one sales brochure for one business: a landscape document the sales team sends after the client
 has said they are interested. A good brochure feels made for this business alone: its products, its
@@ -58,15 +61,16 @@ WHAT YOU GET
 <brief>: everything known about the business. F-ids are verified facts, E-ids are research evidence,
 S-ids are SWOT points. The offer and package are decided: sell exactly that.
 <design_system>: the classes you may use, what each is for, and how much text it holds.
-<images>: the logo and photos from the client's own website, each with an id and a description.
+<images>: the photos you may use, each with an id and a description (CodeAce's own design photos: decorative,
+not pictures of this business).
 <style_note>: how CodeAce writes.
 
 HOW TO WORK
 1. Decide the story first: the one sentence the brochure proves, and the 8-12 pages that prove it. Choose
    the sections this business needs; there is no fixed list.
 2. Choose a theme and a font pairing from the design system that suit the business.
-3. Write each page as HTML using only design-system classes. Put the client's photos where they sell the
-   story (cover, product pages, closing). Use each image at most once.
+3. Write each page as HTML using only design-system classes. Put the photos where they set the mood (cover,
+   a section opener, closing); never present one as the client's product or shop. Use each image at most once.
 4. Keep every text block within the capacity the design system states. Short beats complete.
 5. List every factual claim about the business in "claims" with the ids it rests on.
 
@@ -98,7 +102,9 @@ export const WRITER_SCHEMA = {
   },
 };
 
-const imageLine = (i) => `${i.id} ${i.kind}, ${i.w}x${i.h} ${i.orientation}${i.alt ? `, "${String(i.alt).slice(0, 90)}"` : ''}${i.ai ? ' (file name suggests an AI image: prefer real photos)' : ''}`;
+/** The template's own photos must be used (owner, 2026-11-13: "use same image used in the template"): at least this many. */
+export const MIN_DESIGN_PHOTOS = 3;
+const imageLine = (i) => `${i.id} ${i.kind}, ${i.w}x${i.h} ${i.orientation}${i.alt ? `, "${String(i.alt).slice(0, 90)}"` : ''}${i.note ? ` (${i.note})` : ''}${i.ai ? ' (file name suggests an AI image: prefer real photos)' : ''}`;
 /** The guide's writer user message (section 7.2). */
 export function writerMessage({ brief, images }) {
   const usable = (images || []).filter((i) => i.kind !== 'logo');
@@ -112,7 +118,10 @@ ${themesText()}
 </design_system>
 <images>
 ${usable.length ? usable.map(imageLine).join('\n') : 'No usable photos on the client\'s website: use the photo-free components (cover--type, cards, statement).'}
-Use as <img data-img="I2" alt="...">. No other image sources.
+Use as <img data-img="I2" alt="...">. No other image sources.${usable.length && usable.every((i) => i.design) ? `
+These are the CodeAce template's own photos, and every CodeAce brochure uses them: place at least ${MIN_DESIGN_PHOTOS} of them, the way
+the template does: one as the cover photo (cover--photo), one beside the challenge or the gaps (photo-panel), and a wide
+one behind the closing page's words (photo-panel--full). Keep the words about the business; the photos only set the mood.` : ''}
 </images>
 
 <style_note>
@@ -132,7 +141,7 @@ export function designedJob({ brief, ids, images, model = 'claude-opus-5-5', rev
     brief, brief_ids: ids || [],
     // the client's images: the runner loads them from the client's site (url) for its visual review; AxiFlow prints
     // the stored copies (src = upload:…)
-    images: (images || []).map((i) => ({ id: i.id, kind: i.kind, w: i.w, h: i.h, orientation: i.orientation, alt: i.alt || '', ai: !!i.ai, url: i.url || null, src: i.src })),
+    images: (images || []).map((i) => ({ id: i.id, kind: i.kind, w: i.w, h: i.h, orientation: i.orientation, alt: i.alt || '', ai: !!i.ai, ...(i.note ? { note: i.note } : {}), ...(i.design ? { design: true } : {}), url: i.url || null, src: i.src })),
   };
 }
 
@@ -150,10 +159,15 @@ export function checkOutput(out, { ids = [], images = [] } = {}) {
   if (!THEMES[out?.theme]) problems.push(`theme "${out?.theme}" is not one of ${Object.keys(THEMES).join(', ')}`);
   if (!FONTS[out?.fonts]) problems.push(`fonts "${out?.fonts}" is not one of ${Object.keys(FONTS).join(', ')}`);
   const imgIds = new Set((images || []).map((i) => i.id));
+  const used = new Set();
   for (const [i, p] of pages.entries()) for (const id of String(p?.html || '').match(/data-img="([^"]*)"/g) || []) {
     const v = id.slice(10, -1);
     if (!imgIds.has(v)) problems.push(`pages[${i}] uses image "${v}", which is not in <images>`);
+    else used.add(v);
   }
+  // the template's own photos are part of every CodeAce brochure: a brochure without them is sent back once
+  const design = (images || []).filter((i) => i.design && i.kind !== 'logo');
+  if (design.length && used.size < Math.min(MIN_DESIGN_PHOTOS, design.length)) problems.push(`only ${used.size} of the template's photos used; place at least ${Math.min(MIN_DESIGN_PHOTOS, design.length)} (cover photo, beside the challenge, behind the closing page)`);
   (out?.claims || []).forEach((c, i) => {
     const refs = Array.isArray(c?.refs) ? c.refs : [];
     if (!refs.length) problems.push(`claims[${i}] ("${String(c?.text || '').slice(0, 50)}") has no refs`);
@@ -244,7 +258,7 @@ export const REVIEW_SCHEMA = {
     ok_pages: { type: 'array', items: { type: 'integer' } },
   },
 };
-export function reviewMessage({ out, issues, imageFiles }) {
+export function reviewMessage({ out, issues, imageFiles, keep = [] }) {
   return `<pages>
 ${(out.pages || []).map((p, i) => `--- page ${i + 1} (${p.name}): image ${imageFiles?.[i] || '(none)'} ---\n${p.html}`).join('\n')}
 </pages>
@@ -257,18 +271,26 @@ ${issues?.length ? issues.map((x) => `page ${x.page}: ${x.what}${x.text ? ` ("${
 ${CATALOGUE}
 </design_system>
 
-Open every page image with the Read tool before you answer.`;
+${(imageFiles || []).length && keep?.length ? `The photos ${keep.join(', ')} are the CodeAce template's own photos and are required in every CodeAce
+brochure: keep each one where it is (you may change the words around it, its panel side or its crop, never remove it).
+
+` : ''}Open every page image with the Read tool before you answer.`;
 }
 /** Applies the review's page replacements (each sanitised and non-empty), keeping the number of pages. */
-export function applyReview(pages, changes) {
+export function applyReview(pages, changes, { keep = [] } = {}) {
   const out = pages.map((p) => ({ ...p }));
-  const applied = [];
+  const applied = [], refused = [];
+  const ids = (html) => new Set((String(html).match(/data-img="(I\d+)"/g) || []).map((x) => x.slice(10, -1)));
   for (const c of changes || []) {
     const i = (Number(c?.page) || 0) - 1;
     if (!out[i] || !String(c.html || '').trim()) continue;
     if (sanitizePage(c.html).html.replace(/<[^>]+>/g, '').trim().length < 20) continue;
+    // a change that drops one of the template's own photos is refused (owner, 2026-11-13: every brochure uses them)
+    const now = ids(out[i].html), next = ids(c.html);
+    const lost = keep.filter((k) => now.has(k) && !next.has(k));
+    if (lost.length) { refused.push({ page: i + 1, why: `would remove the template photo ${lost.join(', ')}` }); continue; }
     out[i] = { ...out[i], html: c.html };
     applied.push({ page: i + 1, why: String(c.why || '').slice(0, 200) });
   }
-  return { pages: out, applied };
+  return { pages: out, applied, refused };
 }

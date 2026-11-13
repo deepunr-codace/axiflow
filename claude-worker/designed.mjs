@@ -50,8 +50,11 @@ function claude(step, { system, prompt, model, schema, tools = '', maxTurns = 3,
   return out;
 }
 
-// --- rendering with the client's own images (their URLs; AxiFlow prints the stored copies)
-const imgUrl = Object.fromEntries((job.images || []).map((i) => [i.id, i.url]).filter(([, u]) => u));
+// --- rendering with the brochure's images: the template's own photos come from this checkout (assets/html-docs);
+// a client picture from its URL (AxiFlow prints the stored copies)
+const { dataUri } = await import('../src/html-docs/assets.js');
+const imgUrl = Object.fromEntries((job.images || []).map((i) => [i.id,
+  /^asset:html-docs\//.test(i.src || '') ? dataUri(i.src.slice('asset:html-docs/'.length)) : i.url]).filter(([, u]) => u));
 const SIZE = { width: 1123, height: 794 };
 async function renderCheck(out, tag) {
   const html = designedHtml(out, { client: job.client || '', date: job.date || '', docName: 'Growth Brochure', contact: job.contact || {}, imageSrc: (id) => imgUrl[id] || null });
@@ -95,11 +98,12 @@ try {
   check.layout_before = first.issues;
   try {
     const rel = first.files.map((f) => path.relative(W, f).replace(/\\/g, '/'));
-    const rv = claude('review', { system: REVIEW_SYSTEM, prompt: reviewMessage({ out, issues: first.issues, imageFiles: rel }), model: job.review_model, schema: REVIEW_SCHEMA,
+    const keep = (job.images || []).filter((i) => i.design).map((i) => i.id); // the template's own photos stay
+    const rv = claude('review', { system: REVIEW_SYSTEM, prompt: reviewMessage({ out, issues: first.issues, imageFiles: rel, keep }), model: job.review_model, schema: REVIEW_SCHEMA,
       tools: 'Read', allowed: 'Read', maxTurns: rel.length + 4 });
-    const a = applyReview(out.pages, rv.changes);
+    const a = applyReview(out.pages, rv.changes, { keep });
     out = { ...out, pages: a.pages };
-    check.review = { status: 'reviewed', changes: a.applied, ok_pages: rv.ok_pages || [] };
+    check.review = { status: 'reviewed', changes: a.applied, refused: a.refused, ok_pages: rv.ok_pages || [] };
   } catch (e) { check.review = { status: 'not_reviewed', reason: e.message.slice(0, 300) }; }
   const last = check.review.changes?.length ? await renderCheck(out, 'after') : first;
   check.layout_after = last.issues;

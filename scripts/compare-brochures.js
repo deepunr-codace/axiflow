@@ -91,7 +91,7 @@ for (const leadId of ids) {
       fs.writeFileSync(path.join(dir, `${key}-answer.json`), JSON.stringify(output, null, 2));
       const content = h.acceptHtml(source, output, job);
       const d = { ...doc, status: 'ready', content };
-      if (source === TEMPLATES.ps) await tools.addClientPhotos(d, content);
+      if (source === TEMPLATES.ps) tools.addTemplatePhotos(content);
       const issues = source === h.DESIGNED ? await h.designedIssues(d) : null;
       const pdf = await h.htmlDocPdf(d);
       const usage = JSON.parse(fs.readFileSync(path.join(WORK, 'claude.json'), 'utf8'));

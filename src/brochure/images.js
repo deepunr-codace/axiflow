@@ -13,6 +13,24 @@ import { addColumns, get, update } from '../db.js';
  */
 addColumns('leads', { images_json: 'TEXT', images_at: 'TEXT' });
 
+/*
+ * The template's own photos (owner, 2026-11-13: "use same image used in the template"): every brochure uses CodeAce's
+ * design photos from the CodeAce Growth Brochure instead of pictures from the client's website. Not the phone picture
+ * (sample-phone.webp): it shows another client's brand (Nirapara logo, nirapara.com/scan).
+ */
+const DESIGN_NOTE = "CodeAce's own design photo: decorative, it does not show this business; use it as a background or mood, never as the client's product";
+// JPEG copies of the template's WebP photos (assets/html-docs/img/design-*.jpg): a PDF cannot hold WebP, so Chromium
+// stored the designed brochure's photos uncompressed (6.5 MB); JPEG goes into the PDF as it is (the brochure ~1 MB)
+export const TEMPLATE_PHOTOS = [
+  { id: 'I1', kind: 'photo', w: 2000, h: 814, orientation: 'landscape', src: 'asset:html-docs/img/design-strip.jpg', alt: 'Spices, rice, chillies and curry leaves on the right of a dark red-black background; the left is plain dark' },
+  { id: 'I2', kind: 'photo', w: 1414, h: 2000, orientation: 'portrait', src: 'asset:html-docs/img/design-cover.jpg', alt: 'A bowl of red rice with chilli powder, turmeric and curry leaves on a dark background; the lower half is plain dark' },
+  { id: 'I3', kind: 'photo', w: 490, h: 940, orientation: 'portrait', src: 'asset:html-docs/img/design-shelf.jpg', alt: 'Shelves of colourful jars and packs, fading to dark red at the bottom' },
+  { id: 'I4', kind: 'photo', w: 2000, h: 479, orientation: 'landscape', src: 'asset:html-docs/img/design-cta.jpg', alt: 'A very wide dark band with rice, chilli and curry leaves along the top right' },
+].map((x) => ({ ...x, note: DESIGN_NOTE, design: true }));
+export const templateImages = () => TEMPLATE_PHOTOS.map((x) => ({ ...x }));
+/** The CodeAce Growth Brochure's photo areas, as in the template's own sample (no idea-page picture: that one is branded). */
+export const TEMPLATE_PS_PHOTOS = { cover: 'asset:html-docs/img/sample-strip.webp', challenge: 'asset:html-docs/img/sample-shelf.webp', cta: 'asset:html-docs/img/sample-cta.webp' };
+
 // --- fetching with the same SSRF guard as the website check (src/pipeline/enrich.js): never internal addresses
 function isPrivateIp(ip) {
   if (net.isIPv6(ip)) {
@@ -81,7 +99,9 @@ function candidates(html, pageUrl, pageKind) {
   const out = [];
   if (pageKind === 'home') {
     const og = $('meta[property="og:image"], meta[name="og:image"]').attr('content');
-    if (og) out.push({ url: abs(og), kind: 'hero', alt: $('meta[property="og:title"]').attr('content') || '', page: pageUrl });
+    // the share image says nothing about what it shows: its "alt" is not the page title (found on Thread Stories: a crystal
+    // tree described as "Handloom Sarees Online…" became the cover of a saree brochure)
+    if (og) out.push({ url: abs(og), kind: 'hero', alt: '', note: "the website's share image; what it shows is not described: use it only where any picture of the brand fits, never as a product", page: pageUrl });
   }
   $('img, source').each((_, el) => {
     const e = $(el);
@@ -122,6 +142,28 @@ async function pool(items, n, fn) {
   await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (i < items.length) { const k = i++; out[k] = await fn(items[k], k).catch(() => null); } }));
   return out;
 }
+/**
+ * A picture scaled to at most MAX_SIDE on its long side, in Chromium (no image library). jpeg: true = always JPEG 86 %
+ * on white (a photo); else a PNG stays PNG (the logo keeps its transparency).
+ */
+const MAX_SIDE = 2000;
+export async function shrink(d, { jpeg = false } = {}) {
+  const { withPage } = await import('../html-docs/chrome.js');
+  const k = Math.min(1, MAX_SIDE / Math.max(d.w, d.h));
+  const w = Math.round(d.w * k), h = Math.round(d.h * k), png = d.type === 'png' && !jpeg;
+  const src = `data:${d.type === 'png' ? 'image/png' : d.type === 'webp' ? 'image/webp' : 'image/jpeg'};base64,${d.buf.toString('base64')}`;
+  const b64 = await withPage('<!doctype html><html><body></body></html>', { width: 64, height: 64 }, (page) => page.evaluate(async (s, ww, hh, p) => {
+    const im = new Image(); im.src = s; await im.decode();
+    const c = document.createElement('canvas'); c.width = ww; c.height = hh;
+    const x = c.getContext('2d'); x.imageSmoothingQuality = 'high';
+    if (!p) { x.fillStyle = '#FFFFFF'; x.fillRect(0, 0, ww, hh); } // JPEG has no transparency: white, not black, behind a cut-out
+    x.drawImage(im, 0, 0, ww, hh);
+    return c.toDataURL(p ? 'image/png' : 'image/jpeg', 0.86).split(',')[1];
+  }, src, w, h, png));
+  const buf = Buffer.from(b64, 'base64');
+  return buf.length ? { buf, w, h, type: png ? 'png' : 'jpg' } : {};
+}
+
 async function download(url) {
   const { res } = await safeGet(url, { timeout: 15000 });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -191,11 +233,16 @@ export async function collectImages(website, { leadId = 0, max = 14 } = {}) {
     const hash = crypto.createHash('sha1').update(g.buf).digest('hex').slice(0, 16);
     if (hashes.has(hash)) continue;
     hashes.add(hash);
+    // a camera original (found on Thread Stories: 4536 × 8064, ~5 MB) made the PDF 17 MB, over what a PDF link can
+    // serve: anything over 2,000 px is scaled down before it is stored (the original stays on the client's site)
+    // (a heavy photo PNG, ~2 MB each on Thread Stories, is re-encoded as JPEG at its own size; the logo stays PNG)
+    if (Math.max(g.w, g.h) > MAX_SIDE || (kind !== 'logo' && g.buf.length > 1.2e6)) Object.assign(g, await shrink(g, { jpeg: kind !== 'logo' }).catch(() => ({})));
     const key = `brochure-img/${Number(leadId) || 0}/${hash}.${g.type}`;
     try { await saveUpload(key, g.buf, g.type === 'png' ? 'image/png' : g.type === 'webp' ? 'image/webp' : 'image/jpeg'); } catch { continue; }
     counts[kind]++;
     const name = decodeURIComponent(new URL(g.url).pathname.split('/').pop() || '');
     keep.push({ kind, w: g.w, h: g.h, orientation: g.w > g.h * 1.15 ? 'landscape' : g.h > g.w * 1.15 ? 'portrait' : 'square', alt: String(g.alt || '').trim().slice(0, 140), name: name.slice(0, 100), page: g.page, ai: AI_NAME.test(name), src: `upload:${key}`,
+      ...(g.note ? { note: g.note } : {}),
       url: g.url }); // the client's own copy: the GitHub runner loads it for the designed brochure's visual review
   }
   return keep.map((x, i) => ({ id: `I${i + 1}`, ...x }));
