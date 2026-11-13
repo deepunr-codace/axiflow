@@ -149,6 +149,50 @@ function markInPage() {
   pages.forEach((p, i) => walk(p, i + 1));
   return { pages: pages.length, slots };
 }
+/**
+ * Pictures inside the file far bigger than they are drawn (owner, 2026-11-13: "html file too large"): each data: picture
+ * over minLen characters is scaled to 3x its largest drawn box (sharp in print at 2x), and an opaque PNG photo is
+ * stored as JPEG. Only replacements at least 20% smaller are returned: [[old, new], ...].
+ */
+async function shrinkInPage(minLen) {
+  const seen = new Map();
+  const note = (u, w, h) => {
+    if (!u || !u.startsWith('data:image/') || u.length < minLen || /^data:image\/(svg|gif)/i.test(u)) return;
+    const m = seen.get(u) || { w: 0, h: 0 };
+    m.w = Math.max(m.w, w); m.h = Math.max(m.h, h);
+    seen.set(u, m);
+  };
+  for (const im of document.images) { const r = im.getBoundingClientRect(); note(im.currentSrc || im.src, r.width, r.height); }
+  for (const el of document.querySelectorAll('*')) {
+    for (const pseudo of [null, '::before', '::after']) {
+      const bg = getComputedStyle(el, pseudo).backgroundImage;
+      if (!bg || bg === 'none' || !bg.includes('data:image/')) continue;
+      const r = el.getBoundingClientRect();
+      for (const m of bg.matchAll(/url\("?(data:image\/[^")]+)"?\)/g)) note(m[1], r.width, r.height);
+    }
+  }
+  const out = [];
+  for (const [u, box] of seen) {
+    if (!box.w || !box.h) continue; // not drawn on screen: left alone
+    try {
+      const im = new Image(); im.src = u; await im.decode();
+      const nw = im.naturalWidth, nh = im.naturalHeight;
+      const k = Math.min(1, Math.max((3 * box.w) / nw, (3 * box.h) / nh));
+      const w = Math.max(1, Math.round(nw * k)), h = Math.max(1, Math.round(nh * k));
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      const x = c.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(im, 0, 0, w, h);
+      let opaque = true;
+      if (/^data:image\/(png|webp)/i.test(u)) {
+        const d = x.getImageData(0, 0, w, h).data;
+        for (let i = 3; i < d.length; i += 4 * 7) if (d[i] < 255) { opaque = false; break; }
+      }
+      const png = /^data:image\/png/i.test(u) && !opaque;
+      const next = png ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', 0.9);
+      if (next.length < u.length * 0.8) out.push([u, next]);
+    } catch { /* a picture the browser cannot read stays as it is */ }
+  }
+  return out;
+}
 /** Every element's box on each page, relative to the page (to compare the layout before and after the flattening). */
 function pageBoxes() {
   return [...document.querySelectorAll('[data-page]')].map((p) => {
@@ -209,9 +253,15 @@ export const slotLabel = (s) => LABEL[s.tag] || (s.len <= 24 ? 'Label' : 'Text')
  */
 export async function importHtmlTemplate({ kind, name, sample_company, html }) {
   if (!['brochure', 'proposal'].includes(kind)) throw new Error('Choose brochure or proposal');
-  if (String(html || '').length > 6.5e6) throw new Error('The HTML file is too large (max about 6 MB)');
+  if (String(html || '').length > 40e6) throw new Error('The HTML file is too large (max 40 MB)');
   const clean = await sanitizeUpload(html);
   const { withPage } = await import('./chrome.js');
+  // oversized pictures scaled to what the pages draw (the template is stored in the database and printed for every lead)
+  const before = clean.html.length;
+  const swaps = await withPage(clean.html, { width: 1440, height: 1000, media: 'screen' }, (page) => page.evaluate(shrinkInPage, 200000));
+  for (const [a, b] of swaps) clean.html = clean.html.split(a).join(b);
+  clean.shrunk = swaps.length ? { pictures: swaps.length, from: before, to: clean.html.length } : null;
+  if (clean.html.length > 12e6) throw new Error(`The template is still ${Math.round(clean.html.length / 1e6)} MB after scaling its pictures (max 12 MB): use fewer or smaller pictures`);
   // the file as it is (screen view): pages found and marked, the layout of every page measured
   const first = await withPage(clean.html, { width: 1440, height: 1000, media: 'screen' }, async (page) => {
     const r = await page.evaluate(markInPage);
@@ -243,7 +293,7 @@ export async function importHtmlTemplate({ kind, name, sample_company, html }) {
   }
   const design = { html: out, slots: first.slots, size, sample, words, removed: clean.removed, fonts: clean.fonts, layout: { pages: first.pages, moved } };
   const id = await insert('design_templates', { kind, name: String(name || 'Imported HTML template').slice(0, 80), mode: 'html', design_json: design, sample_company: sample, source: IMPORTED, created_at: now, updated_at: now });
-  return { id, pages: first.pages, slots: first.slots.length, sample, words: design.words, removed: clean.removed, fonts: clean.fonts, moved };
+  return { id, pages: first.pages, slots: first.slots.length, sample, words: design.words, removed: clean.removed, fonts: clean.fonts, moved, shrunk: clean.shrunk };
 }
 
 // ------------------------------------------------------------------ the template, cached (it never changes after import)

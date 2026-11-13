@@ -1708,15 +1708,38 @@ function importDialog(kind) {
     const f = $('#impFile').files[0];
     if (!f) throw new Error('Choose a PDF or HTML file');
     if (isHtmlFile(f)) { // kept as it is: the server finds the pages and the texts (owner, 2026-11-13)
-      if (f.size > 4.3e6) throw new Error('HTML file is too large (max 4.3 MB): make its pictures smaller');
-      $('#impStatus').textContent = 'Reading the pages, fonts and texts… (up to a minute)';
+      if (f.size > 40e6) throw new Error('HTML file is too large (max 40 MB)');
       const k = $('#impKind').value;
       const q = new URLSearchParams({ kind: k, name: $('#impName').value || f.name, sample: $('#impClient').value.trim() });
       let r;
-      try { r = await api(`/design/templates/import-html?${q}`, { body: await f.text(), raw: true }); } catch (err) { $('#impStatus').textContent = `Not imported: ${err.message}`; throw err; }
+      try {
+        const text = await f.text();
+        let body = text;
+        if (f.size > 4e6) { // over the hosting's 4.5 MB request limit: sent in parts, joined on the server
+          const id = [...crypto.getRandomValues(new Uint8Array(12))].map((b) => b.toString(36).padStart(2, '0')).join('').slice(0, 24);
+          const parts = [];
+          for (let i = 0; i < text.length;) {
+            let size = 3e6;
+            let part = text.slice(i, i + size);
+            while (new Blob([part]).size > 4e6) { size = Math.floor(size / 2); part = text.slice(i, i + size); }
+            if (/[\uD800-\uDBFF]$/.test(part)) part = part.slice(0, -1); // never split a character in two
+            parts.push(part);
+            i += part.length;
+          }
+          if (parts.length > 12) throw new Error('HTML file is too large (max 40 MB)');
+          for (const [n, part] of parts.entries()) {
+            $('#impStatus').textContent = `Uploading part ${n + 1} of ${parts.length}…`;
+            await api(`/design/templates/import-html/part?upload=${id}&n=${n}`, { body: part, raw: true });
+          }
+          q.set('upload', id); q.set('parts', String(parts.length));
+          body = '';
+        }
+        $('#impStatus').textContent = 'Reading the pages, fonts and texts… (up to a minute)';
+        r = await api(`/design/templates/import-html?${q}`, { body, raw: true });
+      } catch (err) { $('#impStatus').textContent = `Not imported: ${err.message}`; throw err; }
       d.close();
       const bits = [`${r.pages} page${r.pages === 1 ? '' : 's'}, ${r.slots} text blocks`, r.sample ? `written for each client instead of "${r.sample}"` : 'no client name found in the file: set it to replace it reliably',
-        r.fonts ? `${r.fonts} font files saved` : '', r.removed?.length ? `${r.removed.length} removed (${r.removed.slice(0, 3).join(', ')})` : '', r.moved?.length ? `layout changed on page ${r.moved.join(', ')}: check them` : 'every page laid out as in the file'].filter(Boolean);
+        r.fonts ? `${r.fonts} font files saved` : '', r.shrunk ? `${r.shrunk.pictures} oversized picture${r.shrunk.pictures === 1 ? '' : 's'} scaled to the page (${(r.shrunk.from / 1e6).toFixed(1)} → ${(r.shrunk.to / 1e6).toFixed(1)} MB)` : '', r.removed?.length ? `${r.removed.length} removed (${r.removed.slice(0, 3).join(', ')})` : '', r.moved?.length ? `layout changed on page ${r.moved.join(', ')}: check them` : 'every page laid out as in the file'].filter(Boolean);
       toast(`Imported: ${bits.join('; ')}`);
       renderDesigns(k);
       return;

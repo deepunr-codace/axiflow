@@ -633,11 +633,35 @@ api.delete('/design/templates/:id', async (req, res) => {
 api.post('/design/templates/import', express.json({ limit: '4mb' }), async (req, res) => res.json({ id: await templates.importTemplate(req.body || {}) }));
 // An HTML file as a template (owner, 2026-11-13: "add option to upload html files too in template import"): kept as it
 // is, printed by Chromium; its text blocks are rewritten per lead. Sent as plain text (hosting caps a request at 4.5 MB).
+// A file over the 4.5 MB request limit (owner, 2026-11-13: "html file too large") is sent in parts of up to 3.5 MB,
+// kept in storage under html-import/<upload id>/<n>, and joined by the import call (?upload=<id>&parts=<n>).
+const UPLOAD_ID = /^[a-z0-9]{16,40}$/;
+api.post('/design/templates/import-html/part', express.text({ type: '*/*', limit: '4.4mb' }), async (req, res) => {
+  const id = String(req.query?.upload || ''), n = Number(req.query?.n);
+  if (!UPLOAD_ID.test(id) || !Number.isInteger(n) || n < 0 || n >= 12) return res.status(400).json({ error: 'Bad upload part' });
+  if (typeof req.body !== 'string' || !req.body.length) return res.status(400).json({ error: 'Empty upload part' });
+  const { saveUpload } = await import('../storage.js');
+  await saveUpload(`html-import/${id}/${n}.txt`, Buffer.from(req.body, 'utf8'), 'text/plain');
+  res.json({ ok: true });
+});
 api.post('/design/templates/import-html', express.text({ type: '*/*', limit: '4.4mb' }), async (req, res) => {
   const q = req.query || {};
   try {
+    let html = typeof req.body === 'string' ? req.body : '';
+    if (q.upload) {
+      const id = String(q.upload), parts = Number(q.parts);
+      if (!UPLOAD_ID.test(id) || !Number.isInteger(parts) || parts < 1 || parts > 12) throw new Error('Bad upload');
+      const { readUpload } = await import('../storage.js');
+      const bufs = [];
+      for (let n = 0; n < parts; n++) {
+        const b = await readUpload(`html-import/${id}/${n}.txt`);
+        if (!b) throw new Error(`Part ${n + 1} of ${parts} of the file did not arrive: import it again`);
+        bufs.push(b);
+      }
+      html = Buffer.concat(bufs).toString('utf8');
+    }
     const { importHtmlTemplate } = await import('../html-docs/imported.js');
-    res.json(await importHtmlTemplate({ kind: String(q.kind || ''), name: String(q.name || ''), sample_company: String(q.sample || ''), html: typeof req.body === 'string' ? req.body : '' }));
+    res.json(await importHtmlTemplate({ kind: String(q.kind || ''), name: String(q.name || ''), sample_company: String(q.sample || ''), html }));
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
