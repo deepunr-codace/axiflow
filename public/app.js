@@ -1108,6 +1108,8 @@ async function renderSettings(section) {
     ${inp('proposal.payment_terms', 'Payment terms', 'area')}${inp('proposal.investment_note', 'Note under the prices', 'area')}${inp('proposal.deliverables_note', 'Deliverables note', 'area')}${inp('proposal.terms', 'Terms (one per line)', 'lines')}</div>
     <label>Packages (JSON)<textarea id="pkgJson" class="code">${esc(JSON.stringify(s.packages, null, 2))}</textarea></label><br>
     <label>Module split (JSON: name and share in %)<textarea id="modJson" class="code" style="min-height:120px">${esc(JSON.stringify(s.proposal?.modules || [], null, 2))}</textarea></label></div>
+  <div class="card" id="t-seo"><h2><span class="mi">travel_explore</span>Website &amp; SEO brochure prices</h2><p class="small muted">The package table of the CodeAce Website &amp; SEO brochure (the template for leads whose website type is Website + SEO). 0 shows "On request".</p>
+    <div class="form-grid">${['Package 01: Website only', 'Package 02: Website + Basic SEO', 'Package 03: Website + SEO + Retainer'].map((n, i) => `<label>${n} (₹)<input id="seoP${i}" type="number" min="0" value="${Number(s.seo_brochure?.packages?.[i]?.price) || 0}"></label>`).join('')}${inp('seo_brochure.retainer_monthly', 'SEO retainer per month (₹)', 'number')}${inp('seo_brochure.retainer_months', 'Retainer length (months)', 'number')}</div></div>
   <div class="card" id="t-claude"><div class="sec-h"><h2><span class="mi">auto_awesome</span>AI</h2><span class="spacer"></span><a class="btn sm primary" href="#/ai">Open the AI page</a></div>
     <p class="small muted">Which AI writes your SWOTs, brochures and proposals, its keys, the backup when it fails, the editor assistant and the daily spending limit are all on the AI page.</p></div>
   <div class="card" id="crmCard"><div class="sec-h"><h2>Team CRM</h2><span class="spacer"></span><button class="btn sm" id="crmSync"><span class="mi">sync</span>Read the CRM now</button></div>
@@ -1201,6 +1203,7 @@ async function renderSettings(section) {
       patch.agency.portfolio = JSON.parse($('#portJson').value);
       patch.marketing = { nurture: JSON.parse($('#nurtureJson').value), reengage: JSON.parse($('#reengageJson').value) };
     } catch (err) { throw new Error('Invalid JSON: ' + err.message); }
+    patch.seo_brochure = { ...(patch.seo_brochure || {}), packages: [0, 1, 2].map((i) => ({ price: Math.max(0, Number($(`#seoP${i}`)?.value) || 0) })) };
     const crmStages = {};
     for (const el of $$('[data-crm-stage]')) if (el.value) crmStages[el.dataset.crmStage] = el.value;
     patch.atomic = { ...(patch.atomic || {}), stages: crmStages };
@@ -1287,7 +1290,7 @@ async function renderIntegrations(section) {
     <div class="form-grid">${field('automation.auto_template.brochure', 'Automatic brochures use', 'select', tplOpts('brochure'))}${field('automation.auto_template.proposal', 'Automatic proposals use', 'select', tplOpts('proposal'))}</div>
     <h3>Brochure template per website type</h3>
     <p class="small muted">When a lead turns Interested, the CRM asks which website the client wants. The brochure uses the template set here for that type (and Claude writes it around that build). "The default template" falls back to the choice above.</p>
-    <div class="form-grid">${Object.entries(st.templates.website_types || {}).map(([k, n]) => field(`automation.website_templates.brochure.${k}`, n, 'select', [[0, `Automatic: ${({ 'business-website': 'Codeace Precision', 'ecommerce-store': 'Codeace Bold', 'shopify-store': 'Codeace Commerce', 'landing-page': 'Codeace Mono' })[k] || 'the default template'}`], ...tplOpts('brochure').slice(1)])).join('')}</div>
+    <div class="form-grid">${Object.entries(st.templates.website_types || {}).map(([k, n]) => field(`automation.website_templates.brochure.${k}`, n, 'select', [[0, `Automatic: ${({ 'business-website': 'Codeace Precision', 'ecommerce-store': 'Codeace Bold', 'shopify-store': 'Codeace Commerce', 'landing-page': 'Codeace Mono', 'website-seo': 'CodeAce Website & SEO' })[k] || 'the default template'}`], ...tplOpts('brochure').slice(1)])).join('')}</div>
     <p class="small muted" style="margin-top:8px">Pitch scripts have no template. <a href="#/designs">Manage templates</a></p></div>
 
   <div class="card" id="i-crm"><div class="sec-h"><h2>Team CRM (Atomic CRM on Supabase)</h2><span class="spacer"></span><button class="btn sm" data-test="crm"><span class="mi">network_check</span>Test</button><button class="btn sm" id="intCrmSync"><span class="mi">sync</span>Read the CRM now</button></div>

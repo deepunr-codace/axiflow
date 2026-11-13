@@ -1,5 +1,5 @@
 import { get, insert, run } from '../db.js';
-import { getSettings, getState, setState } from '../settings.js';
+import { getSettings, getState, saveSettings, setState } from '../settings.js';
 import { nowISO, tzParts } from '../util.js';
 import { dataUri } from './assets.js';
 import { proposalHtml, SIZE as PROPOSAL_SIZE } from './proposal-codeace.js';
@@ -10,6 +10,9 @@ import { brochurePsHtml, pagePlan as psPagePlan, ideaPlan as psIdeaPlan, SIZE as
 import { NIRAPARA_BROCHURE_PS, NIRAPARA_PS_INPUT } from './samples/nirapara-brochure-ps.js';
 const PS = 'builtin-html-brochure-ps';
 import { applyEdits, cleanEdits, hasEdits } from './edits.js';
+import { brochureSeoHtml, SIZE as SEO_SIZE, PHOTOS as SEO_PHOTOS } from './brochure-seo.js';
+import { SEO_BROCHURE } from './samples/codeace-seo-brochure.js';
+export const SEO = 'builtin-html-brochure-seo';
 export { cleanEdits, hasEdits };
 
 /*
@@ -25,6 +28,8 @@ export const HTML_TEMPLATES = {
   'builtin-html-proposal': { kind: 'proposal', name: 'CodeAce Proposal', size: PROPOSAL_SIZE, photos: [['cover', 'Cover photo'], ['strip', 'Photo strip']] },
   // owner, 2026-11-12: "add this to brochure template and make this default" (the brochure in the proposal's look)
   [PS]: { kind: 'brochure', name: 'CodeAce Growth Brochure', size: PS_SIZE, photos: PS_PHOTOS },
+  // owner, 2026-11-13: Codeace's Website & SEO services brochure, tailored per lead; default for "Website + SEO" leads
+  [SEO]: { kind: 'brochure', name: 'CodeAce Website & SEO', size: SEO_SIZE, photos: SEO_PHOTOS },
 };
 export const isHtmlTemplate = (tpl) => tpl?.mode === 'html' && !!HTML_TEMPLATES[tpl.source];
 export const isHtmlDoc = (d) => !!d?.content?.html?.template && !!HTML_TEMPLATES[d.content.html.template];
@@ -50,6 +55,15 @@ export async function seedHtmlTemplates() {
     const row = await get(`SELECT id FROM design_templates WHERE source = :source AND hidden_at IS NULL ORDER BY id LIMIT 1`, { source: PS });
     if (row) await run(`UPDATE design_templates SET is_default = CASE WHEN id = :id THEN 1 ELSE 0 END WHERE kind = 'brochure'`, { id: row.id });
     await setState('html_brochure_ps_default', { at: nowISO() });
+  }
+  // the Website & SEO brochure became the template of the new "Website + SEO" website type once (owner, 2026-11-13:
+  // "add a Website + Seo category and make this default for that"); a later choice in Integrations is kept
+  if (!(await getState('html_seo_type_default'))) {
+    const row = await get(`SELECT id FROM design_templates WHERE source = :source AND hidden_at IS NULL ORDER BY id LIMIT 1`, { source: SEO });
+    if (row && !(Number(getSettings().automation?.website_templates?.brochure?.['website-seo']) || 0)) {
+      await saveSettings({ automation: { website_templates: { brochure: { 'website-seo': row.id } } } });
+    }
+    await setState('html_seo_type_default', { at: nowISO() });
   }
 }
 
@@ -82,6 +96,11 @@ export async function resolveSrc(src) {
 async function context(kind, d, { client, items, created, website, template }) {
   const s = getSettings();
   const a = s.agency || {};
+  if (template === SEO) {
+    const p = s.seo_brochure || {};
+    return { client, title: `${client ? `${client} · ` : ''}CodeAce Website & SEO`, contact: { email: a.email, phone: a.phone, website: site(a.website) },
+      prices: { packages: [0, 1, 2].map((i) => ({ price: Number(p.packages?.[i]?.price) || 0 })), retainer_monthly: Number(p.retainer_monthly) || 70000, retainer_months: Number(p.retainer_months) || 6 } };
+  }
   if (template === PS) {
     const photos = {};
     for (const [k] of PS_PHOTOS) if (d.photos?.[k]) photos[k] = await resolveSrc(d.photos[k]);
@@ -108,14 +127,14 @@ async function context(kind, d, { client, items, created, website, template }) {
 }
 
 /** The document's full HTML (what the PDF prints and the page shows). */
-export async function htmlFor({ template, data, split, edits }, { client, items, created, website }) {
+export async function htmlFor({ template, data, split, edits }, { client, company, items, created, website }) {
   const t = HTML_TEMPLATES[template];
   const d = template === 'builtin-html-proposal' ? { ...data, eyebrow: data.eyebrow || `${data.doc_type || 'Website Proposal'} · ${monthYear(created, getSettings())}` } : data;
-  const ctx = await context(t.kind, d, { client, items, created, website, template });
-  const html = template === PS ? brochurePsHtml(d, ctx, split || {}) : t.kind === 'brochure' ? brochureHtml(d, ctx, split || {}) : proposalHtml(d, ctx, split || {});
+  const ctx = await context(t.kind, d, { client: template === SEO ? (company ?? client) : client, items, created, website, template });
+  const html = template === SEO ? brochureSeoHtml(d, ctx) : template === PS ? brochurePsHtml(d, ctx, split || {}) : t.kind === 'brochure' ? brochureHtml(d, ctx, split || {}) : proposalHtml(d, ctx, split || {});
   return applyEdits(html, edits, resolveSrc); // data-k keys for the page editor + what was moved / retyped / added on the pages
 }
-const docArgs = (doc) => ({ client: doc.input?.company || doc.title || 'Client', items: doc.items, created: doc.created_at, website: doc.input?.website || '' });
+const docArgs = (doc) => ({ client: doc.input?.company || doc.title || 'Client', company: doc.input?.company || '', items: doc.items, created: doc.created_at, website: doc.input?.website || '' });
 
 /**
  * PDF of an HTML document. The page plan is checked in Chromium first: a page whose content runs past its bottom is
@@ -141,7 +160,7 @@ export async function fitPlan(doc) {
   for (let i = 0; i < 3 && !hasEdits(h.edits); i++) {
     const over = await withPage(html, t.size, overflowCheck);
     if (!over.length) break;
-    const next = h.template === PS ? replanPs(h.data, split, over) : replan(t.kind, h.data, split, over);
+    const next = h.template === SEO ? null /* fixed 18 pages */ : h.template === PS ? replanPs(h.data, split, over) : replan(t.kind, h.data, split, over);
     if (!next) break;
     split = next;
     html = await htmlFor({ ...h, split }, docArgs(doc));
@@ -190,14 +209,14 @@ export async function htmlDocHtml(doc) { return htmlFor(doc.content.html, docArg
 /** The Nirapara reference of an HTML template, as a document (template preview, sample PDF). */
 export function sampleDoc(source) {
   const t = HTML_TEMPLATES[source];
-  const data = source === PS ? NIRAPARA_BROCHURE_PS : t.kind === 'brochure' ? NIRAPARA_BROCHURE : { ...NIRAPARA_PROPOSAL, doc_type: 'Shopify Store Proposal' };
-  return { id: 0, kind: t.kind, title: 'Nirapara sample', input: source === PS ? { ...NIRAPARA_PS_INPUT } : { company: 'Nirapara' }, status: 'ready', created_at: new Date().toISOString(),
+  const data = source === SEO ? SEO_BROCHURE : source === PS ? NIRAPARA_BROCHURE_PS : t.kind === 'brochure' ? NIRAPARA_BROCHURE : { ...NIRAPARA_PROPOSAL, doc_type: 'Shopify Store Proposal' };
+  return { id: 0, kind: t.kind, title: source === SEO ? 'CodeAce Website & SEO' : 'Nirapara sample', input: source === PS ? { ...NIRAPARA_PS_INPUT } : source === SEO ? { company: '' } : { company: 'Nirapara' }, status: 'ready', created_at: new Date().toISOString(),
     items: t.kind === 'proposal' ? NIRAPARA_ITEMS.map((name) => ({ name, price: 0 })) : null,
     content: { html: { template: source, data: JSON.parse(JSON.stringify(data)), split: {} } } };
 }
 export async function templatePreviewHtml(tpl) {
   const t = HTML_TEMPLATES[tpl.source];
-  if (tpl.source === PS) return { html: await htmlFor(sampleDoc(PS).content.html, docArgs(sampleDoc(PS))), size: t.size, html_template: true };
+  if (tpl.source === PS || tpl.source === SEO) return { html: await htmlFor(sampleDoc(tpl.source).content.html, docArgs(sampleDoc(tpl.source))), size: t.size, html_template: true };
   if (t.kind === 'brochure') return { html: await htmlFor({ template: tpl.source, data: NIRAPARA_BROCHURE }, { client: 'Nirapara', created: null }), size: t.size, html_template: true };
   return { html: await htmlFor({ template: tpl.source, data: { ...NIRAPARA_PROPOSAL, doc_type: 'Shopify Store Proposal' } }, { client: 'Nirapara', items: NIRAPARA_ITEMS.map((name) => ({ name, price: 0 })), created: null }), size: t.size, html_template: true };
 }
@@ -253,6 +272,62 @@ export const BROCHURE_PS_SCHEMA = O({
   results: O({ label: S(28), title: S(32), lead: S(120), metrics: A(S(30), 8, 8), highlight: INT(0, 7), next: A(S(45), 3, 3), closing: S(70) }),
 });
 
+// "CodeAce Website & SEO" (owner, 2026-11-13: tailored to each lead): the brochure stays CodeAce's (facts, results,
+// clients, packages, prices); Claude writes only the parts that speak to the lead. The pages have fixed space, so the
+// lengths below are kept (fitLen) and everything else comes from the brochure itself (SEO_BROCHURE).
+const SEO_SERVICES = SEO_BROCHURE.seo.items;
+export const BROCHURE_SEO_SCHEMA = O({
+  toc_lead: S(110),
+  intro_text: S(380),
+  who_text: S(240),
+  website: O({ lead: S(110), items: A(O({ title: S(34), text: S(90) }), 3, 3) }),
+  capabilities: A(O({ title: S(34), text: S(110) }), 3, 3),
+  seo_highlight: INT(0, 5),
+  seo_texts: A(S(100), 6, 6),
+  breakdown_quote: S(110),
+  packages_lead: S(120),
+  package_texts: A(S(100), 3, 3),
+  recommended_package: INT(0, 2),
+});
+/** The brochure's own wording of those parts (the example Claude gets). */
+function seoExample() {
+  const b = SEO_BROCHURE;
+  return {
+    toc_lead: b.toc.lead, intro_text: b.intro.text, who_text: b.who.text,
+    website: { lead: b.website.lead, items: b.website.items }, capabilities: b.capabilities.items,
+    seo_highlight: b.seo.highlight, seo_texts: b.breakdown.rows.map((x) => x.text), breakdown_quote: b.breakdown.quote,
+    packages_lead: b.packages.lead, package_texts: b.packages.cards.map((x) => x.text), recommended_package: 2,
+  };
+}
+/** A text kept within its space: a little over is fine; more is cut at the last sentence (else word) that fits. */
+export function fitLen(text, max) {
+  const t = String(text || '').trim();
+  if (t.length <= Math.round(max * 1.15)) return t;
+  const head = t.slice(0, max);
+  const stop = Math.max(head.lastIndexOf('. '), head.lastIndexOf('.\n'));
+  if (stop > max * 0.5) return head.slice(0, stop + 1);
+  return head.slice(0, head.lastIndexOf(' ')).replace(/[,;:\s—-]+$/, '') + '.';
+}
+function cleanSeo(out) {
+  const t = clean(out, BROCHURE_SEO_SCHEMA);
+  const d = structuredClone(SEO_BROCHURE);
+  const set = (v, max, apply) => { const x = fitLen(v, max); if (x) apply(x); };
+  set(t.toc_lead, 110, (x) => { d.toc.lead = x; });
+  set(t.intro_text, 380, (x) => { d.intro.text = x; });
+  set(t.who_text, 240, (x) => { d.who.text = x; });
+  set(t.website.lead, 110, (x) => { d.website.lead = x; });
+  t.website.items.slice(0, 3).forEach((it, i) => { if (it.title && it.text) d.website.items[i] = { title: fitLen(it.title, 34), text: fitLen(it.text, 90) }; });
+  t.capabilities.slice(0, 3).forEach((it, i) => { if (it.title && it.text) d.capabilities.items[i] = { title: fitLen(it.title, 34), text: fitLen(it.text, 110) }; });
+  d.seo.highlight = t.seo_highlight;
+  t.seo_texts.slice(0, 6).forEach((x, i) => { d.breakdown.rows[i].text = fitLen(x, 100); });
+  set(t.breakdown_quote, 110, (x) => { d.breakdown.quote = x.split('\n').slice(0, 4).join('\n'); });
+  set(t.packages_lead, 120, (x) => { d.packages.lead = x; });
+  t.package_texts.slice(0, 3).forEach((x, i) => { d.packages.cards[i].text = fitLen(x, 100); });
+  d.packages.recommended = t.recommended_package;
+  d.options.highlight = t.recommended_package;
+  return d;
+}
+
 /** Output → the template's data: only known fields, strings trimmed, list lengths kept to what the layout holds. */
 function clean(v, schema) {
   if (schema.type === 'string') return String(v ?? '').replace(/\s+\n/g, '\n').trim().slice(0, (schema.maxLength || 400) + 40);
@@ -264,6 +339,7 @@ function clean(v, schema) {
   return o;
 }
 export function cleanHtmlData(template, out) {
+  if (template === SEO) return cleanSeo(out);
   if (template === PS) {
     const d = clean(out, BROCHURE_PS_SCHEMA);
     d.ideas = d.ideas.map((it) => ({ ...it, short: it.short || it.title }));
@@ -341,6 +417,34 @@ Fields:
   closing line (two lines) for the last photo panel.
 Plain sentences, British spelling, no emoji, no exclamation marks, no claims you cannot back with the lead data.`;
 
+const BROCHURE_SEO_GUIDE = `Tailor CodeAce's Website & SEO services brochure (A4, 18 fixed pages) to this one business. The
+brochure stays CodeAce's: its company facts and numbers, results, clients, brands, service names, package contents and
+prices are fixed and are not written by you. You write only the parts listed below, so the reader sees how CodeAce's
+website and search work applies to THEIR business: what it sells, where, to whom, and what the SWOT and the website
+check found. The reference below is the brochure's own general wording of these parts: keep its length, tone and plain
+style, but make every line specific to this business. The pages have fixed space: keep within the lengths.
+Fields:
+- toc_lead: one sentence under the contents title (max 110 characters): what this brochure covers for the business.
+- intro_text: the introduction paragraph (max 380 characters): who CodeAce is and why that matters for this business.
+- who_text: one short paragraph (max 240 characters): how CodeAce's mix of website engineering, search expertise,
+  creative thinking and business technology helps this business reach its customers.
+- website.lead: one line (max 110) on the website this business needs. website.items: 3 website services (title max
+  34, text max 90, one line each) chosen and worded for this business (its kind of site, platform, catalogue, booking).
+- capabilities: 3 things the new website will do (title max 34, text max 110) that answer the weaknesses found
+  (speed, mobile, enquiries, bookings, content, support).
+- seo_highlight: the index (0-5) of the SEO service that matters most for this business, in this order:
+  ${SEO_SERVICES.join(' / ')}.
+- seo_texts: 6 lines (max 100 characters each), one per SEO service in that order: what it does for this business.
+- breakdown_quote: a short quote on getting this business found, in three lines separated by "\\n" (max 110
+  characters, about 30 per line), starting with “ and ending with ”.
+- packages_lead: one or two sentences (max 120) on the level of search support this business needs.
+- package_texts: 3 texts (max 100 each) for Launch / Get Found / Grow: who each package is for, worded for this business.
+- recommended_package: the package that fits this business from what you found: 0 Launch (website only), 1 Get Found
+  (website, basic SEO, GA4, Search Console), 2 Grow (website, full SEO, Google Business Profile, Microsoft Clarity and
+  the monthly SEO retainer).
+Never write prices, amounts, CodeAce's own numbers or client results: they are fixed in the brochure. British spelling,
+plain sentences, no emoji, no exclamation marks, no claims about the business you cannot back with the lead data.`;
+
 const PROPOSAL_GUIDE = `Write the content of CodeAce's project proposal for this one business, in the fixed design (A4, 13-15
 pages). The reference below is a finished proposal for Nirapara (a Shopify store): match its depth, structure and tone,
 but every line must be about THIS business and the website type ordered; never reuse Nirapara's facts.
@@ -371,7 +475,7 @@ const VERIFICATION = O({
   not_found: A(S(160), 0, 15),
 });
 const withVerification = (schema) => ({ ...schema, properties: { ...schema.properties, verification: VERIFICATION }, required: [...schema.required, 'verification'] });
-const BROCHURE_PROCESS = `<process>
+const processFor = (step3) => `<process>
 Work in this order. The brochure is written for THIS business only, from what you find now; nothing is reused.
 1. Research (web search is on): open the business's own website and its main pages, its Google / Maps listing and
    reviews, its Instagram / Facebook / YouTube pages, the marketplaces or directories it sells or lists on, and two or
@@ -379,10 +483,7 @@ Work in this order. The brochure is written for THIS business only, from what yo
    what its website and listings lack, and anything recent (new outlets, launches, awards, press).
 2. Read the lead data below: the CRM record and notes (the team's calls and what the client said), the SWOT and how
    we solve it, and the website check. They are the starting point; your research updates and completes them.
-3. Write every section from those sources: the challenge from the SWOT weaknesses and threats and what you saw on the
-   website and listings; the opportunity from the SWOT opportunities; the customer journey from how THIS business's
-   customers actually decide; the ideas from the SWOT solutions and the website type ordered; the working figures
-   from the business's own prices and products where you found them (else clearly marked as working figures).
+${step3}
 4. Verify before answering: go through every fact about the business in your draft (names, places, products, prices,
    channels, years, numbers, quotes). Each must come from a page you opened (status confirmed, with its URL), the CRM
    record (from_crm) or the SWOT (from_swot). Anything you could not confirm: rewrite it in general terms or drop it,
@@ -390,6 +491,14 @@ Work in this order. The brochure is written for THIS business only, from what yo
 5. Fill "verification": sources = the pages you used (URL + what for); facts = each checked claim with its source and
    status; not_found = what you looked for and could not confirm.
 </process>`;
+const BROCHURE_PROCESS = processFor(`3. Write every section from those sources: the challenge from the SWOT weaknesses and threats and what you saw on the
+   website and listings; the opportunity from the SWOT opportunities; the customer journey from how THIS business's
+   customers actually decide; the ideas from the SWOT solutions and the website type ordered; the working figures
+   from the business's own prices and products where you found them (else clearly marked as working figures).`);
+const SEO_PROCESS = processFor(`3. Write each field from those sources: the website services and capabilities from what its website and listings
+   lack (the SWOT weaknesses, the website check); the SEO lines and the highlighted service from how its customers
+   search for it (Google, Maps, AI answers) and what competitors show there; the package texts and the recommended
+   package from its size, its goals and how much search support it needs.`);
 /** Words particular to the Nirapara reference: in another lead's brochure they mean the example was copied. */
 const EXAMPLE_TERMS = ['Nirapara', 'Kalady', 'Blinkit', 'Instamart', 'BigBasket', 'Reliance Smart', 'puttu', 'palappam', 'appam', 'podi', 'Kerala Kitchen Box', 'pack QR', 'purity report', 'batch report', 'chilli powder', 'curry masala', 'kirana'];
 /** What the job says about the lead itself (not the guide, which names the example). */
@@ -402,7 +511,7 @@ export function exampleLeaks(output, job) {
 }
 /** Claude's answer for an HTML template → the document content (with the fact check), or an error that retries. */
 export function acceptHtml(template, output, job) {
-  if (HTML_TEMPLATES[template]?.kind === 'brochure') {
+  if (HTML_TEMPLATES[template]?.kind === 'brochure' && template !== SEO) { // the SEO example is CodeAce's own general wording
     const leaks = exampleLeaks(output, job);
     if (leaks.length) throw new Error(`facts copied from the Nirapara example (${leaks.join(', ')}): written again`);
   }
@@ -415,10 +524,11 @@ export function acceptHtml(template, output, job) {
 export function htmlJob(template, { input, dossier, research, swot, settings, items, audit }) {
   const brochure = HTML_TEMPLATES[template]?.kind === 'brochure';
   const ps = template === PS;
+  const seo = template === SEO;
   const lead = [`Business: ${input.company}`, input.industry && `Industry: ${input.industry}`, input.city && `Place: ${input.city}`, input.website && `Website: ${input.website}`,
     input.website_type && `Website type ordered: ${input.website_type}`, input.package && `Package: ${input.package}`].filter(Boolean).join('\n');
   const facts = brochure ? '' : `\n<commercial_terms>\nPayment terms: ${settings.proposal?.payment_terms || ''}\nOther terms: ${(settings.proposal?.terms || []).join(' | ')}\nExcluded from the price: ${settings.proposal?.investment_note || ''}\nSupport after launch: ${settings.proposal?.support_days || 90} days\nPrice table rows (from our price list, shown as is): ${(items || []).map((i) => i.name).join('; ')}\n</commercial_terms>`;
-  const example = ps ? { ...NIRAPARA_BROCHURE_PS, photos: undefined, idea_pages: NIRAPARA_BROCHURE_PS.idea_pages.map(({ title, lead, statement }) => ({ title, lead, statement })) }
+  const example = seo ? seoExample() : ps ? { ...NIRAPARA_BROCHURE_PS, photos: undefined, idea_pages: NIRAPARA_BROCHURE_PS.idea_pages.map(({ title, lead, statement }) => ({ title, lead, statement })) }
     : brochure ? NIRAPARA_BROCHURE : { ...NIRAPARA_PROPOSAL, photos: undefined };
   return {
     kind: 'html',
@@ -426,20 +536,20 @@ export function htmlJob(template, { input, dossier, research, swot, settings, it
     purpose: brochure ? 'brochure_html' : 'proposal_html',
     system: `You are Codeace's senior strategist and copywriter. You write ${brochure ? 'growth-plan brochures' : 'project proposals'} for local businesses in Kerala and the Gulf: specific, plain and persuasive, built only on what is known about the business. You answer with JSON that matches the schema exactly.`,
     prompt: [
-      ps ? BROCHURE_PS_GUIDE : brochure ? BROCHURE_GUIDE : PROPOSAL_GUIDE,
+      seo ? BROCHURE_SEO_GUIDE : ps ? BROCHURE_PS_GUIDE : brochure ? BROCHURE_GUIDE : PROPOSAL_GUIDE,
       `<lead>\n${lead}\n</lead>`,
-      brochure ? BROCHURE_PROCESS : '',
+      seo ? SEO_PROCESS : brochure ? BROCHURE_PROCESS : '',
       dossier ? `<crm_and_notes>\n${dossier}\n</crm_and_notes>` : '',
       research ? `<research>\n${typeof research === 'string' ? research : JSON.stringify(research).slice(0, 6000)}\n</research>` : '',
       audit?.findings?.length ? `<website_check url="${String(input.website || '').replace(/"/g, '')}">\n${audit.findings.map((f) => `- ${f.text}`).join('\n')}\n</website_check>` : '',
       swot ? `<swot>\n${JSON.stringify(swot).slice(0, 4000)}\n</swot>` : brochure ? '<swot>No SWOT has been made for this lead yet: work out its strengths, weaknesses, opportunities and threats from your research first.</swot>' : '',
       facts,
-      `<reference_example business="Nirapara">\n${JSON.stringify(example)}\n</reference_example>`,
+      `<reference_example business="${seo ? "none: the brochure's own general wording" : 'Nirapara'}">\n${JSON.stringify(example)}\n</reference_example>`,
     ].filter(Boolean).join('\n\n'),
     // limits (lengths, counts, ranges) are kept out of the schema Claude gets: strict structured output refuses them;
     // the guide states them and cleanHtmlData enforces them on the answer
-    schema: stripLimits(ps ? withVerification(BROCHURE_PS_SCHEMA) : brochure ? withVerification(BROCHURE_SCHEMA) : PROPOSAL_SCHEMA),
-    ...(brochure ? { example_terms: EXAMPLE_TERMS } : {}), // the GitHub worker's validator refuses copies of the example too
+    schema: stripLimits(seo ? withVerification(BROCHURE_SEO_SCHEMA) : ps ? withVerification(BROCHURE_PS_SCHEMA) : brochure ? withVerification(BROCHURE_SCHEMA) : PROPOSAL_SCHEMA),
+    ...(brochure && !seo ? { example_terms: EXAMPLE_TERMS } : {}), // the GitHub worker's validator refuses copies of the example too
     maxTokens: 16000,
   };
 }
@@ -460,6 +570,10 @@ export function sanitizeEdit(v, depth = 0) {
   return null;
 }
 
+// (The general Codeace copy for documents without the AI, fallbackData, was removed on 2026-11-13: owner, "remove rule
+// based default generation from the system completely". Every document is written by the AI from research.)
+
+/** A ready HTML-template content block for a document. */
 /** Content without Claude (Claude mode off, or a local server): the reference structure with general Codeace copy. */
 export function fallbackData(template, input, settings = getSettings()) {
   const c = input.company || 'your business';

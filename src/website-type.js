@@ -20,6 +20,11 @@ export const WEBSITE_TYPES = {
     label: 'Shopify store',
     notes: 'A store built on Shopify: theme design to the brand, product and collection setup, payments (Razorpay/UPI, COD), shipping rules, the right apps (reviews, WhatsApp, upsell, subscriptions), speed and SEO tuning, product imports, and handover so the team can run it. Talk about launch speed and running costs, not custom code.',
   },
+  // owner, 2026-11-13: "add a Website + Seo category" (its brochure: CodeAce Website & SEO)
+  'website-seo': {
+    label: 'Website + SEO',
+    notes: 'A business website together with search work: the site built to rank (fast, mobile, clear service pages, structured data), Google Search and Maps (Google Business Profile, location pages, local reviews), readiness for AI answers (AEO / GEO), tracking (GA4, Search Console, Microsoft Clarity), and for growth a monthly SEO retainer. Frame it around being found by the customers already searching, then turning those visits into enquiries.',
+  },
   'landing-page': {
     label: 'Landing page',
     notes: 'One focused page for a campaign or offer: one promise, one call to action, proof near the button, a short form or WhatsApp click, fast load on mobile, tracking (Meta/Google pixels, analytics) and A/B-ready sections. Frame everything around turning ad clicks into leads.',

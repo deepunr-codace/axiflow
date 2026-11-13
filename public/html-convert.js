@@ -152,7 +152,8 @@ export async function convertPages(fdoc, { onlyPage = null, shots = false } = {}
       const before = beforeOf(el, cs, r);
       const bx = { x: X(r.left), y: Y(r.top), w: S(r.width), h: S(r.height) };
       const clips = /hidden|clip/.test(cs.overflow) && before.some((s) => s.x < bx.x - 1 || s.y < bx.y - 1 || s.x + s.w > bx.x + bx.w + 1 || s.y + s.h > bx.y + bx.h + 1);
-      if (clips && shots) {
+      // data-ax-bg: the template asks for its background as a picture (layered or radial gradients the model cannot draw)
+      if ((clips || el.hasAttribute?.('data-ax-bg')) && shots) {
         el.setAttribute('data-ax-shot', String(shotN));
         elements.push({ type: 'image', ...bx, src: `shot:${shotN++}`, fit: 'fill', radius: S(parseFloat(cs.borderTopLeftRadius) || 0) });
       } else {
@@ -197,6 +198,9 @@ export async function convertPages(fdoc, { onlyPage = null, shots = false } = {}
         // a text the browser wrapped keeps the browser's width (so the same words go on each line); a text on lines of
         // its own gets a little room, as the classic font may measure a hair wider
         if (lines > given) w = contentW + 1;
+        // lines that never wrap in the page (white-space: nowrap; the big display headings) get more room: the classic
+        // renderer has no optical sizes, and Inter's text cut is several percent wider than its display cut
+        else if (/nowrap|pre/.test(cs.whiteSpace)) w = Math.max(w, lineW * 1.12 + 6);
         else w = Math.max(w, lineW * 1.03 + 6);
         if (align === 'center') x -= (w - contentW) / 2;
         else if (align === 'right') x -= w - contentW;
@@ -209,7 +213,10 @@ export async function convertPages(fdoc, { onlyPage = null, shots = false } = {}
       }
       for (const c of el.children) await walk(c);
     };
-    elements.push(...boxOf(pg, pcs, pr)); // the page's own photo / gradient
+    if (shots && pg.hasAttribute('data-ax-bg')) { // the page's background captured as one picture on the server
+      pg.setAttribute('data-ax-shot', String(shotN));
+      elements.push({ type: 'image', x: 0, y: 0, w: S(pr.width), h: S(pr.height), src: `shot:${shotN++}`, fit: 'fill', radius: 0 });
+    } else elements.push(...boxOf(pg, pcs, pr)); // the page's own photo / gradient
     for (const c of pg.children) await walk(c);
     pages.push({ n: Number(pg.dataset.page), role: pg.dataset.role || '', w: S(pr.width), h: S(pr.height), bg: { color: pageBg.a > 0 ? pageBg.hex : '#ffffff', image: '' }, elements });
   }

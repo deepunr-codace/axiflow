@@ -253,6 +253,15 @@ export const DEFAULT_SETTINGS = {
       { name: 'SEO & Performance Optimisation', share: 12 },
     ],
   },
+  /**
+   * The "CodeAce Website & SEO" brochure's prices (owner, 2026-11-13: set in Tool settings): Package 01 Website only,
+   * 02 Website + Basic SEO, 03 Website + SEO + Retainer (0 = "On request"), and the monthly SEO retainer.
+   */
+  seo_brochure: {
+    packages: [{ price: 0 }, { price: 0 }, { price: 0 }],
+    retainer_monthly: 70000,
+    retainer_months: 6,
+  },
   /** The two marketing pipes for leads that are not (yet) interested. */
   marketing: {
     nurture: [
