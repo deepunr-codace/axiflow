@@ -30,6 +30,20 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - **`vercel.json` `ignoreCommand`** (8119d45, fixed in 692514d): a push that changes only `.md` files is not built. It compares with `VERCEL_GIT_PREVIOUS_SHA` (the last deployed commit), not `HEAD^`. The first version would skip a code commit pushed together with a notes commit. If the check fails, it builds. Checked live: the notes-only 6fb4422 shows CANCELED; 692514d built.
   - **Result:** 546 deployments deleted in 3 rounds. Left: axiflow 5, presenta 5, acestudio 3.
 
+## Status (2026-11-13): CRM brochure rows removed; Delete + Edit in the CRM brochure list (LIVE: AxiFlow c387e7d, CRM 45365434)
+- **Owner:** "ABAD FOODS PALAKKAD: website plan remove this from crm, also add option in crm to delete brochure", "edit option also", "Jazaash Design: website plan remove these too".
+- **Removed in the live CRM** (looked at first; each was its company's only row): brochures row 8 (ABAD FOODS PALAKKAD, company 58, pending) and row 1 (Jazaash Design, company 35, pending), plus their two PDFs in the `brochure` bucket (public links now "not found"). AxiFlow's own documents were kept (ABAD brochure #490); editing or remaking one sends a new CRM row as usual.
+- **Delete:** the CRM's RLS has no delete policy on `brochures` (and a column guard on updates), so a browser delete would remove nothing; changing CRM policies is a CRM DB change (not done). AxiFlow `atomic.js` `deleteCrmBrochure(rowId, by)` (GET the row, DELETE it, remove the PDF only when the link is in the configured bucket, clear `leads.crm_brochure_state`, log `brochure_deleted`) + `POST /api/axicore/brochures/:id/delete` (AxiCore roles only). Note: `atomic.brochures_table` is an on/off switch (`true`), not the table name (the test caught a first version that asked the CRM for table "true").
+- **Edit:** CRM row menu "Edit in AxiCore" → the company's newest finished AxiCore brochure (`/api/axicore/company/:id/docs`) opens in the AxiCore editor (`/axicore/brochure/:id`); a saved edit re-uploads the PDF to the same row. No finished AxiCore brochure → a notice.
+- **CRM** (`data/live-crm`): `brochures/BrochureParts.tsx` (Edit / Delete in the "…" menu for AxiCore roles, a confirm dialog), labels in English and French. prettier, eslint, tsc, canAccess test pass.
+- **Tested:** `data/tests/crm-delete-test.mjs` 7/7 on a stand-in CRM (401 / 404 / row + PDF deleted / lead state cleared and logged / a link outside the bucket leaves files alone / not an open route).
+- **LIVE (owner: "yes" to pushing both, AxiFlow first):**
+  - AxiFlow c387e7d (atomic.js + api.js only; the brochure session's uncommitted edits were left out).
+  - CRM f38d7e11, rebased onto d5289f71 as **45365434**: prettier passes on the committed files, tsc passes.
+  - Checked live: `POST /api/axicore/brochures/999999/delete` with the admin login answers 404 "This brochure is not in the CRM any more" (the route is live; nothing deleted). The live CRM bundle `index-KTDSXIDK.js` has the delete call.
+  - Not seen yet: a real Delete / Edit click in the CRM brochure list.
+- **Still to tell the co-worker:** CRM commits 45365434 and d5289f71.
+
 ## Status (2026-11-13): brochure fix guide, Phases 2-5 built: the "Designed brochure" (local, NOT pushed)
 - **Owner:** "do all remaining without using our key" (after Phase 1 below).
 - **Rules:**
