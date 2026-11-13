@@ -154,9 +154,15 @@ async function serializeBoard(size) {
 export async function unbundle(raw) {
   const { browser } = await import('./chrome.js');
   const b = await browser();
-  const ctx = await b.createBrowserContext();
+  // its own browser context where possible; Chromium on Vercel runs as one process and refuses a new context
+  // ("Target closed"), so there it is a plain tab (requests are blocked either way, and the tab is closed after)
+  let ctx = null, page;
+  try { ctx = await b.createBrowserContext(); page = await ctx.newPage(); } catch {
+    if (ctx) await ctx.close().catch(() => {});
+    ctx = null;
+    page = await b.newPage();
+  }
   try {
-    const page = await ctx.newPage();
     await page.setViewport({ width: 1800, height: 1300 });
     await page.setRequestInterception(true);
     page.on('request', (r) => (/^(data|blob|about):/i.test(r.url()) ? r.continue() : r.abort()));
@@ -181,7 +187,7 @@ export async function unbundle(raw) {
     const first = boards.find((x) => x.count) || boards[0];
     const out = `<!DOCTYPE html>\n<html lang="en" ${first.htmlAttrs}><head><meta charset="utf-8"><title>${title.replace(/</g, '&lt;')}</title>\n${css.map((s) => `<style>${s.replace(/<\/style/gi, '<\\/style')}</style>`).join('\n')}\n</head><body ${first.bodyAttrs}>\n${boards.map((x) => x.html).join('\n')}\n</body></html>`;
     return { html: out, pages: boards.reduce((n, x) => n + x.count, 0), size };
-  } finally { await ctx.close().catch(() => {}); }
+  } finally { if (ctx) await ctx.close().catch(() => {}); else await page.close().catch(() => {}); }
 }
 
 // ------------------------------------------------------------------ 2. pages and text blocks (run inside Chromium)
