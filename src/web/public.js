@@ -8,7 +8,7 @@ import { page, messagePage } from './layout.js';
 import { checkSecret, rateLimit } from './auth.js';
 import { logEvent, addActivity } from '../pipeline/log.js';
 import * as engine from '../pipeline/engine.js';
-import { buildBrochureFor, buildProposalFor } from '../pdf/docs.js';
+import { buildBrochureFor, buildProposalFor, readyBrochure, readyProposalDoc } from '../pdf/docs.js';
 import * as tools from '../tools.js';
 import { leadSnapshot } from '../crm-sync.js';
 import { applyCrmUpdate, handleTwentyEvent } from '../twenty.js';
@@ -94,13 +94,13 @@ pub.get('/pdf/doc/:file', async (req, res) => {
 
 pub.get('/pdf/brochure/:file', async (req, res) => {
   const lead = await leadByToken(req.params.file.replace(/\.pdf$/, ''));
-  if (!lead || (!lead.brochure_version && !(await tools.latestLeadDoc('brochure', lead.id)))) return notFound(res);
+  if (!lead || !(await readyBrochure(lead))) return notFound(res); // only a finished brochure (2026-11-13)
   await logEvent(lead.id, 'engagement', 'brochure_pdf_view', 'ok', req.get('user-agent')?.slice(0, 120) || '');
   sendPdf(res, await buildBrochureFor(lead), `${lead.company.replace(/[^\w]+/g, '-')}-website-plan.pdf`);
 });
 pub.get('/pdf/proposal/:file', async (req, res) => {
   const p = await get(`SELECT * FROM proposals WHERE token = :t`, { t: req.params.file.replace(/\.pdf$/, '') });
-  if (!p) return notFound(res);
+  if (!p || !(await readyProposalDoc(p))) return notFound(res); // only a finished proposal document (2026-11-13)
   await logEvent(p.lead_id, 'engagement', 'proposal_pdf_view', 'ok', `#${p.id}`);
   sendPdf(res, await buildProposalFor(p), `proposal-${p.id}.pdf`);
 });

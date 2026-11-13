@@ -123,7 +123,17 @@ export function dealInput(deal, co, ct, s = getSettings().atomic) {
   return input;
 }
 
-const actionFor = (stage, s = getSettings().atomic) => (s.stages || {})[stage] || null;
+// Stage names compared without case, spaces, "-" or "_": found live 2026-11-13, the deal stage "not_interested" missed
+// the setting "not-interested", so the action fell back to the contact's call stage ("interested").
+const stageKeyOf = (k) => String(k || '').trim().toLowerCase().replace(/[\s_-]+/g, '-');
+const lookupStage = (map, stage) => {
+  if (!stage || !map) return null;
+  if (map[stage]) return map[stage];
+  const n = stageKeyOf(stage);
+  for (const [k, v] of Object.entries(map)) if (stageKeyOf(k) === n && v) return v;
+  return null;
+};
+export const actionFor = (stage, s = getSettings().atomic) => lookupStage(s.stages, stage);
 const hashOf = (deal, co, ct) => crypto.createHash('sha1').update(JSON.stringify([
   deal && [deal.id, deal.name, deal.stage, deal.amount, deal.description, deal.archived_at],
   co && [co.name, co.website, co.city, co.sector, co.email, co.phone_number, co.whatsapp_number, co.description],
@@ -160,7 +170,7 @@ export async function syncLead(co, ct, deal, { engine, twenty, budget, useCallLo
   const links = { crm_deal_id: deal?.id ?? null, crm_company_id: co?.id ?? null, crm_contact_id: ct?.id ?? null, crm_sales_id: deal?.sales_id ?? co?.sales_id ?? ct?.sales_id ?? null };
   const input = dealInput(deal, co, ct, s);
   const stageKey = deal ? deal.stage : '';
-  const leadStageAction = ct?.lead_stage ? (s.lead_stages || {})[ct.lead_stage] || null : null;
+  const leadStageAction = ct?.lead_stage ? lookupStage(s.lead_stages, ct.lead_stage) : null;
   // Deal stage first, then the telecaller's call stage; with neither (or no action set for them) a new lead gets its call script only.
   const action = (deal ? actionFor(deal.stage, s) : null) || leadStageAction || s.new_lead_action || 'script';
   const callKey = ct?.last_outcome ? [ct.last_outcome, ct.last_attempt_at || ''].join('|') : null;
@@ -491,10 +501,14 @@ async function answerBrochureRequests(tools) {
       || (b.contact_id && await get(`SELECT * FROM leads WHERE external_id = :ext OR crm_contact_id = :id ORDER BY id DESC LIMIT 1`, { ext: `atomic:ct:${b.contact_id}`, id: b.contact_id }))
       || (b.deal_id && await get(`SELECT * FROM leads WHERE crm_deal_id = :id ORDER BY id DESC LIMIT 1`, { id: b.deal_id }));
     if (!lead) continue; // the deal is not synced yet; try again next time
-    if (!lead.brochure_version && !(await tools.latestLeadDoc('brochure', lead.id))) {
-      const d = await tools.createDocForLead('brochure', lead.id);
-      await logEvent(lead.id, 'atomic', 'brochure_request', d.status === 'ready' ? 'ok' : 'error', d.error || `made #${d.id} for CRM request #${b.id}`);
-      if (d.status !== 'ready') continue;
+    // only a finished brochure document answers it, never the old built-in "website plan" layout (2026-11-13)
+    const ready = await tools.latestLeadDoc('brochure', lead.id);
+    if (!ready?.design && !ready?.content?.html) {
+      if (!(await get(`SELECT 1 AS one FROM docs WHERE lead_id = :id AND kind = 'brochure' AND status = 'working'`, { id: lead.id }))) {
+        const d = await tools.createDocForLead('brochure', lead.id);
+        await logEvent(lead.id, 'atomic', 'brochure_request', d.status === 'error' ? 'error' : 'ok', d.error || `making #${d.id} for CRM request #${b.id}`);
+        if (d.status !== 'ready') continue; // the finished brochure fills the request (lead.brochure_ready → upsertBrochure)
+      } else continue;
     }
     let link = brochureLink(lead);
     try { link = (await uploadBrochurePdf(lead)) || link; } catch (e) { await logEvent(lead.id, 'atomic', 'brochure_pdf', 'error', `${e.message}; the row links to AxiFlow instead`); }
@@ -628,6 +642,14 @@ async function upsertProposal(lead, docId) {
 async function upsertBrochure(lead) {
   // Throwing keeps the outbox row pending, so the live site (public BASE_URL) writes it instead.
   if (!publicLinks()) throw new Error('brochure links need a public https BASE_URL');
+  // Only a finished brochure document goes to the CRM. Found live 2026-11-13 (Thread Stories): the pitch maker's
+  // lead.pitch_ready came before Claude's brochure, and the old built-in "website plan" PDF (11 KB) reached the manager.
+  // The finished brochure sends lead.brochure_ready itself (tools.announce).
+  const ready = await (await import('./tools.js')).latestLeadDoc('brochure', lead.id);
+  if (!ready?.design && !ready?.content?.html) {
+    await logEvent(lead.id, 'atomic', 'brochure', 'ok', 'no finished brochure yet: nothing sent to the CRM (it goes when the brochure is ready)');
+    return 'skipped';
+  }
   let link = brochureLink(lead);
   try { link = (await uploadBrochurePdf(lead)) || link; } catch (e) { await logEvent(lead.id, 'atomic', 'brochure_pdf', 'error', `${e.message}; the row links to AxiFlow instead`); }
   const row = { company_id: lead.crm_company_id ?? null, contact_id: lead.crm_contact_id ?? null, deal_id: lead.crm_deal_id ?? null, title: `${lead.company}: website plan`, brochure_url: link, updated_at: nowISO() };
@@ -661,7 +683,7 @@ export async function pushEvent(row) {
     if (!s.brochures_table) return 'skipped';
     if (event === 'lead.pitch_ready' && !lead.brochure_version) return 'skipped';
     const st = await upsertBrochure(lead);
-    if (event === 'lead.brochure_ready' && s.notes && lead.crm_deal_id && canWrite('deal_notes')) await note(lead, `Brochure ready for ${lead.company}. Send it to the client from the link below (it always shows the latest version).`, [pdf(brochureLink(lead), `${lead.company} - website plan.pdf`)]);
+    if (st === 'sent' && event === 'lead.brochure_ready' && s.notes && lead.crm_deal_id && canWrite('deal_notes')) await note(lead, `Brochure ready for ${lead.company}. Send it to the client from the link below (it always shows the latest version).`, [pdf(brochureLink(lead), `${lead.company} - website plan.pdf`)]);
     return st;
   }
   // Call scripts: one CRM note per lead (on the main contact, else the deal), kept up to date.

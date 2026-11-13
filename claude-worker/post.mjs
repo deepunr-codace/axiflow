@@ -13,12 +13,15 @@ try {
     cache_read: u.cache_read_input_tokens, output: u.output_tokens, web_search: u.server_tool_use?.web_search_requests,
     models: Object.fromEntries(Object.entries(j.modelUsage || {}).map(([k, v]) => [k, { in: v.inputTokens, out: v.outputTokens, cache_read: v.cacheReadInputTokens, cache_write: v.cacheCreationInputTokens, usd: v.costUSD }])),
   };
+  // why Claude Code stopped (e.g. error_max_turns): shown with a missing answer file (found live 2026-11-13: doc 489
+  // came back without out/result.json and nothing said why)
+  body.stop = `${j.subtype || 'finished'} after ${j.num_turns ?? '?'} steps`;
 } catch { /* Claude Code did not answer: no usage */ }
 const problems = await validate();
 const hard = problems.filter((p) => !/characters; keep it to|removed by the truth checks|Give exactly|lines or fewer|^layout:|\.(fonts|font_pairing|strategy|review|gaps|verification)(\.|:)/.test(p)); // layout warnings: AxiFlow fits the text; a missing gaps slide is simply left out
 const claudeErr = fs.existsSync(new URL('claude-error.txt', dir)) ? fs.readFileSync(new URL('claude-error.txt', dir), 'utf8').trim() : '';
 if (claudeErr) body.error = `Claude Code: ${claudeErr}`.slice(0, 500);
-else if (hard.length) body.error = `Claude's answer did not pass the checks: ${hard.slice(0, 5).join('; ')}`.slice(0, 500);
+else if (hard.length) body.error = `Claude's answer did not pass the checks${!fs.existsSync(new URL('out/result.json', dir)) && body.stop ? ` (Claude Code: ${body.stop})` : ''}: ${hard.slice(0, 5).join('; ')}`.slice(0, 500);
 else body.output = JSON.parse(fs.readFileSync(new URL('out/result.json', dir), 'utf8'));
 const r = await fetch(meta.callback, { method: 'POST', headers: { 'content-type': 'application/json', 'x-webhook-secret': process.env.AXIFLOW_CALLBACK_SECRET || '' }, body: JSON.stringify(body) });
 console.log(`AxiFlow answered ${r.status}${body.error ? ' (sent an error: ' + body.error.slice(0, 120) + ')' : ''}`);

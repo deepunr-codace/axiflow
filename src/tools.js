@@ -453,42 +453,23 @@ export async function classicDesignOf(doc) {
   }
 }
 
+/** Why a document could not be written by AI (shown in AxiFlow and in the CRM's Documents panel). */
+function noAiReason(doc, s) {
+  if (!s.claude?.mode) return 'AI writing is switched off (AxiFlow → AI page), so nothing was made. Switch it on, then press Try again.';
+  if (!/^https:/.test(BASE_URL)) return 'AI writing runs only on the live site; nothing was made on this server.';
+  return `This ${doc.kind === 'script' ? 'SWOT' : doc.kind} uses a template the AI cannot write (an imported PDF template). Choose a Codeace template, then press Try again.`;
+}
 export async function generate(id, { wait = false } = {}) {
   await startJob(id, async () => {
     const doc = await getDoc(id);
     const s = getSettings();
-    // Claude mode: Claude Code writes it and the callback finishes it. On the live site a missing setup waits with the
-    // error and is retried. Otherwise (Claude mode off, or a local dev server) the standard templates are used; there is
-    // no in-app AI writer any more (owner, 2026-11-05: "remove old logics").
+    // AI writes every document: Claude Code on GitHub or an API key (AI page), and the answer finishes it.
     if ((claudeOn(s) || claudeBroken(s)) && await sendToClaude(doc, s)) return 'waiting';
-    if (doc.kind === 'script') {
-      const [research, audit] = await Promise.all([researchFor(doc), auditWebsite(normalizeUrl(doc.input.website)).catch(() => null)]);
-      const r = await writeScript(doc.input, research, audit);
-      await update('docs', id, { content_json: r.content, source: r.source, error: null, updated_at: nowISO() });
-      return;
-    }
-    const tpl = await getTemplate(doc.template_id) || await defaultTemplate(doc.kind);
-    const research = await researchFor(doc);
-    if (htmlDocs.isHtmlTemplate(tpl)) { // without Claude: the template's general Codeace copy for this lead
-      const content = htmlDocs.htmlContent(tpl.source, htmlDocs.fallbackData(tpl.source, doc.input, s));
-      await update('docs', id, { design_json: await classicDesignOf({ ...doc, content }), content_json: content, source: 'template', updated_at: nowISO() });
-      return;
-    }
-    let design, content = null, source;
-    if (tpl.mode === 'smart') {
-      const r = doc.kind === 'brochure'
-        ? (deckOf(tpl) ? await writeDeck(doc, deckOf(tpl), research, s) : await writeBrochure(doc.input, doc.input.services, research))
-        : await writeProposalDoc(doc.input, doc.items, research);
-      content = r.content;
-      source = r.source;
-      design = doc.kind === 'brochure' ? brochureLayout(tpl, content, s, doc.input.company) : proposalDesign(content, doc.items, s, { preparedFor: doc.input.company });
-    } else {
-      const vars = { ...brochureVars(doc.input), contact_name: doc.input.contact_name || '', agency: s.agency.name };
-      const base = fillTokens(cloneDesign(tpl.design), vars, tpl.sample_company);
-      design = base; // name, place and agency filled in; the in-app AI rewrite was removed (owner, 2026-11-05)
-      source = 'template';
-    }
-    await update('docs', id, { design_json: cleanDesign(design), content_json: content, source, updated_at: nowISO() });
+    // No default content, ever (owner, 2026-11-13: "make sure dont generate any default bad content at any cost.
+    // disable that option fully. if any AI is failed or any error show a try again button in crm"). Before, a document
+    // the AI could not write got the template's general copy, a rule-based SWOT or the template with only the name
+    // filled in. Now it fails with the reason; the CRM's Try again (or AxiFlow's Write it again) makes it again.
+    throw new Error(noAiReason(doc, s));
   }, { wait });
 }
 

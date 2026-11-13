@@ -39,6 +39,11 @@ export const engineModel = (s = getSettings(), e = engineOf(s)) => (e === 'githu
  */
 export const TOOLS = ['script', 'brochure', 'proposal'];
 const TOOL_OF = { script: 'script', deck: 'brochure', brochure: 'brochure', free: 'brochure', proposal: 'proposal' };
+/**
+ * The tool a job belongs to, for its engine and backup. Codeace HTML-template jobs (kind 'html') are brochures or
+ * proposals: found 2026-11-13, they matched no tool, so the AI page's per-tool choices did not apply to them.
+ */
+const toolKind = (job, doc) => (job?.kind === 'html' ? (doc?.kind === 'proposal' || job.purpose === 'proposal_html' ? 'proposal' : 'brochure') : job?.kind || doc?.kind);
 export const engineFor = (kind, s = getSettings()) => {
   const e = s.claude?.engines?.[TOOL_OF[kind] || kind];
   return ENGINES[e] ? e : engineOf(s);
@@ -105,6 +110,7 @@ async function runOnApi(doc, claude, engine) {
   const s = getSettings();
   const force = { provider: engine, model: engineModel(s, engine) };
   const job = claude.job;
+  const started = Date.now();
   const note = '\n\n(You are answering directly: there are no files and no validator. Return only the JSON that matches the schema.)';
   let research = '';
   if (job.web) {
@@ -119,13 +125,48 @@ async function runOnApi(doc, claude, engine) {
   // Strict structured output refuses schemas with many optional (union / nullable) fields: found live 2026-11-09, the
   // brochure deck schema has 29 and the API answered 400 "too many parameters with union types". Such jobs (and the
   // whole designed deck) ask for plain JSON text instead; postProcess then runs the same checks as for GitHub answers.
-  if (job.kind === 'free' || unionCount(job.schema) > 12) {
-    const r = await runText({ purpose: `claude_${job.kind}`, leadId: doc.lead_id, force, effort: job.kind === 'free' ? 'high' : 'medium', maxTokens: job.kind === 'free' ? 48000 : 32000, system: job.system,
-      prompt: `${job.prompt}${research}${note}\nThe JSON schema:\n${JSON.stringify(job.schema)}` });
-    return parseJsonText(r.text);
+  // Large schemas too: found live 2026-11-13, the Codeace HTML brochure (114 fields) was refused with 400 "The compiled
+  // grammar is too large" and the job gave up without a brochure. Any other schema the API refuses as too complex
+  // switches to JSON text on the spot.
+  const textMode = job.kind === 'free' || unionCount(job.schema) > 12 || fieldCount(job.schema) > 80;
+  if (!textMode) {
+    try {
+      return await runJson({ purpose: `claude_${job.kind}`, leadId: doc.lead_id, force, effort: 'medium', maxTokens: 24000, timeoutMs: 270000,
+        system: job.system, prompt: `${job.prompt}${research}${note}`, schema: job.schema });
+    } catch (e) { if (!SCHEMA_REFUSED.test(e.message)) throw e; }
   }
-  return runJson({ purpose: `claude_${job.kind}`, leadId: doc.lead_id, force, effort: 'medium', maxTokens: 24000, timeoutMs: 270000,
-    system: job.system, prompt: `${job.prompt}${research}${note}`, schema: job.schema });
+  return jsonTextAnswer(doc, job, force, research, note, started);
+}
+const SCHEMA_REFUSED = /grammar is too large|too many parameters|schema is too (large|complex)|union types/i;
+/** Number of named fields in a schema (what makes the strict grammar large). */
+function fieldCount(schema) {
+  let n = 0;
+  const walk = (x) => { if (!x || typeof x !== 'object') return; if (x.properties) n += Object.keys(x.properties).length; for (const v of Object.values(x)) walk(v); };
+  walk(schema);
+  return n;
+}
+/**
+ * The answer as JSON text, checked against the job's schema like the GitHub worker's validator (missing sections,
+ * wrong types). One repair round with the problems listed; if it still does not match, the try fails (and is retried)
+ * rather than a half-empty document being laid out. Soft fields (fonts, strategy, review, gaps, verification) as in post.mjs.
+ */
+async function jsonTextAnswer(doc, job, force, research, note, started = Date.now()) {
+  const { runText } = await import('./ai/claude.js');
+  const { checkSchema } = await import('./ai/schema-check.js');
+  const big = job.kind === 'free';
+  const ask = (prompt) => runText({ purpose: `claude_${job.kind}`, leadId: doc.lead_id, force, effort: big ? 'high' : 'medium', maxTokens: big ? 48000 : 32000, system: job.system, prompt });
+  const hard = (out) => checkSchema(out, job.schema).filter((p) => !/\.(fonts|font_pairing|strategy|review|gaps|verification)(\.|:)/.test(p));
+  const base = `${job.prompt}${research}${note}\nThe JSON schema (every property is required):\n${JSON.stringify(job.schema)}`;
+  let out, problems;
+  try { out = parseJsonText((await ask(base)).text); problems = hard(out); } catch (e) { out = null; problems = [e.message]; }
+  if (!problems.length) return out;
+  // no time for a second answer inside the 5-minute function: this try fails and the job is sent again
+  if (Date.now() - started > 130000) throw new Error(`the answer did not match the format: ${problems.slice(0, 4).join('; ')}`);
+  const fix = `${base}\n\nYour previous answer did not match the schema:\n${problems.slice(0, 25).map((p) => `- ${p}`).join('\n')}\n${out ? `\nYour previous answer:\n${JSON.stringify(out).slice(0, 40000)}\n` : ''}\nReturn the complete corrected JSON only.`;
+  out = parseJsonText((await ask(fix)).text);
+  problems = hard(out);
+  if (problems.length) throw new Error(`the answer did not match the format: ${problems.slice(0, 4).join('; ')}`);
+  return out;
 }
 /** An API-engine run's numbers, summed from its ai_calls rows (research + answer), in the shape post.mjs sends. */
 async function apiUsage(doc, since, ms) {
@@ -180,24 +221,25 @@ async function dispatch(doc, claude) {
  */
 export async function dispatchJob(doc, job, ctx = {}, { attempt = 1, engine: forced = null, fellBack = null } = {}) {
   const claude = { waiting: true, job, ctx, attempts: attempt, dispatched_at: nowISO(), last_error: null, run_url: null };
-  let engine = forced || engineFor(job.kind);
+  const tk = toolKind(job, doc);
+  let engine = forced || engineFor(tk);
   if (fellBack) claude.fell_back = String(fellBack).slice(0, 200);
   let hold = engine === 'github' ? await getState('claude_hold') : null;
   if (hold && !(new Date(hold.until) > new Date())) hold = null;
   if (hold) { // the subscription limit is still on: straight to the fallback engine when there is one
-    const f = await fallbackFor(engine, job.kind);
+    const f = await fallbackFor(engine, tk);
     if (f) { engine = f; claude.fell_back = `Claude usage limit (${hold.why})`.slice(0, 200); hold = null; }
   }
   let missing = missingFor(engine);
   if (missing.length && !hold) { // the main engine is not set up (a key removed…): its backup writes it when there is one
-    const f = await fallbackFor(engine, job.kind);
+    const f = await fallbackFor(engine, tk);
     if (f) { claude.fell_back = `${ENGINES[engine]} is not set up`; engine = f; missing = missingFor(engine); }
   }
   if (missing.length) claude.last_error = `Claude mode is on but this server is missing: ${missing.join('; ')}`;
   else if (hold) { claude.hold_until = hold.until; claude.last_error = `Waiting for the Claude usage limit to reset (${hold.why})`.slice(0, 300); }
   else if (engine === 'github') {
     try { claude.run_url = await dispatch(doc, claude); } catch (e) {
-      const f = await fallbackFor(engine, job.kind);
+      const f = await fallbackFor(engine, tk);
       if (f) { engine = f; claude.fell_back = `GitHub dispatch failed: ${e.message}`.slice(0, 200); } else claude.last_error = e.message;
     }
   }
@@ -308,7 +350,7 @@ function resetAt(why) {
 async function retry(doc, why) {
   const s = getSettings();
   const c = doc.input.claude;
-  const kind = c.job?.kind || doc.kind;
+  const kind = toolKind(c.job, doc);
   const engine = c.engine || 'github';
   const onGithub = engine === 'github';
   const limit = LIMIT_RE.test(why) && onGithub;
@@ -362,7 +404,7 @@ export async function retryStale({ force = false } = {}) {
     if (c.hold_until) { // waiting for the usage limit: send again after the reset, with the same try
       // ...unless its tool now runs on an API key (engine per tool): then the subscription limit does not apply
       // ...or the fallback engine can take it now (owner, 2026-11-10: usage limit → API)
-      const kind = c.job?.kind || doc.kind;
+      const kind = toolKind(c.job, doc);
       if (new Date(c.hold_until) > new Date() && (c.fell_back || engineFor(kind) === 'github') && !(c.fell_back ? null : await fallbackFor('github', kind))) continue;
       await dispatchJob(doc, c.job, c.ctx, { attempt: c.attempts || 1, engine: c.fell_back ? 'github' : null, fellBack: c.fell_back }); // a job that moved to the subscription as a backup stays there
       n++;
@@ -376,7 +418,7 @@ export async function retryStale({ force = false } = {}) {
     if (c.last_error && !late && Date.now() - new Date(c.dispatched_at).getTime() < 120000) continue; // a failed dispatch: wait 2 min before trying again
     // no answer in time (or a failed dispatch): a GitHub job goes to the fallback engine when there is one,
     // even on its last try; a job already moved to the API stays there
-    const f = c.fell_back ? null : await fallbackFor(c.engine || 'github', c.job?.kind || doc.kind);
+    const f = c.fell_back ? null : await fallbackFor(c.engine || 'github', toolKind(c.job, doc));
     if (f) await dispatchJob(doc, c.job, c.ctx, { attempt: (c.attempts || 1) + 1, engine: f, fellBack: c.last_error || `no answer from ${ENGINES[c.engine || 'github']} in time` });
     else if ((c.attempts || 1) >= (s.claude?.max_attempts || 3)) await giveUp(doc, c.last_error || `no answer within ${s.claude?.timeout_minutes || 20} minutes`);
     else await dispatchJob(doc, c.job, c.ctx, { attempt: (c.attempts || 1) + 1, engine: c.fell_back ? c.engine : null, fellBack: c.fell_back });

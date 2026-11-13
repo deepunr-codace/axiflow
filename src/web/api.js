@@ -401,8 +401,30 @@ api.post('/axicore/changed', (req, res) => {
 api.get('/axicore/company/:id/docs', async (req, res) => {
   const lead = await get(`SELECT id, company, crm_brochure_state, crm_proposal_state FROM leads WHERE external_id = :ext AND crm_removed_at IS NULL`, { ext: `atomic:co:${Number(req.params.id)}` });
   if (!lead) return res.json({ lead: null, docs: [] });
-  const docs = await all(`SELECT id, kind, title, status, source, updated_at, token FROM docs WHERE lead_id = :id ORDER BY id DESC LIMIT 30`, { id: lead.id });
-  res.json({ lead: { id: lead.id, company: lead.company, brochure_state: lead.crm_brochure_state, proposal_state: lead.crm_proposal_state }, docs: docs.map((d) => ({ ...d, pdf: d.status === 'ready' ? `/pdf/doc/${d.token}.pdf` : null, token: undefined })) });
+  const docs = await all(`SELECT id, kind, title, status, source, error, updated_at, token FROM docs WHERE lead_id = :id ORDER BY id DESC LIMIT 30`, { id: lead.id });
+  res.json({ lead: { id: lead.id, company: lead.company, brochure_state: lead.crm_brochure_state, proposal_state: lead.crm_proposal_state },
+    docs: docs.map((d) => ({ ...d, pdf: d.status === 'ready' ? `/pdf/doc/${d.token}.pdf` : null, token: undefined,
+      error: d.status === 'error' ? plainDocError(d.error) : null, detail: d.status === 'error' ? String(d.error || '').slice(0, 300) : null, can_retry: d.status === 'error' })) });
+});
+/** A failed document's reason in plain words for the CRM panel (the technical text goes along as detail). */
+function plainDocError(e) {
+  const t = String(e || '');
+  if (/switched off|only on the live site|cannot write/i.test(t)) return t.slice(0, 200);
+  if (/hit your .{0,20}limit|usage limit/i.test(t)) return 'The Claude subscription reached its usage limit. Try again after it resets.';
+  if (/Daily AI budget/i.test(t)) return "Today's AI spending limit was reached. Try again tomorrow, or raise the limit on AxiFlow's AI page.";
+  if (/did not match the format|did not pass the checks|could not be used|no JSON/i.test(t)) return 'The AI answer was incomplete, so nothing was made.';
+  if (/no answer|timed? ?out|did not finish/i.test(t)) return 'The AI did not finish it.';
+  return 'The AI could not make it.';
+}
+// Try again from the CRM's Documents panel (owner, 2026-11-13: "if any AI is failed or any error show a try again
+// button in crm"): only a failed document of a live CRM lead, so it cannot be used to regenerate finished ones.
+api.post('/axicore/docs/:id/retry', async (req, res) => {
+  const d = await get(`SELECT d.id, d.status FROM docs d JOIN leads l ON l.id = d.lead_id WHERE d.id = :id AND l.crm_removed_at IS NULL AND l.external_id LIKE 'atomic:%'`, { id: Number(req.params.id) });
+  if (!d) return res.status(404).json({ error: 'Document not found' });
+  if (d.status !== 'error') return res.status(409).json({ error: d.status === 'working' ? 'It is already being made' : 'Only a failed document can be tried again' });
+  await tools.generate(d.id);
+  await logEvent(null, 'tools', 'retry', 'ok', `doc #${d.id} tried again from the CRM by ${req.user?.email || req.user?.name || 'crm'}`).catch(() => {});
+  res.json({ ok: true, status: 'working' });
 });
 api.get('/tools/options', async (req, res) => {
   const s = getSettings();
