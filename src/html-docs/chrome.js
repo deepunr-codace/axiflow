@@ -28,6 +28,19 @@ async function launch() {
   if (!exe) throw new Error('No Chrome or Edge found for the HTML documents (set CHROME_PATH)');
   return puppeteer.launch({ executablePath: exe, headless: true, args: ['--no-sandbox', '--font-render-hinting=none'], defaultViewport: null });
 }
+/**
+ * A browser of its own for one job, closed by the caller. On Vercel without --single-process: the shared browser runs as
+ * one process and crashed ("Connection closed") on Claude design bundles, whose pages are built in nested frames.
+ */
+export async function ownBrowser() {
+  const puppeteer = (await import('puppeteer-core')).default;
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    const chromium = (await import('@sparticuz/chromium')).default;
+    const args = chromium.args.filter((a) => a !== '--single-process' && !/^--disable-web-security/.test(a) && !/^--allow-running-insecure-content/.test(a));
+    return puppeteer.launch({ args, executablePath: await chromium.executablePath(), headless: true, defaultViewport: null });
+  }
+  return launch();
+}
 export async function browser() {
   if (browserP) {
     const b = await browserP.catch(() => null);
