@@ -1325,3 +1325,8 @@ html[data-theme="light"] .xsel-search input, html[data-theme="light"] .xsel-sear
 .tag.sw-id { font-size: 11px; padding: 1px 7px; cursor: help; }
 .sw-chk { margin: 4px 0; }
 .sw-note .mi { margin-right: 6px; vertical-align: -3px; font-size: 18px; }
+
+/* Error toasts (owner, 2026-11-13: an HTML import error showed as an unreadable grey box): the monochrome theme sets
+   --bad to near-white, so .toast.err was white text on white. Errors use the normal toast colours with a red edge. */
+.toast.err { background: #1A1A1D; color: #F4F4F5; border: 1px solid rgba(248, 113, 113, .6); box-shadow: 0 10px 30px rgba(0, 0, 0, .6), inset 3px 0 0 #f87171; }
+html[data-theme="light"] .toast.err { background: #FFFFFF; color: #18181B; border-color: rgba(220, 38, 38, .5); box-shadow: 0 12px 32px rgba(0, 0, 0, .12), inset 3px 0 0 #dc2626; }

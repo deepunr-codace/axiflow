@@ -48,10 +48,15 @@ async function api(path, opts = {}) {
 
 function toast(msg, err = false) {
   const t = $('#toast');
+  // an open dialog sits in the top layer: a toast left in the page showed behind its backdrop, dimmed and unreadable
+  // (owner, 2026-11-13, HTML import error); it goes inside the dialog while one is open
+  const open = [...document.querySelectorAll('dialog[open]')].pop();
+  if (t.parentElement !== (open || document.body)) (open || document.body).append(t);
   t.textContent = msg;
   t.className = 'toast show' + (err ? ' err' : '');
   clearTimeout(toast.t);
-  toast.t = setTimeout(() => (t.className = 'toast'), 2600);
+  // long messages and errors stay long enough to read
+  toast.t = setTimeout(() => (t.className = 'toast'), Math.min(10000, Math.max(err ? 5000 : 2600, String(msg).length * 55)));
 }
 
 const fmtDate = (iso) => (iso ? new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '–');
@@ -1707,7 +1712,8 @@ function importDialog(kind) {
       $('#impStatus').textContent = 'Reading the pages, fonts and texts… (up to a minute)';
       const k = $('#impKind').value;
       const q = new URLSearchParams({ kind: k, name: $('#impName').value || f.name, sample: $('#impClient').value.trim() });
-      const r = await api(`/design/templates/import-html?${q}`, { body: await f.text(), raw: true });
+      let r;
+      try { r = await api(`/design/templates/import-html?${q}`, { body: await f.text(), raw: true }); } catch (err) { $('#impStatus').textContent = `Not imported: ${err.message}`; throw err; }
       d.close();
       const bits = [`${r.pages} page${r.pages === 1 ? '' : 's'}, ${r.slots} text blocks`, r.sample ? `written for each client instead of "${r.sample}"` : 'no client name found in the file: set it to replace it reliably',
         r.fonts ? `${r.fonts} font files saved` : '', r.removed?.length ? `${r.removed.length} removed (${r.removed.slice(0, 3).join(', ')})` : '', r.moved?.length ? `layout changed on page ${r.moved.join(', ')}: check them` : 'every page laid out as in the file'].filter(Boolean);
