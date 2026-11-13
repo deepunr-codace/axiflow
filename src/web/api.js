@@ -462,6 +462,14 @@ async function approveRoute(req, res) {
   catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 }
 api.post('/axicore/docs/:id/approve', approveRoute);
+// Delete in the CRM's brochure list (owner, 2026-11-13): the row and its PDF, written with AxiCore's server key because
+// the CRM gives signed-in users no delete on brochures. AxiCore roles only (admins, managers).
+api.post('/axicore/brochures/:id/delete', async (req, res) => {
+  try {
+    const { deleteCrmBrochure } = await import('../atomic.js');
+    res.json({ ok: true, ...(await deleteCrmBrochure(req.params.id, req.user?.email || req.user?.name || 'AxiFlow admin')) });
+  } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+});
 api.post('/tools/docs/:id/approve', approveRoute);
 // the lead's brochure brief (brochure fix guide 6.1 / 6.6): built from what earlier stages stored, no AI; with the style
 // note and the design guidance, ready to paste into Claude web (the comparison baseline)

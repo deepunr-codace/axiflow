@@ -782,3 +782,39 @@ export function pollSoon(background) {
   lastKick = Date.now();
   background(async () => { await pollCrm().catch(() => {}); await (await import('./crm-sync.js')).flushOutbox().catch(() => {}); }, 'crm-poll');
 }
+
+/**
+ * Deletes one row of the CRM's brochures table and its PDF in the CRM brochure bucket (owner, 2026-11-13: "add option
+ * in crm to delete brochure"). The CRM's own rules give signed-in users no delete on brochures, so the CRM's Delete
+ * asks AxiCore, which writes with its server key like every other brochure write. Only a file in the configured
+ * brochure bucket is removed (a link elsewhere is left alone). AxiCore's own brochure document is kept: when it is
+ * edited or made again, a new CRM row follows as usual. Returns { id, title, file_removed }.
+ */
+export async function deleteCrmBrochure(rowId, by = 'crm') {
+  const s = getSettings().atomic;
+  const table = 'brochures'; // atomic.brochures_table is an on/off switch, not a name (upsertBrochure uses this table too)
+  const id = Number(rowId);
+  if (!Number.isInteger(id) || id <= 0) throw Object.assign(new Error('Unknown brochure'), { status: 404 });
+  const [row] = await rest('GET', `${table}?select=id,title,company_id,contact_id,brochure_url&id=eq.${id}`);
+  if (!row) throw Object.assign(new Error('This brochure is not in the CRM any more'), { status: 404 });
+  await rest('DELETE', `${table}?id=eq.${id}`, undefined, 'return=minimal');
+  let fileRemoved = false;
+  const { url, key } = conf();
+  const bucket = s.brochure_bucket || 'brochure';
+  const prefix = `${url}/storage/v1/object/public/${bucket}/`;
+  if (row.brochure_url && row.brochure_url.startsWith(prefix) && canWrite(`storage.${bucket}`)) {
+    const path = row.brochure_url.slice(prefix.length).split('?')[0].split('/').map(decodeURIComponent).join('/');
+    const r = await fetch(`${url}/storage/v1/object/${bucket}`, {
+      method: 'DELETE', headers: { apikey: key, authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ prefixes: [path] }), signal: AbortSignal.timeout(15000),
+    });
+    fileRemoved = r.ok;
+  }
+  const lead = row.company_id ? await get(`SELECT id FROM leads WHERE external_id = :ext`, { ext: `atomic:co:${row.company_id}` })
+    : row.contact_id ? await get(`SELECT id FROM leads WHERE external_id = :ext`, { ext: `atomic:ct:${row.contact_id}` }) : null;
+  if (lead) {
+    await update('leads', lead.id, { crm_brochure_state: null });
+    await logEvent(lead.id, 'atomic', 'brochure_deleted', 'ok', `CRM brochure row ${id} ("${row.title || ''}") deleted from the CRM by ${by}${fileRemoved ? ', with its PDF' : ''}`);
+  }
+  return { id, title: row.title, file_removed: fileRemoved };
+}
