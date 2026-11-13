@@ -30,6 +30,36 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - **`vercel.json` `ignoreCommand`** (8119d45, fixed in 692514d): a push that changes only `.md` files is not built. It compares with `VERCEL_GIT_PREVIOUS_SHA` (the last deployed commit), not `HEAD^`. The first version would skip a code commit pushed together with a notes commit. If the check fails, it builds. Checked live: the notes-only 6fb4422 shows CANCELED; 692514d built.
   - **Result:** 546 deployments deleted in 3 rounds. Left: axiflow 5, presenta 5, acestudio 3.
 
+## Status (2026-11-13): "CodeAce Website & SEO" brochure + "Website + SEO" website type (AxiFlow LIVE 53bc7dd; CRM commit NOT pushed)
+- **Owner:** "downlds/CodeAce Website & SEO Brochure (2).pdf add this template". Chose: tailored to each lead; prices set in Tool settings; "add a Website + Seo category and make this default for that".
+- **Template** (`src/html-docs/brochure-seo.js`, sample `samples/codeace-seo-brochure.js` word for word, source `builtin-html-brochure-seo`): 18 A4 pages rebuilt from the picture PDF (cover, contents ×2, intro, who, website, capabilities, Google SEO & AI search, SEO breakdown, more ways, results, our work, brands, packages, package options table, retainer, retainer terms, back).
+  - **Placement:** text sits on the PDF's own OCR baselines plus 0.11 × size (the OCR layer sits that much above the real baseline).
+  - **Fonts and pictures:** Inter (variable, optical sizes) and Geist Mono in `assets/html-docs/fonts/seo-*`; photos `assets/html-docs/img/seo-*.jpg`.
+  - **Layout:** fixed pages (no fit check); the website / capability rows flow with their text.
+  - **Check:** compared page by page with the reference.
+- **Per lead (Claude):** `BROCHURE_SEO_SCHEMA` (toc lead, intro, who, website lead + 3 services, 3 capabilities, highlighted SEO service, 6 SEO lines, quote, packages lead, 3 package texts, recommended package) plus the fact check.
+  - **Process and guide:** the research process with its own step 3 (`processFor`). The example is the brochure's own general wording (`seoExample`), so there is no Nirapara copy guard for it.
+  - **Fixed parts:** `cleanSeo` keeps CodeAce's facts (results, clients, brands, numbers, package contents) from the sample and fits each text to its space (`fitLen`: cut at a sentence).
+  - **Recommended package:** highlighted in the options table and named "Recommended" on the packages page; the cover says "Prepared for <client>".
+- **Prices** (`settings.seo_brochure`: 3 package prices, 0 = "On request"; retainer ₹70,000/month, 6 months): Tool settings card "Website & SEO brochure prices" (`#/settings/seo`). Every "6 months" / "6-month" in the brochure follows the retainer length.
+- **Website type `website-seo` "Website + SEO"** (`src/website-type.js`, with build notes for Claude): its brochure template is set once at boot (`automation.website_templates.brochure['website-seo']`, state `html_seo_type_default`; a later choice in Integrations is kept). Other types are unchanged (live default brochure: "Ecom Growth Brochure", id 25).
+- **Classic editor:** `public/html-convert.js` now has:
+  - `data-ax-bg`: a page or box with layered / radial gradients is captured as a picture on the server;
+  - more room (×1.12) for lines that never wrap;
+  - tag pills: the words are in their own span, so the dots survive the conversion.
+  - **Classic vs HTML:** 5-18 % per page, mostly text edges.
+  - **Known gap:** big Inter headings are a little wider in the classic version (Google serves Inter's text cut only; Chrome uses the display cut), the same kind of gap as Fraunces on the old Growth Plan.
+- **Tested:**
+  - scratchpad `seo/seo-e2e.mjs`: 23 checks on a throwaway DB with a stand-in OpenRouter (row, type default, restart keeps a choice, job content, tailored words, facts kept, recommended, fact check, classic design 18 pages, prices / On request / 3-month retainer, PDF 18 pages, over-long answers, no copy guard, sample clean);
+  - the same on an export of the staged commit;
+  - the other 3 HTML templates still convert (`bps/classic-unit.mjs`).
+  - **Live (53bc7dd):** template row 26, `website-seo` → 26, sample PDF printed on Vercel (18 pages, 6 s, < 1 % different from the local print).
+- **CRM (NOT pushed):** `axicore/packages.ts` gets the "Website + SEO" choice in the Interested popup.
+  - Local commit 4c6c77cd in the scratchpad clone `live-crm`, on top of the co-worker's e646dd63; tsc / eslint / prettier pass.
+  - The push to karuncodeace/atomic-crm was refused by the permission check (it deploys the live CRM): the owner pushes it, or allows it.
+  - Until then the type can only reach AxiCore through the API (`POST /api/axicore/package`); the CRM popup shows the old 4 choices.
+- **Not seen yet:** a real Claude run for this schema; the first real "Website + SEO" lead.
+
 ## Status (2026-11-13): no default content ever; Try again in the CRM (pushed with the fixes below)
 - **Owner:** "push. make sure dont generate any default bad content at any cost. disable that option fully. if any AI is failed or any error show a try again button in crm", then "remove openrouter keys".
 - **No default content:** `tools.generate()` has no non-AI path any more: AI writing off, a local server or an imported PDF template → the doc fails with `noAiReason()` (rule-based SWOT, template general copy `fallbackData`, the smart template writers and the token-filled imported template are no longer used by it). `pdf/docs.js` `buildBrochureFor` / `buildProposalFor` print only a finished document (`readyBrochure`, `readyProposalDoc`; class `NoDocument`): the old built-in "website plan" brochure and built-in proposal are gone; `/pdf/brochure/:token` and `/pdf/proposal/:token` answer 404 without one. The CRM "Brochure ready" deal note only goes with a real upload.
@@ -55,7 +85,7 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - Worker: `claude-worker/post.mjs` adds Claude Code's stop reason (e.g. error_max_turns, steps) when `out/result.json` is missing; `INSTRUCTIONS.md` lists kind `html` and says to write a complete first file early; `validate.mjs` imports `checkSchema` from `src/ai/schema-check.js`.
 - **Tested** (scratchpad): `grammar-test.mjs` 4/4 (big schema → text, missing section repaired, never-matching → error not laid out, proposal strict refused → text), `crm-broch-test.mjs` 4/4 (pitch_ready / failed doc → no CRM write; finished doc → 490 KB upload + row; stage names), `fb-test` 14/14, `ai-setup-test` 17/17, worker validator on a scratch copy.
 - **Not checked live:** the real Anthropic API with the JSON-text path (stand-in only).
-- **Paused:** the "CodeAce Website & SEO Brochure" template (`Downloads/CodeAce Website & SEO Brochure (2).pdf`, owner: "add this tooo"). The PDF is 10 picture pages (cover A4, 8 spreads 1588×1123 px, back A4) with an invisible OCR text layer. Measured so far (scratchpad `seo/`): text runs with exact sizes and baselines (`runs.tsv`), fonts Inter (body opsz 14: 400/500/600, ls 0; headings display opsz, ls −0.02 to −0.09 em by size) + Geist Mono (fetched: `assets/html-docs/fonts/seo-*.woff2`, `seo-fonts.css`, uncommitted), yellow #EFE659 gradients, mosaics, rules, fold shadow; Chromium prints mixed page sizes in one PDF (named @page). Next: build `src/html-docs/brochure-seo.js` + sample + index.js entry, then pixel-diff.
+- **Done since:** the "CodeAce Website & SEO Brochure" template (see its own section above).
 
 ## Status (2026-11-12): the AI page (#/ai): everything about AI in one place, in plain words
 - **Owner:** "make the AI integration properly. its now not understandable. add one ai integration page - enable disable - key adding options - fallback options etc. it should be user friendly". The owner also asked for simple English explanations in this session.
