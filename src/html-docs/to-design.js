@@ -17,10 +17,10 @@ window.__axConvert = { convertPages };`);
 
 /** doc (with content.html) → { pages } in the classic design model. onlyPage = one page number (the price page). */
 export async function htmlToDesign(doc, { onlyPage = null } = {}) {
-  const { fitPlan, HTML_TEMPLATES } = await import('./index.js');
+  const { fitPlan, sizeOf } = await import('./index.js');
   const { withPage } = await import('./chrome.js');
   const { html } = await fitPlan(doc); // content that runs over is spread on more pages first
-  const size = HTML_TEMPLATES[doc.content.html.template].size;
+  const size = sizeOf(doc.content.html);
   const raw = await withPage(html, { ...size, scaleFactor: 2 }, async (page) => {
     await page.addScriptTag({ content: converterScript() });
     const r = await page.evaluate((only) => window.__axConvert.convertPages(document, { onlyPage: only, shots: true }), onlyPage);

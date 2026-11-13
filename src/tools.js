@@ -476,6 +476,12 @@ export async function buildClaudeJob(doc, s = getSettings(), opts = {}) {
           date: new Date().toLocaleString('en-GB', { month: 'long', year: 'numeric', timeZone: s.schedule?.timezone || 'Asia/Kolkata' }),
           contact: { agency: 'CodeAce IT Solutions LLP', phone: a.phone, email: a.email, website: String(a.website || '').replace(/^https?:\/\//, '').replace(/\/$/, '') } });
         ctx = { html: tpl.source };
+      } else if (tpl.source === htmlDocs.IMPORTED) {
+        // an HTML file imported as a template (owner, 2026-11-13): Claude rewrites the blocks written for its sample client
+        const { importedJob } = await import('./html-docs/imported.js');
+        job = await importedJob(tpl, { input: base, dossier, research, swot: await leadSwot(doc.lead_id), settings: s, offer,
+          audit: doc.kind === 'brochure' && base.website ? collected?.audit || null : null });
+        ctx = { html: htmlDocs.IMPORTED };
       } else {
         job = htmlDocs.htmlJob(tpl.source, { input: base, dossier, research, swot: await leadSwot(doc.lead_id), settings: s, items: doc.items, offer,
           audit: doc.kind === 'brochure' && base.website ? collected?.audit || null : null }); // the website check (2026-11-12)
@@ -571,7 +577,8 @@ export async function completeDoc(id, { content, source }) {
   if (content?.html && doc.kind === 'brochure') addTemplatePhotos(content);
   // the designed brochure: AxiFlow's own layout check on the final pages; anything still wrong (or claims nobody
   // checked) = "needs a look": shown in AxiFlow and the CRM's Documents panel, and not sent to the CRM as finished
-  const look = content?.html?.template === htmlDocs.DESIGNED ? await designedLook({ ...doc, content }) : null;
+  const look = content?.html?.template === htmlDocs.DESIGNED ? await designedLook({ ...doc, content })
+    : content?.html?.template === htmlDocs.IMPORTED ? await importedLook({ ...doc, content }) : null;
   await update('docs', id, patch);
   if (look?.needs_look) {
     const { logEvent } = await import('./pipeline/log.js');
@@ -596,6 +603,18 @@ async function designedLook(doc) {
     ...(c.engine_checked && c.claims?.status !== 'checked' ? ['the claims were not checked'] : []),
     ...((c.claims?.unresolved || []).filter((u) => u.verdict === 'unsupported').map((u) => `an unsupported claim is still on page ${u.page || '?'}: "${String(u.find || '').slice(0, 60)}"`)),
   ];
+  Object.assign(c, { layout_final: issues, needs_look: reasons.length > 0, reasons: [...new Set(reasons)].slice(0, 20), checked_at: nowISO() });
+  return c;
+}
+/**
+ * An imported HTML template's document: the layout check on its final pages, against the template's own pages (a text
+ * that no longer fits its box, two texts overlapping, content pushed off a page) = "needs a look", as for the designed brochure.
+ */
+async function importedLook(doc) {
+  const c = doc.content.html.check ||= {};
+  let issues = [];
+  try { issues = await htmlDocs.importedLayoutIssues(doc); } catch (e) { issues = [{ page: 0, what: `the pages could not be checked (${e.message})` }]; }
+  const reasons = issues.map((x) => `page ${x.page}: ${x.what}${x.text ? ` ("${String(x.text).slice(0, 60)}")` : ''}`);
   Object.assign(c, { layout_final: issues, needs_look: reasons.length > 0, reasons: [...new Set(reasons)].slice(0, 20), checked_at: nowISO() });
   return c;
 }
@@ -684,7 +703,7 @@ export async function saveDoc(id, { design, items, title, content }) {
     if (htmlDocs.isHtmlDoc(doc)) { // the words (form) and/or what was done on the pages (page editor)
       const h0 = doc.content.html, sent = content?.html || {};
       const edits = sent.edits !== undefined ? htmlDocs.cleanEdits(sent.edits) : h0.edits;
-      patch.content_json = { ...doc.content, html: { ...h0, data: sent.data !== undefined ? htmlDocs.sanitizeEdit(sent.data) : h0.data, edits, split: htmlDocs.hasEdits(edits) ? h0.split || {} : {} } };
+      patch.content_json = { ...doc.content, html: { ...h0, data: sent.data !== undefined ? htmlDocs.sanitizeDocData(h0, sent.data) : h0.data, edits, split: htmlDocs.hasEdits(edits) ? h0.split || {} : {} } };
       // new words for a document that is edited in the classic editor: its pages are laid out again from them
       if (doc.design && sent.data !== undefined && design === undefined) {
         patch.design_json = await classicDesignOf({ ...doc, content: patch.content_json }) || doc.design;

@@ -529,8 +529,11 @@ api.get('/tools/docs/:id/html', async (req, res) => {
   const h = await import('../html-docs/index.js');
   const d = await tools.getDoc(Number(req.params.id));
   if (!d || !h.isHtmlDoc(d)) return res.status(404).json({ error: 'Not an HTML document' });
-  const t = h.HTML_TEMPLATES[d.content.html.template];
-  res.json({ html: await h.htmlDocHtml(d), size: t.size, data: d.content.html.data, template: d.content.html.template, photos: t.photos || [], edits: d.content.html.edits || { els: {}, added: [] }, verification: d.content.html.verification || null,
+  const t = h.HTML_TEMPLATES[d.content.html.template] || {};
+  // an imported template: labels for its blocks in the Words form (Page 4 · Heading)
+  const im = d.content.html.template === h.IMPORTED ? await import('../html-docs/imported.js') : null;
+  const labels = im ? im.formLabels(await im.importedTemplate(d.content.html.tid)) : null;
+  res.json({ html: await h.htmlDocHtml(d), size: h.sizeOf(d.content.html), labels, data: d.content.html.data, template: d.content.html.template, photos: t.photos || [], edits: d.content.html.edits || { els: {}, added: [] }, verification: d.content.html.verification || null,
     check: d.content.html.check || null }); // the designed brochure's checks (claims, review, layout; "needs a look")
 });
 // An HTML template's sample (the Nirapara reference) as a PDF: no document, no CRM write (also proves Chromium works)
@@ -538,7 +541,7 @@ api.get('/design/templates/:id/sample.pdf', async (req, res) => {
   const h = await import('../html-docs/index.js');
   const t = await templates.getTemplate(Number(req.params.id));
   if (!h.isHtmlTemplate(t)) return res.status(404).json({ error: 'Only the Codeace HTML templates have a sample PDF' });
-  const pdf = await h.htmlDocPdf(h.sampleDoc(t.source));
+  const pdf = await h.htmlDocPdf(t.source === h.IMPORTED ? await h.importedSampleDoc(t) : h.sampleDoc(t.source));
   res.set({ 'content-type': 'application/pdf', 'content-disposition': `inline; filename="${t.kind}-sample.pdf"` }).send(pdf);
 });
 // An HTML document made before the classic editor was the rule (owner, 2026-11-12): its pages converted on the server
@@ -572,7 +575,7 @@ api.post('/tools/docs/:id/html-preview', express.json({ limit: '2mb' }), async (
   const h = await import('../html-docs/index.js');
   const d = await tools.getDoc(Number(req.params.id));
   if (!d || !h.isHtmlDoc(d)) return res.status(404).json({ error: 'Not an HTML document' });
-  const data = h.sanitizeEdit(req.body?.data ?? d.content.html.data);
+  const data = h.sanitizeDocData(d.content.html, req.body?.data ?? d.content.html.data);
   const edits = req.body?.edits !== undefined ? h.cleanEdits(req.body.edits) : d.content.html.edits;
   res.json({ html: await h.htmlDocHtml({ ...d, content: { ...d.content, html: { ...d.content.html, data, edits, split: h.hasEdits(edits) ? d.content.html.split || {} : {} } } }) });
 });
@@ -628,6 +631,15 @@ api.delete('/design/templates/:id', async (req, res) => {
 });
 // Page images are uploaded one by one first (Vercel caps request bodies at 4.5 MB), so this body is small.
 api.post('/design/templates/import', express.json({ limit: '4mb' }), async (req, res) => res.json({ id: await templates.importTemplate(req.body || {}) }));
+// An HTML file as a template (owner, 2026-11-13: "add option to upload html files too in template import"): kept as it
+// is, printed by Chromium; its text blocks are rewritten per lead. Sent as plain text (hosting caps a request at 4.5 MB).
+api.post('/design/templates/import-html', express.text({ type: '*/*', limit: '4.4mb' }), async (req, res) => {
+  const q = req.query || {};
+  try {
+    const { importHtmlTemplate } = await import('../html-docs/imported.js');
+    res.json(await importHtmlTemplate({ kind: String(q.kind || ''), name: String(q.name || ''), sample_company: String(q.sample || ''), html: typeof req.body === 'string' ? req.body : '' }));
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
 
 // Images used in designs: upload (data URL) and serve (assets/ + data/uploads/).
 // Fonts of imported PDFs: the importer resolves each font of the PDF to a code (Google Fonts, else the PDF's own file)

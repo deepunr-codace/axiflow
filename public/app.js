@@ -1606,12 +1606,12 @@ async function renderDesigns(arg) {
   await loadMeta(api);
   view.innerHTML = `
   <div class="toolbar"><div class="seg">${['brochure', 'proposal'].map((k) => `<button class="${k === kind ? 'on' : ''}" data-k="${k}">${k === 'brochure' ? 'Brochures' : 'Proposals'}</button>`).join('')}</div>
-    <span class="spacer"></span><button class="btn primary sm" id="importBtn">Import from PDF</button></div>
-  <p class="hint">The <b>default</b> template is used for new ${kind}s. Import a PDF made in Canva (or anywhere) and it becomes an editable template; the AI rewrites its text for each client. You can also save any finished ${kind} as a template.</p>
+    <span class="spacer"></span><button class="btn primary sm" id="importBtn">Import PDF or HTML</button></div>
+  <p class="hint">The <b>default</b> template is used for new ${kind}s. Import a PDF made in Canva (or anywhere) and it becomes an editable template, or an HTML file and its design is kept exactly; the AI rewrites the text for each client. You can also save any finished ${kind} as a template.</p>
   <div class="tpl-grid">${list.map((t) => `<div class="card tpl-card" data-id="${t.id}">
     <div class="tpl-thumb"><div class="muted small">Loading preview…</div></div>
     <div class="tpl-body"><div class="row"><b class="grow">${esc(t.name)}</b>${t.is_default ? '<span class="tag green">Default</span>' : ''}</div>
-    <div class="small muted">${t.mode === 'html' ? 'Built-in · Codeace design, words written for each client' : t.mode === 'smart' ? 'Built-in · layout adapts to the content' : t.source === 'pdf' ? 'Imported from PDF' : 'Saved from a document'}</div>
+    <div class="small muted">${t.source === 'html-import' ? `Imported from HTML · words written for each client${t.sample_company ? ` (sample: ${esc(t.sample_company)})` : ''}` : t.mode === 'html' ? 'Built-in · Codeace design, words written for each client' : t.mode === 'smart' ? 'Built-in · layout adapts to the content' : t.source === 'pdf' ? 'Imported from PDF' : 'Saved from a document'}</div>
     <div class="row" style="margin-top:10px;gap:6px">
       <button class="btn sm" data-a="view"><span class="mi">visibility</span>View</button>
       <button class="btn sm primary" data-a="use">Use</button>
@@ -1660,7 +1660,7 @@ async function viewTemplate(kind, id, name) {
     if (t.html) { // HTML templates: their own pages, shown with the Nirapara sample they were made from
       const n = (t.html.match(/data-page="/g) || []).length;
       box.innerHTML = '';
-      $('#tvCount', d).textContent = `${n} pages · shown with the Nirapara sample`;
+      $('#tvCount', d).textContent = `${n} pages · shown with ${t.sample !== undefined ? (t.sample ? `the sample client (${t.sample})` : 'the texts of the file') : 'the Nirapara sample'}`;
       box.append(framePages(t.html, t.size, Math.min(Math.max(280, box.clientWidth), Math.max(240, window.innerHeight - 230) * t.size.width / t.size.height)));
       return;
     }
@@ -1682,19 +1682,39 @@ async function viewTemplate(kind, id, name) {
   } catch (err) { $('.tv-pages', d).innerHTML = `<p class="small muted">Could not load the pages: ${esc(err.message)}</p>`; }
 }
 
+const isHtmlFile = (f) => !!f && (/\.html?$/i.test(f.name) || f.type === 'text/html');
 function importDialog(kind) {
-  const d = modal('Import a template from PDF', `
-    <p class="small muted">Works best with PDFs exported from Canva, Figma, PowerPoint or Word. Each page's artwork becomes the background and every piece of text becomes an editable text box in the PDF's own font (the same font from Google Fonts, or the copy inside the PDF). Pages that are pictures, like scans or screenshots, stay exactly as they are; only the client name below is made editable on them.</p>
+  const d = modal('Import a template', `
+    <p class="small muted" id="impHelp"></p>
     <div class="form-grid">
       <label>Type<select id="impKind"><option value="brochure" ${kind === 'brochure' ? 'selected' : ''}>Brochure</option><option value="proposal" ${kind === 'proposal' ? 'selected' : ''}>Proposal</option></select></label>
       <label>Template name<input id="impName" placeholder="e.g. Blue salon brochure"></label>
-      <label class="full">Client name used in this PDF (optional)<input id="impClient" placeholder="e.g. Bodhis LUXE: replaced with each new client's name"></label>
-      <label class="full">PDF file<input type="file" id="impFile" accept="application/pdf"></label>
+      <label class="full">Client name used in this file (optional)<input id="impClient" placeholder="e.g. Bodhis LUXE: replaced with each new client's name"></label>
+      <label class="full">PDF or HTML file<input type="file" id="impFile" accept="application/pdf,.pdf,text/html,.html,.htm"></label>
     </div><p class="small muted" id="impStatus"></p>`, '<button class="btn primary" id="impGo">Import</button>');
-  $('#impFile').onchange = () => { const f = $('#impFile').files[0]; if (f && !$('#impName').value) $('#impName').value = f.name.replace(/\.pdf$/i, ''); };
+  const help = () => {
+    $('#impHelp').textContent = isHtmlFile($('#impFile').files[0])
+      ? 'HTML file: the design is kept exactly as it is (its pages are printed as they look in a browser). For each client, Claude rewrites the texts written for the client named in the file, from research and the lead\'s data, and keeps CodeAce\'s own texts. Each page needs the class "page" (or data-page); fonts from Google Fonts are saved inside the template, scripts and pictures from other websites are removed. Leave the client name empty to use the name after "Prepared for".'
+      : 'PDF: works best with PDFs exported from Canva, Figma, PowerPoint or Word. Each page\'s artwork becomes the background and every piece of text becomes an editable text box in the PDF\'s own font (the same font from Google Fonts, or the copy inside the PDF). Pages that are pictures, like scans or screenshots, stay exactly as they are; only the client name below is made editable on them. You can also import an HTML file.';
+  };
+  help();
+  $('#impFile').onchange = () => { const f = $('#impFile').files[0]; if (f && !$('#impName').value) $('#impName').value = f.name.replace(/\.(pdf|html?)$/i, '').replace(/\s*\(\d+\)$/, ''); help(); };
   $('#impGo').onclick = (e) => busy(e.target, async () => {
     const f = $('#impFile').files[0];
-    if (!f) throw new Error('Choose a PDF file');
+    if (!f) throw new Error('Choose a PDF or HTML file');
+    if (isHtmlFile(f)) { // kept as it is: the server finds the pages and the texts (owner, 2026-11-13)
+      if (f.size > 4.3e6) throw new Error('HTML file is too large (max 4.3 MB): make its pictures smaller');
+      $('#impStatus').textContent = 'Reading the pages, fonts and texts… (up to a minute)';
+      const k = $('#impKind').value;
+      const q = new URLSearchParams({ kind: k, name: $('#impName').value || f.name, sample: $('#impClient').value.trim() });
+      const r = await api(`/design/templates/import-html?${q}`, { body: await f.text(), raw: true });
+      d.close();
+      const bits = [`${r.pages} page${r.pages === 1 ? '' : 's'}, ${r.slots} text blocks`, r.sample ? `written for each client instead of "${r.sample}"` : 'no client name found in the file: set it to replace it reliably',
+        r.fonts ? `${r.fonts} font files saved` : '', r.removed?.length ? `${r.removed.length} removed (${r.removed.slice(0, 3).join(', ')})` : '', r.moved?.length ? `layout changed on page ${r.moved.join(', ')}: check them` : 'every page laid out as in the file'].filter(Boolean);
+      toast(`Imported: ${bits.join('; ')}`);
+      renderDesigns(k);
+      return;
+    }
     if (f.size > 60e6) throw new Error('PDF is too large (max 60 MB)');
     const pages = await pdfToTemplate(f, (n, total) => { $('#impStatus').textContent = `Reading page ${n} of ${total}…`; }, { api, sampleCompany: $('#impClient').value.trim() });
     const st = pages.stats || {};

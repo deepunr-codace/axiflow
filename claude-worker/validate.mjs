@@ -24,6 +24,8 @@ export async function validate() {
   }
   if (!problems.length && job.kind === 'free') problems.push(...checkSlides(result));
   // (the copy guard for the Nirapara example was removed with the example itself: brochure fix guide 2026-11-13)
+  // imported HTML templates: known ids, the blocks naming the sample client rewritten and the client gone, lengths (soft)
+  if (!problems.length && job.imported) problems.push(...(await import('../src/html-docs/imported-core.js')).importedProblems(result, job.imported));
   return problems;
 }
 /** Problems that do not block an answer (AxiFlow fits the text; soft fields): shared by post.mjs and repair-prompt.mjs. */

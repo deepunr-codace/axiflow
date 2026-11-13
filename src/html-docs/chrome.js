@@ -38,11 +38,13 @@ export async function browser() {
 }
 
 /** Opens the HTML in a fresh page (fonts and images are inline, so nothing is fetched) and hands it to fn. */
-export async function withPage(html, { width, height, scaleFactor }, fn) {
+export async function withPage(html, { width, height, scaleFactor, media }, fn) {
   const b = await browser();
   const page = await b.newPage();
   try {
     await page.setViewport({ width: Math.ceil(width), height: Math.ceil(height), deviceScaleFactor: scaleFactor || 1 });
+    // imported HTML templates are printed as they look on screen (their own print rules were written for another page set-up)
+    if (media) await page.emulateMediaType(media);
     await page.setContent(html, { waitUntil: 'load', timeout: 60000 });
     await page.evaluate(() => document.fonts.ready);
     return await fn(page);

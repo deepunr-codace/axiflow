@@ -31,7 +31,8 @@ ${only ? `[data-page]:not([data-page="${only}"]){display:none!important}` : `[da
 
 // ------------------------------------------------------------------ the form
 const LABELS = { doc_name: 'Brochure name', idea_pages: 'Idea pages', think_label: 'Label: what the customer thinks', do_label: 'Label: what we do', headline: 'Headline on the photo', new: 'Marked NEW', statement: 'Statement card', includes_title: 'List heading', tag: 'Brochure name', doc_type: 'Document type', script_word: 'Name in Malayalam (cover)', title_em: 'Title, italic end', cta_before: 'Closing line, start', cta_em: 'Closing line, italic part', cta_after: 'Closing line, end', note_bold: 'Note, bold start', retainer_bold: 'Retainer, bold start', includes_title: 'List heading', idea_titles: 'Idea page headings', highlight: 'Highlighted step (0-3)', goal: 'Goal (0 attract, 1 convert, 2 retain)', short: 'Short name (plan page)', featured: 'Dark signature card', dark: 'Dark card', tone: 'Card colour (grey, red, dark)' };
-const human = (k) => LABELS[k] || String(k).replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+let EXTRA = {}; // an imported template's labels (Page 4, Heading), from the server
+const human = (k) => EXTRA[k] || LABELS[k] || String(k).replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
 const blankLike = (v) => (typeof v === 'string' ? '' : typeof v === 'number' ? 0 : typeof v === 'boolean' ? false : Array.isArray(v) ? [] : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, blankLike(x)])) : '');
 // fields not shown in the form; the older Codeace Growth Plan keeps its page plan in idea_pages, the CodeAce Growth
 // Brochure has idea page headings there and NEW marks the owner may change
@@ -83,6 +84,7 @@ export async function renderHtmlDoc(kind, d, noun) {
   const { $, api, toast, busy, modal, view } = H;
   const r = await api(`/tools/docs/${d.id}/html`);
   let data = JSON.parse(JSON.stringify(r.data));
+  EXTRA = r.labels || {};
   SKIP = new Set(r.template === 'builtin-html-brochure-ps' ? SKIP_BASE : r.template === 'builtin-designed' ? [...SKIP_BASE, 'images', 'claims', 'theme', 'fonts']
     : [...SKIP_BASE, 'idea_pages', 'new']);
   const ck = r.check;
@@ -118,6 +120,7 @@ export async function renderHtmlDoc(kind, d, noun) {
       ${Object.values(r.edits?.els || {}).some((x) => typeof x.text === 'string') ? '<p class="small muted" style="margin:0 0 8px">Some texts were typed on the pages (Design); those win over the fields here.</p>' : ''}
       ${(r.photos || []).length ? `<div class="hd-photos">${r.photos.map(([k, label]) => `<label class="btn sm"><span class="mi">image</span>${esc(label)}<input type="file" accept="image/*" data-photo="${esc(k)}" hidden></label>`).join('')}${r.photos.some(([k]) => data.photos?.[k]) ? '<button class="btn sm ghost" id="hdNoPhotos">Remove photos</button>' : ''}</div>` : ''}
       ${factCheck(r.verification)}
+      ${r.labels ? '<p class="small muted" style="margin:0 0 8px">Numbers in angle brackets, like &lt;2&gt;…&lt;/2&gt;, keep the original styling (bold, colour): keep them around the words. A line break starts a new line on the page.</p>' : ''}
       <div id="hdFields"></div>
     </aside>
   </div>`;
@@ -130,7 +133,7 @@ export async function renderHtmlDoc(kind, d, noun) {
   };
   show(r.html);
   const drawForm = () => {
-    $('#hdFields').innerHTML = Object.entries(data).map(([k, v]) => SKIP.has(k) ? '' : (v && typeof v === 'object' ? `<details class="hd-sec"${k === 'cover' || k === 'summary' ? ' open' : ''}><summary>${esc(human(k))}</summary>${Array.isArray(v) ? block(k, k, v) : Object.entries(v).map(([kk, x]) => block(`${k}.${kk}`, kk, x)).join('')}</details>` : `<div class="hd-sec hd-top">${field(k, k, v)}</div>`)).join('');
+    $('#hdFields').innerHTML = Object.entries(data).map(([k, v]) => SKIP.has(k) ? '' : (v && typeof v === 'object' ? `<details class="hd-sec"${k === 'cover' || k === 'summary' || k === 'p1' ? ' open' : ''}><summary>${esc(human(k))}</summary>${Array.isArray(v) ? block(k, k, v) : Object.entries(v).map(([kk, x]) => block(`${k}.${kk}`, kk, x)).join('')}</details>` : `<div class="hd-sec hd-top">${field(k, k, v)}</div>`)).join('');
   };
   drawForm();
   let tPrev = null, tSave = null;

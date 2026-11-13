@@ -328,7 +328,7 @@ async function postProcess(doc, output) {
   if (kind === 'html') { // the Codeace HTML templates (src/html-docs): the content of the fixed design
     const h = await import('./html-docs/index.js');
     const template = ctx.html || doc.input.claude.job.template;
-    const content = h.acceptHtml(template, output, doc.input.claude.job); // the fact check is kept with the content
+    const content = await h.acceptHtml(template, output, doc.input.claude.job); // the fact check is kept with the content (imported templates: async)
     // every text cut to fit its box is logged (brochure fix guide 2026-11-13, section 8), so it shows how often it happens
     if (content.html.cuts?.length) {
       const list = content.html.cuts.map((c) => (c.items ? `${c.path} ${c.items}→${c.max} items` : `${c.path} ${c.length}→${c.max}`));

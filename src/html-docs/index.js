@@ -21,6 +21,9 @@ import { DESIGNED, checkOutput } from '../brochure/writer.js';
 import { DESIGNED_SAMPLE } from './samples/designed-sample.js';
 export { DESIGNED };
 export { cleanEdits, hasEdits };
+// HTML files imported as templates (owner, 2026-11-13): kept as uploaded, Claude rewrites their text blocks (imported.js)
+import { IMPORTED, importedHtml, importedTemplate, templateData, sanitizeImportedData, acceptImported, importedIssues } from './imported.js';
+export { IMPORTED };
 
 /*
  * HTML document templates (owner, 2026-11-11: "i generated brochure and proposal from claude web. can u convert this
@@ -40,8 +43,12 @@ export const HTML_TEMPLATES = {
   // pages written as HTML by Claude from the CodeAce design system; not the default until it beats the baseline
   [DESIGNED]: { kind: 'brochure', name: 'Designed brochure', size: DESIGNED_SIZE, photos: [] },
 };
-export const isHtmlTemplate = (tpl) => tpl?.mode === 'html' && !!HTML_TEMPLATES[tpl.source];
-export const isHtmlDoc = (d) => !!d?.content?.html?.template && !!HTML_TEMPLATES[d.content.html.template];
+export const isHtmlTemplate = (tpl) => tpl?.mode === 'html' && (!!HTML_TEMPLATES[tpl.source] || tpl.source === IMPORTED);
+export const isHtmlDoc = (d) => !!d?.content?.html?.template && (!!HTML_TEMPLATES[d.content.html.template] || (d.content.html.template === IMPORTED && !!d.content.html.tid));
+/** The page size of an HTML document (an imported template carries its own). */
+export const sizeOf = (h) => (h.template === IMPORTED ? h.size : HTML_TEMPLATES[h.template].size);
+/** A document's words edited by hand (the form), cleaned for its template. */
+export const sanitizeDocData = (h, v) => (h?.template === IMPORTED ? sanitizeImportedData(v) : sanitizeEdit(v));
 
 /** Adds the two template rows once and makes them the defaults once (a later "Make default" elsewhere is kept). */
 export async function seedHtmlTemplates() {
@@ -142,7 +149,8 @@ async function context(kind, d, { client, items, created, website, template }) {
 }
 
 /** The document's full HTML (what the PDF prints and the page shows). */
-export async function htmlFor({ template, data, split, edits }, { client, company, items, created, website }) {
+export async function htmlFor({ template, data, split, edits, tid }, { client, company, items, created, website }) {
+  if (template === IMPORTED) return applyEdits(await importedHtml({ tid, data }, { client: company || '' }), edits, resolveSrc);
   const t = HTML_TEMPLATES[template];
   const d = template === 'builtin-html-proposal' ? { ...data, eyebrow: data.eyebrow || `${data.doc_type || 'Website Proposal'} · ${monthYear(created, getSettings())}` } : data;
   const ctx = await context(t.kind, d, { client: template === SEO ? (company ?? client) : client, items, created, website, template });
@@ -159,7 +167,7 @@ const docArgs = (doc) => ({ client: doc.input?.company || doc.title || 'Client',
 export async function htmlDocPdf(doc) {
   const { htmlToPdf } = await import('./chrome.js');
   const { html } = await fitPlan(doc);
-  return htmlToPdf(html, HTML_TEMPLATES[doc.content.html.template].size);
+  return htmlToPdf(html, sizeOf(doc.content.html));
 }
 /**
  * The page plan that fits (checked in Chromium, saved with the document) and the HTML with it. Used before printing
@@ -168,14 +176,14 @@ export async function htmlDocPdf(doc) {
 export async function fitPlan(doc) {
   const { withPage, overflowCheck } = await import('./chrome.js');
   const h = doc.content.html;
-  const t = HTML_TEMPLATES[h.template];
+  const size = sizeOf(h);
   let split = h.split || {};
   let html = await htmlFor({ ...h, split }, docArgs(doc));
   // pages edited by hand keep their plan: splitting a page would move the elements the edits point at
   for (let i = 0; i < 3 && !hasEdits(h.edits); i++) {
-    const over = await withPage(html, t.size, overflowCheck);
+    const over = await withPage(html, size, overflowCheck);
     if (!over.length) break;
-    const next = h.template === SEO || h.template === DESIGNED ? null /* fixed pages; the designed brochure is checked by its own layout check */ : h.template === PS ? replanPs(h.data, split, over) : replan(t.kind, h.data, split, over);
+    const next = h.template === IMPORTED ? null /* fixed pages, checked by importedIssues */ : h.template === SEO || h.template === DESIGNED ? null /* fixed pages; the designed brochure is checked by its own layout check */ : h.template === PS ? replanPs(h.data, split, over) : replan(HTML_TEMPLATES[h.template].kind, h.data, split, over);
     if (!next) break;
     split = next;
     html = await htmlFor({ ...h, split }, docArgs(doc));
@@ -226,11 +234,13 @@ function replanPs(data, split, over) {
 export async function overflowingPages(doc) {
   const { withPage } = await import('./chrome.js');
   const html = await htmlFor(doc.content.html, docArgs(doc));
-  return withPage(html, HTML_TEMPLATES[doc.content.html.template].size, (page) => page.evaluate(() => [...document.querySelectorAll('[data-page]')]
+  return withPage(html, sizeOf(doc.content.html), (page) => page.evaluate(() => [...document.querySelectorAll('[data-page]')]
     .map((p, i) => ({ n: i + 1, over: p.scrollHeight > p.clientHeight + 1 || [...p.querySelectorAll('*')].some((e) => e.getBoundingClientRect().bottom > p.getBoundingClientRect().bottom + 1) }))
     .filter((x) => x.over).map((x) => x.n)));
 }
 
+/** An imported template's document: what no longer fits, compared with the template's own pages. */
+export const importedLayoutIssues = (doc) => importedIssues(doc, (d) => htmlFor(d.content.html, docArgs(d)));
 /** The designed brochure's layout check on its final pages (src/brochure/render.js checkInPage), in AxiFlow's Chromium. */
 export async function designedIssues(doc) {
   const { withPage } = await import('./chrome.js');
@@ -244,6 +254,12 @@ export async function designedIssues(doc) {
 
 /** HTML for the page view and the template preview (no fit check; the saved plan is used). */
 export async function htmlDocHtml(doc) { return htmlFor(doc.content.html, docArgs(doc)); }
+/** An imported template as a document with its own texts (the sample PDF). */
+export async function importedSampleDoc(tpl) {
+  const t = await importedTemplate(tpl.id);
+  return { id: 0, kind: t.kind, title: t.name, input: { company: '' }, status: 'ready', created_at: new Date().toISOString(), items: null,
+    content: { html: { template: IMPORTED, tid: t.id, size: t.size, data: templateData(t), split: {} } } };
+}
 /** The Nirapara reference of an HTML template, as a document (template preview, sample PDF). */
 export function sampleDoc(source) {
   const t = HTML_TEMPLATES[source];
@@ -253,6 +269,7 @@ export function sampleDoc(source) {
     content: { html: { template: source, data: JSON.parse(JSON.stringify(data)), split: {} } } };
 }
 export async function templatePreviewHtml(tpl) {
+  if (tpl.source === IMPORTED) { const t = await importedTemplate(tpl.id); return { html: t.html, size: t.size, html_template: true, sample: t.sample || '' }; } // the file as it was imported
   const t = HTML_TEMPLATES[tpl.source];
   if (tpl.source === PS || tpl.source === SEO || tpl.source === DESIGNED) return { html: await htmlFor(sampleDoc(tpl.source).content.html, docArgs(sampleDoc(tpl.source))), size: t.size, html_template: true };
   if (t.kind === 'brochure') return { html: await htmlFor({ template: tpl.source, data: NIRAPARA_BROCHURE }, { client: 'Nirapara', created: null }), size: t.size, html_template: true };
@@ -542,13 +559,13 @@ Plain sentences, title case for headings as in the reference, no emoji, no inven
 // (owner, 2026-11-12: "for each brochure generation, the contents should be generated separately according to the lead
 // details and SWOT. we research and update each and every content. also verify they are correct")
 const FACT_STATUS = ['confirmed', 'from_crm', 'from_swot', 'removed'];
-const VERIFICATION = O({
+export const VERIFICATION = O({
   sources: A(O({ url: S(300), used_for: S(160) }), 0, 20),
   facts: A(O({ claim: S(200), source: S(300), status: { type: 'string', enum: FACT_STATUS } }), 0, 40),
   not_found: A(S(160), 0, 15),
 });
 const withVerification = (schema) => ({ ...schema, properties: { ...schema.properties, verification: VERIFICATION }, required: [...schema.required, 'verification'] });
-const processFor = (step3) => `<process>
+export const processFor = (step3) => `<process>
 Work in this order. The brochure is written for THIS business only, from what you find now; nothing is reused.
 1. Research (web search is on): open the business's own website and its main pages, its Google / Maps listing and
    reviews, its Instagram / Facebook / YouTube pages, the marketplaces or directories it sells or lists on, and two or
@@ -641,6 +658,7 @@ function cleanDesigned(out) {
 }
 /** Claude's answer for an HTML template → the document content (with the fact check), or an error that retries. */
 export function acceptHtml(template, output, job) {
+  if (template === IMPORTED) return acceptImported(output, job, VERIFICATION, clean); // a promise: the template is read from the database
   const cuts = [];
   if (template === DESIGNED) { // + the client's pictures (stored copies) and the runner's checks (claims check, review)
     const data = cleanHtmlData(template, output);
@@ -697,7 +715,7 @@ export function htmlJob(template, { input, dossier, research, swot, settings, it
   };
 }
 const LIMIT_KEYS = new Set(['maxLength', 'minLength', 'minItems', 'maxItems', 'minimum', 'maximum']);
-function stripLimits(s) {
+export function stripLimits(s) {
   if (Array.isArray(s)) return s.map(stripLimits);
   if (!s || typeof s !== 'object') return s;
   return Object.fromEntries(Object.entries(s).filter(([k]) => !LIMIT_KEYS.has(k)).map(([k, v]) => [k, stripLimits(v)]));
