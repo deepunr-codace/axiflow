@@ -659,7 +659,16 @@ function noAiReason(doc, s) {
 }
 export async function generate(id, { wait = false } = {}) {
   await startJob(id, async () => {
-    const doc = await getDoc(id);
+    let doc = await getDoc(id);
+    // a document the automation made follows the current automatic template when it is written again (Try again, Write
+    // it again): owner, 2026-11-13: "i made it defult but still using old template". One made by hand keeps its choice.
+    if (doc.kind !== 'script' && doc.input?.auto) {
+      const t = await autoTemplate(doc.kind, doc.input.website_type || null);
+      if (t && t.id !== doc.template_id) {
+        await update('docs', id, { template_id: t.id, design_json: null });
+        doc = await getDoc(id);
+      }
+    }
     const s = getSettings();
     // AI writes every document: Claude Code on GitHub or an API key (AI page), and the answer finishes it.
     if ((claudeOn(s) || claudeBroken(s)) && await sendToClaude(doc, s)) return 'waiting';
