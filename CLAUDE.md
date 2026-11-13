@@ -44,7 +44,7 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - Not seen yet: a real Delete / Edit click in the CRM brochure list.
 - **Still to tell the co-worker:** CRM commits 45365434 and d5289f71.
 
-## Status (2026-11-13): brochures use the template's own photos, not the client's (local, NOT pushed)
+## Status (2026-11-13): brochures use the template's own photos, not the client's (LIVE b92754a, with the follow-up fixes below; owner: "push")
 - **Owner:** "use same image used in the template". Chose "Template's own photos" for "Both" brochure templates.
 - **Now:** no photos are collected from client websites for brochures (`collectImages` / `leadImages` / `pickPhotos` stay in images.js, unused).
   - **Growth Brochure (template 25):** `tools.addTemplatePhotos()` (replaced `addClientPhotos`) sets cover = sample-strip, challenge = sample-shelf, closing = sample-cta, as in the template's own sample. Photos added by hand still win.
@@ -59,7 +59,7 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
   - The Designed brochure was generated again on the local CLI (3.3 min, 0 layout issues, photos on cover / drop-off page / closing, 948 KB after the JPEG change).
   - 12 + 22 checks pass.
 
-## Status (2026-11-13): brochure fix guide, Phases 1-5 LIVE in 361f050 (pushed by the SWOT session with its phases, owner: "push all to axiflow"); follow-up fixes local
+## Status (2026-11-13): brochure fix guide, Phases 1-5 LIVE in 361f050 (pushed by the SWOT session with its phases, owner: "push all to axiflow"); follow-up fixes LIVE in b92754a
 - **End-to-end run** (`compare-brochures.js 276 --only designed`, local Claude CLI, read-only, no API key): **3.3 min in all**.
   - Opus wrote 10 pages in 115 s; the claims check found all supported (11 s).
   - The first render had 5 layout issues; the Sonnet visual review (26 s, 12 turns) redid those pages, and the second render had 0 issues → not "needs a look".
