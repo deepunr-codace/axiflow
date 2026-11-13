@@ -78,6 +78,112 @@ export async function sanitizeUpload(raw) {
   return { html: $.html(), removed: [...new Set(removed)], fonts: files.size };
 }
 
+// ------------------------------------------------------------------ 1b. Claude design bundles
+/*
+ * A file saved from a Claude design (owner, 2026-11-13: "CodeAce Website & SEO Brochure – Blue.html": "No pages found")
+ * is a bundle: its boards are packed (gzip, base64) in <script type="__bundler/manifest"> and built by the file's own
+ * scripts when it opens. sanitizeUpload removes scripts, so nothing was left. Here the bundle is opened in Chromium with
+ * its scripts, in its own browser context with every request blocked except data:, blob: and about: (nothing is
+ * fetched), and the finished pages are read back as plain HTML: the boards' styles once (they share one design system),
+ * each page with its wrappers (their styles, variables and fonts still apply; flattened like any wrapper on import), and
+ * every blob: link turned into a data: one. The result goes through the normal import.
+ */
+export const isBundle = (html) => /<script[^>]+type=["']__bundler\/manifest["']/i.test(String(html || ''));
+/* eslint-disable no-undef */
+async function readBoard() {
+  // measured on a very wide page: a wrapper that only takes the window's width grows and is not taken for a page
+  const prevStyle = document.documentElement.getAttribute('style');
+  document.documentElement.style.minWidth = '6000px';
+  // the pages: the outermost elements of the most common page-like size (at least 300 x 300)
+  const groups = new Map();
+  for (const e of document.body.querySelectorAll('*')) {
+    const r = e.getBoundingClientRect();
+    if (r.width < 300 || r.height < 300) continue;
+    const k = `${Math.round(r.width)}x${Math.round(r.height)}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(e);
+  }
+  const outer = (list) => list.filter((e) => !list.some((q) => q !== e && q.contains(e)));
+  if (prevStyle === null) document.documentElement.removeAttribute('style'); else document.documentElement.setAttribute('style', prevStyle);
+  return { sizes: [...groups.entries()].map(([k, l]) => [k, outer(l).length]) };
+}
+async function serializeBoard(size) {
+  const [w, h] = size.split('x').map(Number);
+  // measured on a very wide page: a wrapper that only takes the window's width grows and is not taken for a page
+  const prevStyle = document.documentElement.getAttribute('style');
+  document.documentElement.style.minWidth = '6000px';
+  const list = [...document.body.querySelectorAll('*')].filter((e) => { const r = e.getBoundingClientRect(); return Math.round(r.width) === w && Math.round(r.height) === h; });
+  const pages = list.filter((e) => !list.some((q) => q !== e && q.contains(e)))
+    .sort((a, b) => { const x = a.getBoundingClientRect(), y = b.getBoundingClientRect(); return Math.abs(x.top - y.top) > 4 ? x.top - y.top : x.left - y.left; });
+  if (prevStyle === null) document.documentElement.removeAttribute('style'); else document.documentElement.setAttribute('style', prevStyle);
+  const shallow = (el) => { const c = el.cloneNode(false); return c.outerHTML.slice(0, c.outerHTML.lastIndexOf('</')); };
+  const out = pages.map((pg) => {
+    const chain = [];
+    for (let a = pg.parentElement; a && a !== document.body; a = a.parentElement) chain.unshift(a);
+    const p = pg.cloneNode(true);
+    p.setAttribute('data-page', '');
+    // a page placed in a spread (left: 794px) stands on its own: at its own top left corner
+    if (getComputedStyle(pg).position === 'absolute' || getComputedStyle(pg).position === 'fixed') {
+      p.style.position = 'relative'; p.style.left = '0px'; p.style.top = '0px'; p.style.right = 'auto'; p.style.bottom = 'auto';
+    }
+    p.style.margin = '0px'; p.style.transform = 'none';
+    for (const s of p.querySelectorAll('script')) s.remove();
+    return chain.map(shallow).join('') + p.outerHTML + chain.map((a) => `</${a.tagName.toLowerCase()}>`).reverse().join('');
+  });
+  const styles = [...document.querySelectorAll('style')].map((s) => s.textContent);
+  // CSS rules added through the CSSOM (not in any <style> text)
+  for (const sh of document.styleSheets) {
+    if (sh.ownerNode && sh.ownerNode.textContent && sh.ownerNode.textContent.trim()) continue;
+    try { styles.push([...sh.cssRules].map((r) => r.cssText).join('\n')); } catch { /* cross-origin: none here */ }
+  }
+  let html = out.join('\n'), css = styles;
+  const bodyAttrs = [...document.body.attributes].map((a) => `${a.name}="${a.value.replace(/"/g, '&quot;')}"`).join(' ');
+  const htmlAttrs = [...document.documentElement.attributes].filter((a) => a.name !== 'lang').map((a) => `${a.name}="${a.value.replace(/"/g, '&quot;')}"`).join(' ');
+  // blob: links (pictures, fonts) → data:
+  const blobs = new Set([...(html + css.join('')).matchAll(/blob:[^"')\s]+/g)].map((m) => m[0]));
+  for (const u of blobs) {
+    try {
+      const b = await (await fetch(u)).blob();
+      const d = await new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = no; r.readAsDataURL(b); });
+      html = html.split(u).join(d); css = css.map((s) => s.split(u).join(d));
+    } catch { /* left as it is: removed on import */ }
+  }
+  return { html, css, bodyAttrs, htmlAttrs, count: pages.length };
+}
+/* eslint-enable no-undef */
+export async function unbundle(raw) {
+  const { browser } = await import('./chrome.js');
+  const b = await browser();
+  const ctx = await b.createBrowserContext();
+  try {
+    const page = await ctx.newPage();
+    await page.setViewport({ width: 1800, height: 1300 });
+    await page.setRequestInterception(true);
+    page.on('request', (r) => (/^(data|blob|about):/i.test(r.url()) ? r.continue() : r.abort()));
+    await page.setContent(String(raw), { waitUntil: 'load', timeout: 60000 });
+    // the boards are built by the bundle's scripts: wait until every frame (or the page itself) shows pages
+    const docs = () => { const kids = page.mainFrame().childFrames(); return kids.length ? kids : [page.mainFrame()]; };
+    let found = [];
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      found = await Promise.all(docs().map((f) => f.evaluate(readBoard).catch(() => ({ sizes: [] }))));
+      if (i >= 3 && found.length && found.every((x) => x.sizes.length)) break;
+    }
+    // the page size: the size with the most pages over all boards
+    const tally = new Map();
+    for (const x of found) for (const [k, n] of x.sizes) tally.set(k, (tally.get(k) || 0) + n);
+    const size = [...tally.entries()].sort((a, c) => c[1] - a[1] || Number(c[0].split('x')[0]) * Number(c[0].split('x')[1]) - Number(a[0].split('x')[0]) * Number(a[0].split('x')[1]))[0]?.[0];
+    if (!size) throw new Error('This Claude design file did not show any pages when opened');
+    const boards = [];
+    for (const f of docs()) { await f.evaluate(() => document.fonts.ready).catch(() => {}); boards.push(await f.evaluate(serializeBoard, size)); }
+    const css = [...new Set(boards.flatMap((x) => x.css))].filter((s) => s.trim());
+    const title = await page.title().catch(() => '');
+    const first = boards.find((x) => x.count) || boards[0];
+    const out = `<!DOCTYPE html>\n<html lang="en" ${first.htmlAttrs}><head><meta charset="utf-8"><title>${title.replace(/</g, '&lt;')}</title>\n${css.map((s) => `<style>${s.replace(/<\/style/gi, '<\\/style')}</style>`).join('\n')}\n</head><body ${first.bodyAttrs}>\n${boards.map((x) => x.html).join('\n')}\n</body></html>`;
+    return { html: out, pages: boards.reduce((n, x) => n + x.count, 0), size };
+  } finally { await ctx.close().catch(() => {}); }
+}
+
 // ------------------------------------------------------------------ 2. pages and text blocks (run inside Chromium)
 /* eslint-disable no-undef */
 function markInPage() {
@@ -254,6 +360,8 @@ export const slotLabel = (s) => LABEL[s.tag] || (s.len <= 24 ? 'Label' : 'Text')
 export async function importHtmlTemplate({ kind, name, sample_company, html }) {
   if (!['brochure', 'proposal'].includes(kind)) throw new Error('Choose brochure or proposal');
   if (String(html || '').length > 40e6) throw new Error('The HTML file is too large (max 40 MB)');
+  let bundle = null;
+  if (isBundle(html)) { bundle = await unbundle(html); html = bundle.html; } // a Claude design file: its pages as plain HTML
   const clean = await sanitizeUpload(html);
   const { withPage } = await import('./chrome.js');
   // oversized pictures scaled to what the pages draw (the template is stored in the database and printed for every lead)
@@ -293,7 +401,7 @@ export async function importHtmlTemplate({ kind, name, sample_company, html }) {
   }
   const design = { html: out, slots: first.slots, size, sample, words, removed: clean.removed, fonts: clean.fonts, layout: { pages: first.pages, moved } };
   const id = await insert('design_templates', { kind, name: String(name || 'Imported HTML template').slice(0, 80), mode: 'html', design_json: design, sample_company: sample, source: IMPORTED, created_at: now, updated_at: now });
-  return { id, pages: first.pages, slots: first.slots.length, sample, words: design.words, removed: clean.removed, fonts: clean.fonts, moved, shrunk: clean.shrunk };
+  return { id, pages: first.pages, slots: first.slots.length, sample, words: design.words, removed: clean.removed, fonts: clean.fonts, moved, shrunk: clean.shrunk, bundle: bundle ? { pages: bundle.pages, size: bundle.size } : null };
 }
 
 // ------------------------------------------------------------------ the template, cached (it never changes after import)
