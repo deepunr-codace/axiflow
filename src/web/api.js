@@ -403,7 +403,8 @@ api.post('/axicore/changed', (req, res) => {
 api.get('/axicore/company/:id/docs', async (req, res) => {
   const lead = await get(`SELECT id, company, crm_brochure_state, crm_proposal_state FROM leads WHERE external_id = :ext AND crm_removed_at IS NULL`, { ext: `atomic:co:${Number(req.params.id)}` });
   if (!lead) return res.json({ lead: null, docs: [] });
-  const docs = await all(`SELECT id, kind, title, status, source, error, updated_at, token, approved_at, approved_by, content_json FROM docs WHERE lead_id = :id ORDER BY id DESC LIMIT 30`, { id: lead.id });
+  const docs = await all(`SELECT id, kind, title, status, source, error, updated_at, token, approved_at, approved_by, content_json, CASE WHEN status = 'working' THEN input_json END AS input_json FROM docs WHERE lead_id = :id ORDER BY id DESC LIMIT 30`, { id: lead.id });
+  const expected = docs.some((d) => d.status === 'working') ? await typicalSeconds() : null;
   const canApprove = !req.user || axicoreRoles().includes(req.user.role); // the Approve SWOT step: AxiCore roles (admin, manager)
   const newestSwot = docs.find((d) => d.kind === 'script' && d.status === 'ready')?.id;
   // the lead's research pack (SWOT guide stage 2): when it was made and how much evidence passed the gate
@@ -411,11 +412,46 @@ api.get('/axicore/company/:id/docs', async (req, res) => {
   let pack = null; try { pack = typeof rrow?.research_json === 'string' ? JSON.parse(rrow.research_json) : rrow?.research_json; } catch { /* old row */ }
   const { researchSummary } = await import('../pipeline/research.js');
   const research = researchSummary(pack?.researched_at ? pack : null, pack?.researched_at ? tools.usableResearch(pack, { hasWebsite: !!rrow?.website }) : null);
-  res.json({ lead: { id: lead.id, company: lead.company, brochure_state: lead.crm_brochure_state, proposal_state: lead.crm_proposal_state, research, researching: researchRunning.has(lead.id) },
+  res.json({ lead: { id: lead.id, company: lead.company, brochure_state: lead.crm_brochure_state, proposal_state: lead.crm_proposal_state, research, researching: researchRunning.has(lead.id), can_propose: canApprove },
     docs: docs.map((d) => ({ ...d, pdf: d.status === 'ready' ? `/pdf/doc/${d.token}.pdf` : null, token: undefined,
       error: d.status === 'error' ? plainDocError(d.error) : null, detail: d.status === 'error' ? String(d.error || '').slice(0, 300) : null, can_retry: d.status === 'error',
-      content_json: undefined, ...(d.kind === 'script' ? swotState(d, { canApprove, newest: d.id === newestSwot }) : {}), ...lookState(d) })) });
+      content_json: undefined, input_json: undefined, progress: d.status === 'working' ? docProgress(d, expected) : null,
+      ...(d.kind === 'script' ? swotState(d, { canApprove, newest: d.id === newestSwot }) : {}), ...lookState(d) })) });
 });
+/*
+ * Where a document is while it is being made (owner, 2026-11-14: "in crm add a progress of pitch script writing and
+ * brochure making and proposal making"), from what AxiFlow records on it: preparing (facts + research, before anything
+ * goes to Claude) → writing (sent to Claude; or waiting for the usage limit to reset) → checking (the answer is in: the
+ * source check for a SWOT, the page check for a brochure or proposal) → ready. The writing step is measured against how
+ * long that kind usually takes here (the median of the last finished ones), so the bar is real time, not an animation.
+ */
+const PROGRESS_STEPS = { script: ['Research', 'Writing', 'Source check'], brochure: ['Research', 'Writing', 'Page check'], proposal: ['Research', 'Writing', 'Page check'] };
+const DEFAULT_SECONDS = { script: 150, brochure: 360, proposal: 300 };
+let typicalCache = null;
+async function typicalSeconds() {
+  if (typicalCache && Date.now() - typicalCache.at < 10 * 60e3) return typicalCache.v;
+  const rows = await all(`SELECT kind, input_json FROM docs WHERE status = 'ready' AND source = 'claude' AND kind IN ('script', 'brochure', 'proposal') ORDER BY id DESC LIMIT 120`);
+  const by = { script: [], brochure: [], proposal: [] };
+  for (const r of rows) {
+    let i = r.input_json; if (typeof i === 'string') { try { i = JSON.parse(i); } catch { i = null; } }
+    const c = i?.claude, s = (Date.parse(c?.done) - Date.parse(c?.dispatched_at)) / 1000;
+    if (s > 10 && s < 7200 && by[r.kind].length < 15) by[r.kind].push(s);
+  }
+  const med = (a, d) => { if (a.length < 3) return d; const x = [...a].sort((p, q) => p - q); return Math.round(x[Math.floor(x.length / 2)]); };
+  const v = Object.fromEntries(Object.entries(by).map(([k, a]) => [k, med(a, DEFAULT_SECONDS[k])]));
+  typicalCache = { at: Date.now(), v };
+  return v;
+}
+function docProgress(d, expected) {
+  let input = d.input_json; if (typeof input === 'string') { try { input = JSON.parse(input); } catch { input = {}; } }
+  const c = input?.claude || {};
+  const steps = PROGRESS_STEPS[d.kind] || PROGRESS_STEPS.brochure;
+  const base = { steps, attempt: c.attempts || 1, backup: !!(c.fell_back && c.engine && c.engine !== 'github'), expected_s: expected?.[d.kind] || DEFAULT_SECONDS[d.kind] || 300 };
+  if (c.received_at) return { ...base, step: 2, state: 'check', started_at: c.received_at, label: d.kind === 'script' ? 'Checking every point against its sources' : 'Laying out and checking the pages' };
+  if (c.hold_until && Date.parse(c.hold_until) > Date.now()) return { ...base, step: 1, state: 'wait', started_at: c.dispatched_at || d.updated_at, hold_until: c.hold_until, label: 'Waiting for the AI usage limit to reset' };
+  if (c.dispatched_at && c.waiting) return { ...base, step: 1, state: 'write', started_at: c.dispatched_at, label: `Claude is writing it${base.attempt > 1 ? ` (try ${base.attempt})` : ''}${base.backup ? ' on the backup API key' : ''}` };
+  return { ...base, step: 0, state: 'prepare', started_at: d.updated_at, label: 'Researching the business and collecting facts' };
+}
 // "Refresh research" in the CRM (SWOT guide 5.2): the facts are collected again and the research runs again now,
 // whatever the 30-day cache says; documents made after it use the new pack. Any signed-in CRM user.
 const researchRunning = new Set();
@@ -462,6 +498,28 @@ async function approveRoute(req, res) {
   catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 }
 api.post('/axicore/docs/:id/approve', approveRoute);
+// "Make proposal" in the CRM's Documents panel (owner, 2026-11-14): the CRM's deal stages are now call results (New,
+// Callback, Interested, Not Interested, Not Answered), so no deal reaches a proposal stage any more. An admin or manager
+// starts it here instead; it runs in the background (facts, research, Claude) and shows in the panel with its progress.
+// The PDF goes to the CRM as pending, as before. AxiCore roles only (not in OPEN_ROUTES).
+const proposalStarting = new Set();
+api.post('/axicore/company/:id/proposal', async (req, res) => {
+  const lead = await get(`SELECT id, company FROM leads WHERE external_id = :ext AND crm_removed_at IS NULL`, { ext: `atomic:co:${Number(req.params.id)}` });
+  if (!lead) return res.status(404).json({ error: 'This company is not in AxiCore yet' });
+  if (proposalStarting.has(lead.id) || await get(`SELECT 1 FROM docs WHERE lead_id = :id AND kind = 'proposal' AND status = 'working'`, { id: lead.id })) {
+    return res.status(409).json({ error: 'A proposal is already being made for this company' });
+  }
+  proposalStarting.add(lead.id);
+  const by = req.user?.email || req.user?.name || 'AxiFlow admin';
+  background(async () => {
+    try {
+      const r = await engine.startProposal(lead.id, `requested in the CRM by ${by}`);
+      if (r?.error) await logEvent(lead.id, 'tools', 'proposal', 'error', `requested in the CRM by ${by}: ${r.error}`);
+    } catch (e) { await logEvent(lead.id, 'tools', 'proposal', 'error', e.message).catch(() => {}); }
+    finally { proposalStarting.delete(lead.id); }
+  }, 'crm-proposal');
+  res.status(202).json({ ok: true, status: 'started' });
+});
 // Delete in the CRM's brochure list (owner, 2026-11-13): the row and its PDF, written with AxiCore's server key because
 // the CRM gives signed-in users no delete on brochures. AxiCore roles only (admins, managers).
 api.post('/axicore/brochures/:id/delete', async (req, res) => {

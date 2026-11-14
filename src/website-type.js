@@ -20,10 +20,20 @@ export const WEBSITE_TYPES = {
     label: 'Shopify store',
     notes: 'A store built on Shopify: theme design to the brand, product and collection setup, payments (Razorpay/UPI, COD), shipping rules, the right apps (reviews, WhatsApp, upsell, subscriptions), speed and SEO tuning, product imports, and handover so the team can run it. Talk about launch speed and running costs, not custom code.',
   },
-  // owner, 2026-11-13: "add a Website + Seo category" (its brochure: CodeAce Website & SEO)
+  // owner, 2026-11-13: "add a Website + Seo category" (its brochure: CodeAce Website & SEO); renamed 2026-11-14
   'website-seo': {
-    label: 'Website + SEO',
+    label: 'SEO + Business website',
     notes: 'A business website together with search work: the site built to rank (fast, mobile, clear service pages, structured data), Google Search and Maps (Google Business Profile, location pages, local reviews), readiness for AI answers (AEO / GEO), tracking (GA4, Search Console, Microsoft Clarity), and for growth a monthly SEO retainer. Frame it around being found by the customers already searching, then turning those visits into enquiries.',
+  },
+  // owner, 2026-11-14: "add other options too - … seo + ecommerce store"
+  'ecommerce-seo': {
+    label: 'SEO + E-commerce store',
+    notes: 'An online store together with search work: product and category pages built to rank (unique titles, descriptions and structured data for every product), fast mobile pages, Google Merchant Center and Shopping listings, Google Search and Maps for the brand, content that answers buyers\' questions, reviews on product pages, and monthly reports on rankings, traffic and orders. Sell the store and the search growth together.',
+  },
+  // the co-worker's Interested popup sends this since 2026-11-13; AxiFlow refused it until 2026-11-14
+  branding: {
+    label: 'Branding',
+    notes: 'Brand identity work: positioning and naming support, logo and its variants, colours and type, brand guidelines, stationery, packaging and signage where needed, social media templates and launch creatives. Sell a consistent, recognisable brand; a website is not part of this unless the client asks for one.',
   },
   'landing-page': {
     label: 'Landing page',

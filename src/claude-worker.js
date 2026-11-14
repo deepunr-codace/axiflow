@@ -280,6 +280,10 @@ export async function acceptResult(body) {
   }
   let used = false;
   try {
+    // the answer is in: the CRM's progress line moves from "Writing" to the check (owner, 2026-11-14: "in crm add a
+    // progress of pitch script writing and brochure making and proposal making")
+    c.received_at = nowISO();
+    await saveClaude(doc.id, { ...doc.input, claude: c }).catch(() => {});
     const { content, source } = await postProcess(doc, body.output);
     // The lead's strategy: the first one Claude worked out is kept, so later documents follow it (src/ai/strategy.js)
     const { cleanStrategy, cleanReview } = await import('./ai/strategy.js');
