@@ -134,6 +134,10 @@ Language: English.`,
  * threats. A point that fails is dropped here; Phase 5's critic judges what the cited items really say.
  */
 const ID_RE = /\[?\b([VE]\d{1,3})\b\]?/g;
+/** "loses enquiries [V21], [E4] and more" → "loses enquiries and more": bracketed source ids out of a sentence. */
+export const stripIds = (v) => (typeof v === 'string'
+  ? v.replace(/\s*\[(?:\s*[VE]\d{1,3}\s*(?:[,;/]\s*)?)+\]/g, '').replace(/\s+([,.;:!?)])/g, '$1').replace(/\s{2,}/g, ' ').trim()
+  : v);
 export function postScript(content, input, opts = {}) {
   const known = opts.ids ? new Set(opts.ids) : null;
   const marker = `\u0000 for ${input.company || ''} ${input.city || ''}`; // the words a pitch point must go beyond
@@ -158,6 +162,11 @@ export function postScript(content, input, opts = {}) {
     }
     flat.swot[k] = got;
   }
+  // the source ids are for the review only: never in the pitch point, the summary or the solutions, which go to the
+  // CRM as written (owner, 2026-11-14: a WiseUp SWOT note showed "[V21]", "[E4]" in its pitch point)
+  flat.pitch_point = stripIds(flat.pitch_point);
+  flat.swot.summary = stripIds(flat.swot.summary);
+  if (Array.isArray(flat.solutions)) flat.solutions = flat.solutions.map((r) => (r && typeof r === 'object' ? { ...r, problem: stripIds(r.problem), how: stripIds(r.how), outcome: stripIds(r.outcome) } : r));
   const out = repair(flat, { pitch_point: marker, swot: { summary: '', ...Object.fromEntries(SWOT_KEYS.map(([k]) => [k, []])) }, solutions: [] });
   const missing = [
     out.pitch_point === marker && 'pitch point',
@@ -166,7 +175,7 @@ export function postScript(content, input, opts = {}) {
     out.solutions.length < 2 && 'solutions',
   ].filter(Boolean);
   if (missing.length) throw new Error(`the SWOT answer was incomplete (${missing.join(', ')}${dropped.length ? `; ${dropped.length} point(s) dropped for citing no source` : ''})`);
-  out.swot.to_confirm = (Array.isArray(c.swot?.to_confirm) ? c.swot.to_confirm : []).map((v) => String(v || '').trim()).filter(Boolean).slice(0, 10);
+  out.swot.to_confirm = (Array.isArray(c.swot?.to_confirm) ? c.swot.to_confirm : []).map((v) => stripIds(String(v || '')).trim()).filter(Boolean).slice(0, 10);
   out.swot_refs = refs;
   if (dropped.length) out.swot_dropped = dropped;
   return out;
