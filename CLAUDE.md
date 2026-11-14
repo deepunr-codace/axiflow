@@ -17,6 +17,7 @@ Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATAB
 - **Owner** (screenshot of contact Deepu NR / WiseUp, "where?"): the Documents panel (Make proposal, progress) is only on the company page (`CompanyAside`).
 - **Bug found in the same screenshot:** the SWOT note's pitch point showed "[V21]", "[E4]", "[E2]". `postScript` stripped ids only from the quadrant points; now `stripIds()` (src/ai/script.js) also cleans the pitch point, the summary, the solutions (problem / how / outcome) and to_confirm. Existing SWOT notes keep their ids until each SWOT is made again (owner re-runs SWOTs by hand).
 - **CRM:** `contacts/ContactAside.tsx` shows `CompanyDocuments` for the contact's company (when it has one).
+- **LIVE (owner: "push"):** AxiFlow c227d21, CRM b7100760 (live bundle index-5WnBFNyN.js).
 - **Tests:** AxiFlow p4 29/29, p5 27/27, regress 17/17, a WiseUp-style text check. CRM tsc and eslint pass; axicore tests pass. `ContactShow.test.tsx` "updates the contact status from the aside" fails with or without this change (an existing failure; a vitest run rewrites a tracked failure screenshot under `.vitest/`: restore it after runs).
 
 ## Status (2026-11-14): document progress in the CRM; six packages in the Interested popup; Make proposal (LIVE, see the commits after 7264a88)
