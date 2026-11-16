@@ -48,7 +48,7 @@ export const DEFAULT_SETTINGS = {
   atomic: {
     enabled: true,
     read_only: true, // only read from the CRM; nothing is written back until this is switched off, except:
-    write_tables: ['brochures', 'companies.pitch_point', 'contact_notes', 'deal_notes', 'storage.brochure', 'proposal', 'storage.proposal'], // written even while read-only (owner, 2026-11-04): brochure rows + PDFs, the pitch point, call script notes, proposal rows + PDFs
+    write_tables: ['brochures', 'companies.pitch_point', 'contact_notes', 'deal_notes', 'storage.brochure', 'proposal', 'storage.proposal', 'deals.brochure_ready'], // written even while read-only (owner, 2026-11-04): brochure rows + PDFs, the pitch point, call script notes, proposal rows + PDFs
     proposal_bucket: 'proposal', // CRM storage bucket (public) for proposal PDFs
     proposals_table: 'proposal', // CRM table with one row per lead's proposal
     proposal_url_column: 'porposal_url', // spelled this way in the CRM
@@ -535,7 +535,7 @@ export async function seedDefaults() {
   const about = Array.isArray(s.brochure?.about) && /^Axilume is a next-gen/.test(s.brochure.about[0] || '') ? DEFAULT_SETTINGS.brochure.about : null;
   // CRM writes: a list saved before call-script notes were allowed gets them (owner, 2026-11-04). An edited list is kept.
   const wt = s.atomic?.write_tables;
-  const writeTables = Array.isArray(wt) && ['brochures,companies.pitch_point', 'brochures,companies.pitch_point,contact_notes,deal_notes', 'brochures,companies.pitch_point,contact_notes,deal_notes,storage.brochure'].includes(wt.join()) ? DEFAULT_SETTINGS.atomic.write_tables : null;
+  const writeTables = Array.isArray(wt) && ['brochures,companies.pitch_point', 'brochures,companies.pitch_point,contact_notes,deal_notes', 'brochures,companies.pitch_point,contact_notes,deal_notes,storage.brochure', 'brochures,companies.pitch_point,contact_notes,deal_notes,storage.brochure,proposal,storage.proposal'].includes(wt.join()) ? DEFAULT_SETTINGS.atomic.write_tables : null;
   // CRM approval (owner, 2026-11-05): rows wait as pending; the old saved default 'approved' is replaced.
   const approvalFix = s.atomic && (s.atomic.brochure_status === 'approved' || s.atomic.proposal_status === 'approved' || s.atomic.new_lead_action === 'interested')
     ? { brochure_status: 'pending', proposal_status: 'pending', new_lead_action: 'script' } : null; // owner 2026-11-05: new lead = call script only

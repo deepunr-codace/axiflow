@@ -34,6 +34,7 @@ addColumns('leads', { crm_deal_id: 'INTEGER', crm_company_id: 'INTEGER', crm_con
 addColumns('crm_outbox', { target: "TEXT DEFAULT 'webhook'" });
 addColumns('leads', { crm_script_note_id: 'INTEGER', crm_script_note_on: 'TEXT' }); // the one CRM note that holds this lead's call script
 addColumns('leads', { crm_removed_at: 'TEXT', crm_brochure_folder: 'TEXT' });
+addColumns('leads', { crm_brochure_ready: 'INTEGER' }); // 1 = deals.brochure_ready set true in the CRM (brochure approved)
 addColumns('leads', { crm_brochure_state: 'TEXT', crm_proposal_state: 'TEXT' });
 addColumns('leads', { crm_lead_stage: 'TEXT' });
 addColumns('leads', { crm_created_at: 'TEXT' });
@@ -455,7 +456,7 @@ async function applyCallLogs(rows, contacts, { engine, first }) {
  * Approval in the CRM: brochures / proposal rows set to "approved" approve the pitch / send the proposal;
  * "not_approved" makes a new version (written back as pending). A row seen for the first time is only recorded.
  */
-async function applyApprovals({ engine, tools }) {
+export async function applyApprovals({ engine, tools }) {
   const s = getSettings().atomic || {};
   const { background } = await import('./background.js');
   let n = 0;
@@ -464,13 +465,16 @@ async function applyApprovals({ engine, tools }) {
     { table: s.proposals_table || 'proposal', col: 'crm_proposal_state', kind: 'proposal' },
   ];
   for (const k of kinds) {
-    const rows = await rest('GET', `${k.table}?select=id,company_id,contact_id,status&order=id.desc`).catch(() => []);
+    const rows = await rest('GET', `${k.table}?select=id,company_id,contact_id,${k.kind === 'brochure' ? 'deal_id,' : ''}status&order=id.desc`).catch(() => []);
     const seen = new Set();
     for (const r of rows) {
       const key = r.company_id != null ? `atomic:co:${r.company_id}` : r.contact_id != null ? `atomic:ct:${r.contact_id}` : null;
       if (!key || seen.has(key)) continue; // newest row per lead
       seen.add(key);
       const lead = await get(`SELECT * FROM leads WHERE external_id = :key AND crm_removed_at IS NULL`, { key });
+      // an approved brochure marks the deal "brochure ready" (owner, 2026-11-16: "when approve. change it to true"),
+      // once per lead, also for brochures approved before this was added
+      if (lead && k.kind === 'brochure' && r.status === 'approved' && !lead.crm_brochure_ready) await markBrochureReady(lead, r.deal_id);
       if (!lead || lead[k.col] === r.status) continue;
       await update('leads', lead.id, { [k.col]: r.status });
       if (lead[k.col] == null) continue; // first sight: remember only
@@ -491,6 +495,21 @@ async function applyApprovals({ engine, tools }) {
     }
   }
   return n;
+}
+
+/**
+ * deals.brochure_ready = true for the lead's deal (the deal on the brochure row, else the lead's current CRM deal).
+ * A column the co-worker added in the CRM database (boolean, default false); AxiFlow may write only that column
+ * (atomic.write_tables "deals.brochure_ready"). Remembered on the lead so it is written once.
+ */
+async function markBrochureReady(lead, rowDealId) {
+  const dealId = Number(rowDealId) || Number(lead.crm_deal_id) || 0;
+  if (!dealId) { await logEvent(lead.id, 'atomic', 'brochure_ready', 'skipped', 'brochure approved, but the lead has no CRM deal'); return; }
+  try {
+    await rest('PATCH', `deals?id=eq.${dealId}`, { brochure_ready: true }, 'return=minimal');
+    await update('leads', lead.id, { crm_brochure_ready: 1 });
+    await logEvent(lead.id, 'atomic', 'brochure_ready', 'ok', `deal ${dealId} marked brochure ready (brochure approved in the CRM)`);
+  } catch (e) { await logEvent(lead.id, 'atomic', 'brochure_ready', 'error', e.message); }
 }
 
 /** Brochure requests made in the CRM (a pending row without a link): fill in the lead's brochure link. */
