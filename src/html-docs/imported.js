@@ -419,7 +419,9 @@ export async function importedTemplate(tid) {
 }
 
 // ------------------------------------------------------------------ 3. a document's HTML
-const escHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/ /g, '&nbsp;');
+// U+2010 / U+2011 (hyphen, non-breaking hyphen) are not in the inlined Inter subset: Vercel's Chromium printed an empty
+// box ("6‑month", owner screenshot 2026-11-18), so every block prints a plain hyphen.
+const escHtml = (s) => String(s).replace(/[‐‑]/g, '-').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/ /g, '&nbsp;');
 /** A block's text (light markup) → its inner HTML, with the template's own inline elements. */
 export function markupToHtml(v, slot) {
   let out = '';
