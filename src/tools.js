@@ -236,6 +236,9 @@ export async function resumeDocs({ staleMinutes = 0 } = {}) {
   for (const { id } of await all(`SELECT id FROM docs WHERE status = 'ready' AND kind <> 'script' AND design_json IS NULL AND content_json IS NOT NULL AND content_json NOT LIKE '%"html":{"template":"builtin-html-%'`)) { // scripts have no page design
     try {
       const d = await getDoc(id);
+      // every HTML document (imported templates too: 'html-import' does not match the SQL filter): a classic deck laid
+      // out from its content would be empty slides (doc #507, 2026-11-17: Ceakay brochure opened as blank blue pages)
+      if (htmlDocs.isHtmlDoc(d) || d.content?.html) continue;
       const design = d.kind === 'brochure' ? brochureLayout(null, d.content, s, d.input.company) : proposalDesign(d.content, d.items, s, { preparedFor: d.input.company });
       await update('docs', id, { design_json: cleanDesign(design), template_id: (await defaultTemplate(d.kind))?.id ?? null });
     } catch (e) {
