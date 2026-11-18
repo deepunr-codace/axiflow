@@ -13,6 +13,12 @@ The team's main CRM is **Twenty**, set up by a co-worker and run by the **teleca
 
 Stack: Node ≥22.13, Express 5, **Postgres** (Supabase in production via `DATABASE_URL` and `pg`; embedded PGlite in `data/pg` when `DATABASE_URL` is empty), Vercel Blob for uploads (`data/uploads` locally), nodemailer, `@anthropic-ai/sdk` (Claude, `claude-opus-5-5`), and a vanilla-JS admin SPA in `public/`. There is no build step. Code map: see README. The old SQLite file `data/crm.db` is kept only as a backup/migration source.
 
+## Status (2026-11-18): imported-template brochures opened as blank blue slides (fixed, LIVE 290cb9c)
+- **Owner** (screenshot of #507 Mira Designs By Anu, template 30, in the classic editor): "why ????".
+- **Cause:** `resumeDocs()` (runs at server start) lays out every ready doc without a design as the old classic deck; its SQL filter skipped only `builtin-html-*`, not `html-import`. So every brochure from template 30 got a 7-page deck with empty texts, and the editor opened that. The PDF (CRM) was always right: `docPdf` prints the HTML when the design was not edited.
+- **Fix:** resumeDocs skips any HTML document (`isHtmlDoc` / `content.html`). Test `data/tests/resume-html-test.mjs` (fails on the old code).
+- **Live data:** the empty design cleared on #495, #497, #498, #499, #506, #507 (checked first: html-import, never edited, 7 pages, 10 empty texts); #493 Kothi (a real 22-page conversion) left. #507's HTML page view answers 200.
+
 ## Status (2026-11-16): deals.brochure_ready set when a brochure is approved (LIVE, see the commit after 400b472)
 - **Owner:** "in crm db, is there any column brochure ready?" → found `deals.brochure_ready` (boolean, default false, all 236 deals false) and a new table `brochure_email_logs` (deal, company, email, status default processing, sent_at, error; 1 row, processing). Both were added straight in the CRM database by the co-worker (not in the CRM repo or its migrations). Then: "when approve. change it to true".
 - **Done:** `atomic.applyApprovals` (now exported) reads `deal_id` with the brochure rows; when a lead's newest brochure row is `approved` and `leads.crm_brochure_ready` is not set, `markBrochureReady()` PATCHes `deals?id=eq.<row deal_id, else lead.crm_deal_id>` `{ brochure_ready: true }` and sets `leads.crm_brochure_ready = 1` (new column); no deal → logged skipped; a failure → logged error, retried next read. Rows already approved are caught up on the first read (live today: 9 brochure rows, all pending, so nothing to catch up).
