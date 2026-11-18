@@ -454,7 +454,8 @@ export function markupToHtml(v, slot) {
 export async function importedHtml(h, { client }) {
   const t = await importedTemplate(h.tid);
   const changed = t.slots.filter((s) => { const v = h.data?.[`p${s.page}`]?.[s.id]; return typeof v === 'string' && v !== s.text; });
-  if (!changed.length && !client) return t.html;
+  // blocks left as the template wrote them skip markupToHtml: fix their hyphens too (no glyph in the inlined font)
+  if (!changed.length && !client) return t.html.replace(/[‐‑]/g, '-');
   const $ = cheerio.load(t.html);
   for (const s of changed) {
     const v = h.data[`p${s.page}`][s.id];
@@ -471,7 +472,7 @@ export async function importedHtml(h, { client }) {
       $('[alt], [aria-label], [title]').each((_, e) => { for (const k of ['alt', 'aria-label', 'title']) { const a = $(e).attr(k); if (a && re.test(a)) $(e).attr(k, a.replace(re, client)); re.lastIndex = 0; } });
     }
   }
-  return $.html();
+  return $.html().replace(/[‐‑]/g, '-');
 }
 /** The template's own texts as a document's data: { p<page>: { t<n>: text } }. */
 export function templateData(t) {
