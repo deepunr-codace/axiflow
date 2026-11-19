@@ -1586,6 +1586,9 @@ async function renderToolDoc(kind, id) {
   }
   // Codeace HTML templates open in the classic editor too (owner, 2026-11-12: "use classic editor always"): a document
   // made before that is converted once; the page view stays only as a fallback if the conversion fails
+  // an imported HTML template (CodeAce Website & SEO, templates 30 / 32) does not survive the conversion (owner,
+  // 2026-11-19, ABAD #530: icons gone, alignments changed): it opens on its real pages (Words + Design mode)
+  if (d.status === 'ready' && d.content?.html?.template === 'html-import') { activeEditor = await renderHtmlDoc(kind, d, TOOL[kind].noun); return; }
   if (d.status === 'ready' && d.content?.html && !d.design) {
     view.innerHTML = `<div class="card empty"><h2>Opening ${esc(d.title)} in the editor…</h2><p class="muted">Turning the pages into editable boxes (once).</p><div class="bar" style="max-width:320px;margin:16px auto 0"><div class="indet"></div></div></div>`;
     try { await api(`/tools/docs/${id}/to-design`, { body: {} }); return renderToolDoc(kind, id); }

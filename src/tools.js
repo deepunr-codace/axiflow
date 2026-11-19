@@ -797,7 +797,9 @@ export function docPdf(d) {
   }
   // HTML documents: the Chromium print of their pages (src/html-docs), unless someone changed the classic design by hand
   // (brochure fix guide 2026-11-13: the CRM got a pdfkit re-render of the converted design, 3-7.6% off the template)
-  if (htmlDocs.isHtmlDoc(d) && (!d.design || !d.content.html.design_edited)) {
+  // an imported template always prints its real pages: its classic conversion loses icons, photos and alignment
+  // (owner, 2026-11-19, ABAD #530 had been converted and edited there)
+  if (htmlDocs.isHtmlDoc(d) && (!d.design || !d.content.html.design_edited || d.content.html.template === htmlDocs.IMPORTED)) {
     if (d.status !== 'ready') throw new Error('Document is not ready yet');
     return htmlDocs.htmlDocPdf(d);
   }
