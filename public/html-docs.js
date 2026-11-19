@@ -175,7 +175,7 @@ export async function renderHtmlDoc(kind, d, noun) {
   const np = $('#hdNoPhotos');
   if (np) np.onclick = () => { data.photos = {}; changed(); np.remove(); };
   $('.ed-title').onchange = (e) => api(`/tools/docs/${d.id}`, { method: 'PUT', body: { title: e.target.value } }).then(() => toast('Renamed')).catch((err) => toast(err.message, true));
-  $('#dlBtn').onclick = async (e) => { e.preventDefault(); await flush(); location.href = e.currentTarget.href; };
+  $('#dlBtn').onclick = async (e) => { e.preventDefault(); const href = e.currentTarget.getAttribute('href'); await flush(); window.axOpen(href); };
   $('#copyLink').onclick = async () => { await flush(); try { await navigator.clipboard.writeText(d.share_url); toast('Share link copied'); } catch { prompt('Copy this link:', d.share_url); } };
   if ($('#hdRelease')) $('#hdRelease').onclick = (e) => busy(e.target, async () => { // a person looked: the brochure goes to the CRM
     await api(`/tools/docs/${d.id}/release`, { body: {} });

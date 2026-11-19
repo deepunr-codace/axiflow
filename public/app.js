@@ -31,7 +31,33 @@ if (EMBEDDED) {
     if (t) { const h = new Headers(init.headers || {}); h.set('authorization', `Bearer ${t}`); init = { ...init, headers: h }; }
     return plainFetch(input, init);
   };
+  // a plain link or location.href cannot carry the CRM login (owner, 2026-11-19: Download PDF in the CRM answered
+  // {"error":"Not logged in"}); links to /api/ are fetched with the login and saved or opened from a blob instead
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest?.('a[href^="/api/"]');
+    if (!a || e.defaultPrevented || e.button !== 0) return;
+    e.preventDefault();
+    window.axOpen(a.getAttribute('href'), { tab: a.target === '_blank' });
+  });
 }
+// open an API link (PDF, CSV): directly with the password cookie, through fetch + blob inside the CRM
+window.axOpen = async (href, { tab = false } = {}) => {
+  if (!EMBEDDED) { if (tab) window.open(href, '_blank'); else location.href = href; return; }
+  const win = tab ? window.open('', '_blank') : null; // opened during the click, so it is not blocked as a pop-up
+  try {
+    const res = await fetch(href);
+    if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || `HTTP ${res.status}`);
+    const url = URL.createObjectURL(await res.blob());
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    if (win) { win.location.href = url; return; }
+    const name = /filename="?([^";]+)"?/.exec(res.headers.get('content-disposition') || '')?.[1] || href.split('?')[0].split('/').pop();
+    const a = Object.assign(document.createElement('a'), { href: url, download: name });
+    document.body.append(a); a.click(); a.remove();
+  } catch (err) {
+    win?.close();
+    toast(`Could not open it: ${err.message}`, true);
+  }
+};
 
 // ---------------------------------------------------------------- helpers
 async function api(path, opts = {}) {
@@ -1588,7 +1614,7 @@ async function renderToolDoc(kind, id) {
   </div>
   <div id="edRoot"></div>`;
   activeEditor = await openEditor($('#edRoot'), { doc: d, api, toast, busy, modal });
-  $('#dlBtn').onclick = async (e) => { e.preventDefault(); await activeEditor.flush?.(); location.href = e.currentTarget.href; };
+  $('#dlBtn').onclick = async (e) => { e.preventDefault(); const href = e.currentTarget.getAttribute('href'); await activeEditor.flush?.(); window.axOpen(href); };
   $('.ed-title').onchange = (e) => api(`/tools/docs/${id}`, { method: 'PUT', body: { title: e.target.value } }).then(() => toast('Renamed')).catch((err) => toast(err.message, true));
   $('#copyLink').onclick = async () => { await activeEditor.flush?.(); try { await navigator.clipboard.writeText(d.share_url); toast('Share link copied'); } catch { prompt('Copy this link:', d.share_url); } };
   $('#saveTpl').onclick = async () => {
