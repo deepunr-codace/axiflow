@@ -717,7 +717,8 @@ export async function saveDoc(id, { design, items, title, content }) {
       const edits = sent.edits !== undefined ? htmlDocs.cleanEdits(sent.edits) : h0.edits;
       patch.content_json = { ...doc.content, html: { ...h0, data: sent.data !== undefined ? htmlDocs.sanitizeDocData(h0, sent.data) : h0.data, edits, split: htmlDocs.hasEdits(edits) ? h0.split || {} : {} } };
       // new words for a document that is edited in the classic editor: its pages are laid out again from them
-      if (doc.design && sent.data !== undefined && design === undefined) {
+      // (not for an imported template: it is never edited or printed as a classic design; ABAD #530 kept an old one)
+      if (doc.design && sent.data !== undefined && design === undefined && h0.template !== htmlDocs.IMPORTED) {
         patch.design_json = await classicDesignOf({ ...doc, content: patch.content_json }) || doc.design;
         patch.content_json.html.design_edited = false; // the design is the HTML again: the Chromium print is delivered
       }

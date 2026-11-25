@@ -59,6 +59,43 @@ window.axOpen = async (href, { tab = false } = {}) => {
   }
 };
 
+// ---------------------------------------------------------------- loading bar
+// A click shows a thin bar at the top at once; it runs quickly while the requests that click started are open and
+// finishes when they are done (owner, 2026-11-19: "add a loading animation (must feel like fast loading) to all clicks").
+// Background refreshes (lists that update themselves) do not show it: only requests started within 1.5 s of a click
+// or a page change count.
+const loadBar = (() => {
+  const el = document.createElement('div');
+  el.id = 'axLoad';
+  el.innerHTML = '<i></i>';
+  document.addEventListener('DOMContentLoaded', () => document.body.append(el));
+  if (document.body) document.body.append(el);
+  let open = 0, armedUntil = 0, tDone = null, on = false;
+  const start = () => {
+    clearTimeout(tDone);
+    if (!on) { on = true; el.className = ''; void el.offsetWidth; el.className = 'run'; }
+  };
+  const done = () => {
+    clearTimeout(tDone);
+    tDone = setTimeout(() => { if (open > 0 || !on) return; on = false; el.className = 'end'; setTimeout(() => { if (!on) el.className = ''; }, 260); }, 120);
+  };
+  const arm = () => { armedUntil = Date.now() + 1500; start(); done(); }; // nothing loads → it just finishes quickly
+  const inner = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    const track = Date.now() < armedUntil || on;
+    if (track) { open++; start(); }
+    const p = inner(input, init);
+    if (track) p.finally(() => { open = Math.max(0, open - 1); if (!open) done(); }).catch(() => {});
+    return p;
+  };
+  document.addEventListener('click', (e) => {
+    if (e.button !== 0) return;
+    if (e.target.closest?.('a[href], button:not([disabled]), summary, [data-href], tr, .item, [role="tab"], label.btn')) arm();
+  }, true);
+  window.addEventListener('hashchange', arm);
+  return { arm };
+})();
+
 // ---------------------------------------------------------------- helpers
 async function api(path, opts = {}) {
   const res = await fetch('/api' + path, {
@@ -113,8 +150,8 @@ const scoreCls = (n) => (n >= 60 ? 'hi' : n >= 30 ? 'mid' : 'lo');
 const statusPill = (s) => `<span class="pill ${esc(s)}">${esc(s)}</span>`;
 
 async function busy(btn, fn) {
-  if (btn) btn.disabled = true;
-  try { return await fn(); } catch (e) { toast(e.message, true); } finally { if (btn) btn.disabled = false; }
+  if (btn) { btn.disabled = true; btn.classList.add('loading'); } // spinner on the button while it works
+  try { return await fn(); } catch (e) { toast(e.message, true); } finally { if (btn) { btn.disabled = false; btn.classList.remove('loading'); } }
 }
 
 function modal(title, body, actions = '') {

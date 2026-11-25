@@ -29,15 +29,16 @@ body{padding:0!important}
  * Mounts the page editor in `host` (the pages column) and its panel in `panel`. ctx = { doc, api, toast, size }.
  * Returns { flush, destroy, convert }.
  */
-export async function mountDesign(host, panel, { doc, api, toast, size, onSaved, note = '' }) {
+export async function mountDesign(host, panel, { doc, api, toast, size, onSaved, onDirty, words, note = '' }) {
   let edits = { els: {}, added: [] };
   let html = '';
   const past = [], future = [];
-  let selKey = null, editing = null, tSave = null, frame = null, fdoc = null, scale = 1, destroyed = false;
+  let selKey = null, editing = null, tSave = null, dirty = false, frame = null, fdoc = null, scale = 1, destroyed = false;
   const status = (t) => { const s = document.getElementById('hdStatus'); if (s) s.textContent = t; };
 
   async function load(fromServer = true) {
-    const r = fromServer ? await api(`/tools/docs/${doc.id}/html`) : await api(`/tools/docs/${doc.id}/html-preview`, { body: { edits } });
+    // the preview carries the words too, so unsaved word changes (Content field) show on the pages
+    const r = fromServer ? await api(`/tools/docs/${doc.id}/html`) : await api(`/tools/docs/${doc.id}/html-preview`, { body: words?.data ? { edits, data: words.data() } : { edits } });
     if (fromServer) edits = { els: r.edits?.els || {}, added: r.edits?.added || [] };
     html = r.html;
     render();
@@ -84,12 +85,10 @@ export async function mountDesign(host, panel, { doc, api, toast, size, onSaved,
     if (reload) load(false);
   }
   const elEdit = (key) => (edits.els[key] ||= {});
-  function save() {
-    status('Editing…');
-    clearTimeout(tSave);
-    tSave = setTimeout(async () => { tSave = null; try { await api(`/tools/docs/${doc.id}`, { method: 'PUT', body: { content: { html: { edits } } } }); status('Saved'); onSaved?.(); } catch (e) { status(''); toast(e.message, true); } }, 700);
-  }
-  async function flush() { if (tSave) { clearTimeout(tSave); tSave = null; await api(`/tools/docs/${doc.id}`, { method: 'PUT', body: { content: { html: { edits } } } }); status('Saved'); } }
+  // saved only with the Save button (owner, 2026-11-19: "add a save button too instead of auto save"); a change marks
+  // the page unsaved, and the pages show it at once through the preview
+  function save() { dirty = true; status('Unsaved changes'); onDirty?.(); }
+  async function flush() { if (!dirty) return; await api(`/tools/docs/${doc.id}`, { method: 'PUT', body: { content: { html: { edits } } } }); dirty = false; status('Saved'); onSaved?.(); }
   function undo() { if (!past.length) return; future.push(clone(edits)); edits = past.pop(); save(); load(false); }
   function redo() { if (!future.length) return; past.push(clone(edits)); edits = future.pop(); save(); load(false); }
 
@@ -245,9 +244,14 @@ export async function mountDesign(host, panel, { doc, api, toast, size, onSaved,
     const isImg = el.tagName === 'IMG' || (a && a.type === 'image');
     const kind = a ? ({ text: 'Added text', image: 'Added picture', box: 'Added box' })[a.type] : isImg ? 'Picture' : typeable(el) ? 'Text' : 'Box';
     const ed = a || edits.els[selKey] || {};
+    // the words of the clicked text (owner, 2026-11-19: "on click items in design mode, go to its content part")
+    const slot = !a ? (el.closest('[data-t]') || el.querySelector?.('[data-t]'))?.getAttribute('data-t') : null;
+    const wf = slot && words?.get ? words.get(slot) : null;
+    const typed = wf && Object.entries(edits.els).some(([k, x]) => typeof x.text === 'string' && findEl(k)?.closest('[data-t]')?.getAttribute('data-t') === slot);
     panel.innerHTML = `${head}
     <div class="hdd-props">
       <div class="row" style="gap:8px;align-items:center"><b class="grow">${esc(kind)}</b>${!a ? '<button class="btn sm ghost" data-act="parent" title="Select the box around it (Esc)"><span class="mi">north_west</span>Parent</button>' : ''}</div>
+      ${wf ? `<label class="hd-field hdd-content"><span>Content · ${esc(wf.label)}</span><textarea data-words="${esc(wf.path)}" rows="${Math.min(8, Math.max(2, Math.ceil(String(wf.value).length / 40)))}">${esc(wf.value)}</textarea></label>${typed ? '<p class="small muted" style="margin:0">This text was typed on the page; the typed version shows until you press Reset.</p>' : ''}` : ''}
       ${!isImg ? `<label class="hd-field"><span>Text colour</span><input type="color" data-p="color" value="${col}"></label>` : ''}
       ${!isImg ? `<label class="hd-field"><span>Fill</span><span class="row" style="gap:6px"><input type="color" data-p="bg" value="${bgc.a > 0 ? bgc.hex : '#ffffff'}"><button class="btn sm ghost" data-act="nofill">No fill</button></span></label>` : ''}
       ${!isImg ? `<div class="row" style="gap:8px"><label class="hd-field grow"><span>Text size</span><input type="number" min="4" max="300" data-p="size" value="${Math.round(parseFloat(cs.fontSize))}"></label>
@@ -264,6 +268,12 @@ export async function mountDesign(host, panel, { doc, api, toast, size, onSaved,
     </div>`;
   }
   panel.addEventListener('input', (e) => {
+    if (e.target.dataset.words) { // the Content field: the words change, the pages follow
+      words.set(e.target.dataset.words, e.target.value);
+      clearTimeout(panel._w);
+      panel._w = setTimeout(() => load(false), 450);
+      return;
+    }
     const p = e.target.dataset.p;
     if (!p || !selKey) return;
     const el = findEl(selKey);
@@ -329,6 +339,7 @@ export async function mountDesign(host, panel, { doc, api, toast, size, onSaved,
   drawPanel();
   return {
     flush,
+    isDirty: () => dirty,
     destroy() { destroyed = true; document.removeEventListener('keydown', docKeys); },
     convert: async () => convertToDesign(fdoc, { api }),
   };

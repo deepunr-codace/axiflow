@@ -1300,7 +1300,9 @@ html[data-theme="light"] .tv-page .dthumb { box-shadow: 0 0 0 1px rgba(0, 0, 0, 
 .hd-check { margin: 8px 0; }
 @media (max-width: 1100px) { .hd-layout { grid-template-columns: 1fr; height: auto; } .hd-pages { max-height: 70vh; } }
 /* Design mode: drag and drop on the real pages (public/html-design.js) */
-#hdMode button { display: inline-flex; align-items: center; gap: 6px; }
+#hdMode { flex-wrap: nowrap; flex-shrink: 0; }
+#hdMode button { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+#hdStatus { white-space: nowrap; flex-shrink: 0; }
 .hdd-wrap { border-radius: 10px; }
 .hdd-tools { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; padding-bottom: 10px; border-bottom: 1px solid var(--line, rgba(255,255,255,.08)); }
 .hdd-props { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; }
@@ -1330,3 +1332,20 @@ html[data-theme="light"] .xsel-search input, html[data-theme="light"] .xsel-sear
    --bad to near-white, so .toast.err was white text on white. Errors use the normal toast colours with a red edge. */
 .toast.err { background: #1A1A1D; color: #F4F4F5; border: 1px solid rgba(248, 113, 113, .6); box-shadow: 0 10px 30px rgba(0, 0, 0, .6), inset 3px 0 0 #f87171; }
 html[data-theme="light"] .toast.err { background: #FFFFFF; color: #18181B; border-color: rgba(220, 38, 38, .5); box-shadow: 0 12px 32px rgba(0, 0, 0, .12), inset 3px 0 0 #dc2626; }
+/* document header on narrower screens: the source line shortens, the buttons and the Design / Words switch stay whole (owner, 2026-11-19: "design broken") */
+.ed-head > .small.muted:not(#hdStatus) { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-head .ed-title { min-width: 120px; flex: 0 1 auto; }
+.ed-head > .btn, .ed-head > .dd { flex-shrink: 0; white-space: nowrap; }
+/* loading bar at the top: starts on the click, runs fast, finishes when the page is there (owner, 2026-11-19) */
+#axLoad { position: fixed; left: 0; top: 0; right: 0; height: 2px; z-index: 2147483000; pointer-events: none; opacity: 0; }
+#axLoad i { display: block; height: 100%; width: 100%; transform-origin: 0 50%; transform: scaleX(0); background: linear-gradient(90deg, #6A5CFF, #22D3EE); box-shadow: 0 0 10px rgba(106, 92, 255, .7); }
+#axLoad.run { opacity: 1; }
+#axLoad.run i { animation: axload 1.6s cubic-bezier(.08, .82, .17, 1) forwards; }
+#axLoad.end { opacity: 0; transition: opacity .22s ease .08s; }
+#axLoad.end i { transform: scaleX(1); transition: transform .14s ease-out; }
+@keyframes axload { 0% { transform: scaleX(0); } 25% { transform: scaleX(.55); } 100% { transform: scaleX(.92); } }
+/* a button that is working: a small spinner in front of its label */
+.btn.loading { position: relative; pointer-events: none; }
+.btn.loading::before { content: ''; width: 12px; height: 12px; margin-right: 6px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; display: inline-block; vertical-align: -2px; animation: axspin .55s linear infinite; opacity: .85; }
+@keyframes axspin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { #axLoad.run i { animation-duration: .01s; } .btn.loading::before { animation-duration: 1.5s; } }

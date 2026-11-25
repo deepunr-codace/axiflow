@@ -98,6 +98,7 @@ export async function renderHtmlDoc(kind, d, noun) {
     <span class="spacer"></span>
     <div class="seg" id="hdMode" role="tablist" aria-label="Edit mode"><button data-m="design" title="Drag and drop on the pages"><span class="mi">drag_pan</span>Design</button><button data-m="words" title="Every text in a form"><span class="mi">notes</span>Words</button></div>
     <span class="small muted" id="hdStatus"></span>
+    <button class="btn sm" id="hdSave" disabled title="Save your changes (Ctrl+S)"><span class="mi">save</span>Save</button>
     ${isProposal ? '<button class="btn sm" id="hdPrices"><span class="mi">payments</span>Prices</button>' : ''}
     <a class="btn primary sm" id="dlBtn" href="/api/tools/docs/${d.id}/pdf?download=1">Download PDF</a>
     <button class="btn sm" id="copyLink">Copy share link</button>
@@ -136,15 +137,29 @@ export async function renderHtmlDoc(kind, d, noun) {
     $('#hdFields').innerHTML = Object.entries(data).map(([k, v]) => SKIP.has(k) ? '' : (v && typeof v === 'object' ? `<details class="hd-sec"${k === 'cover' || k === 'summary' || k === 'p1' ? ' open' : ''}><summary>${esc(human(k))}</summary>${Array.isArray(v) ? block(k, k, v) : Object.entries(v).map(([kk, x]) => block(`${k}.${kk}`, kk, x)).join('')}</details>` : `<div class="hd-sec hd-top">${field(k, k, v)}</div>`)).join('');
   };
   drawForm();
-  let tPrev = null, tSave = null;
+  // no auto save (owner, 2026-11-19: "add a save button too instead of auto save"): changes show on the pages at once and
+  // are saved with Save / Ctrl+S; switching mode, downloading or leaving with unsaved changes asks first
+  let tPrev = null, wordsDirty = false, design = null;
   const status = (t) => { $('#hdStatus').textContent = t; };
+  const isDirty = () => wordsDirty || !!design?.isDirty?.();
+  const showSave = () => { const b = $('#hdSave'); if (!b) return; const on = isDirty(); b.disabled = !on; b.classList.toggle('primary', on); };
   const changed = () => {
-    status('Editing…');
-    clearTimeout(tPrev); clearTimeout(tSave);
+    wordsDirty = true; status('Unsaved changes'); showSave();
+    clearTimeout(tPrev);
     tPrev = setTimeout(async () => { try { show((await api(`/tools/docs/${d.id}/html-preview`, { body: { data } })).html); } catch (e) { toast(e.message, true); } }, 500);
-    tSave = setTimeout(async () => { try { await api(`/tools/docs/${d.id}`, { method: 'PUT', body: { content: { html: { data } } } }); status('Saved'); } catch (e) { status(''); toast(e.message, true); } }, 1400);
   };
-  const flush = async () => { if (tSave) { clearTimeout(tSave); tSave = null; await api(`/tools/docs/${d.id}`, { method: 'PUT', body: { content: { html: { data } } } }); status('Saved'); } };
+  const flush = async () => { if (!wordsDirty) return; await api(`/tools/docs/${d.id}`, { method: 'PUT', body: { content: { html: { data } } } }); wordsDirty = false; status('Saved'); };
+  const saveAll = async () => {
+    try { await flush(); if (design) await design.flush(); status('Saved'); toast('Saved'); }
+    catch (e) { toast(e.message, true); }
+    showSave();
+  };
+  const askSave = async (what) => { if (isDirty() && confirm(`Save your changes ${what}?\n\nOK = save them, Cancel = ${what === 'first' ? 'go on with the saved version' : 'leave them unsaved'}.`)) await saveAll(); };
+  const warn = (e) => { if (isDirty()) { e.preventDefault(); e.returnValue = ''; } };
+  const keys = (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); if (isDirty()) saveAll(); } };
+  window.addEventListener('beforeunload', warn);
+  document.addEventListener('keydown', keys);
+  $('#hdSave').onclick = async (e) => { const b = e.currentTarget; b.disabled = true; b.classList.add('loading'); await saveAll(); b.classList.remove('loading'); };
   $('#hdFields').addEventListener('input', (e) => {
     const el = e.target.closest('[data-path]');
     if (!el) return;
@@ -175,8 +190,8 @@ export async function renderHtmlDoc(kind, d, noun) {
   const np = $('#hdNoPhotos');
   if (np) np.onclick = () => { data.photos = {}; changed(); np.remove(); };
   $('.ed-title').onchange = (e) => api(`/tools/docs/${d.id}`, { method: 'PUT', body: { title: e.target.value } }).then(() => toast('Renamed')).catch((err) => toast(err.message, true));
-  $('#dlBtn').onclick = async (e) => { e.preventDefault(); const href = e.currentTarget.getAttribute('href'); await flush(); window.axOpen(href); };
-  $('#copyLink').onclick = async () => { await flush(); try { await navigator.clipboard.writeText(d.share_url); toast('Share link copied'); } catch { prompt('Copy this link:', d.share_url); } };
+  $('#dlBtn').onclick = async (e) => { e.preventDefault(); const href = e.currentTarget.getAttribute('href'); await askSave('first'); window.axOpen(href); };
+  $('#copyLink').onclick = async () => { await askSave('first'); try { await navigator.clipboard.writeText(d.share_url); toast('Share link copied'); } catch { prompt('Copy this link:', d.share_url); } };
   if ($('#hdRelease')) $('#hdRelease').onclick = (e) => busy(e.target, async () => { // a person looked: the brochure goes to the CRM
     await api(`/tools/docs/${d.id}/release`, { body: {} });
     toast('Sent to the CRM (waiting for approval there)');
@@ -185,8 +200,8 @@ export async function renderHtmlDoc(kind, d, noun) {
   $('#regenBtn').onclick = (e) => { if (!confirm('Write it again? Your edits to the words will be replaced.')) return; busy(e.target, async () => { await api(`/tools/docs/${d.id}/regenerate`, { body: {} }); location.reload(); }); };
   $('#delBtn').onclick = async () => { if (!confirm(`Delete this ${noun}?`)) return; await api(`/tools/docs/${d.id}`, { method: 'DELETE' }); location.hash = `#/${kind}`; };
   // ---------------------------------------------------------------- Design mode (drag and drop on the pages)
-  let design = null;
   const setMode = async (m) => {
+    if (isDirty()) { if (!confirm('Save your changes before switching?\n\nOK = save and switch, Cancel = stay here.')) return; await saveAll(); }
     try { localStorage.setItem('axf-hd-mode', m); } catch { /* private window */ }
     document.querySelectorAll('#hdMode [data-m]').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
     if (m === 'design') {
@@ -196,7 +211,13 @@ export async function renderHtmlDoc(kind, d, noun) {
       const { mountDesign } = await import('./html-design.js');
       const v = r.verification, facts = v?.facts || [];
       const note = facts.length ? `<p class="small muted" style="margin:14px 2px 0"><span class="mi in">fact_check</span> Fact check: ${facts.filter((f) => f.status === 'confirmed').length} facts checked online, ${facts.filter((f) => /^from_/.test(f.status)).length} from the CRM / SWOT, ${facts.filter((f) => f.status === 'removed').length + (v.not_found || []).length} left out. Details under Words.</p>` : '';
-      design = await mountDesign(pagesEl, $('#hdDesign'), { doc: d, api, toast, size: r.size, note });
+      // the clicked text's words (its field in the Words form) are edited from the Design panel too
+      const words = {
+        data: () => data,
+        get: (slot) => { const pk = Object.keys(data).find((k) => data[k] && typeof data[k] === 'object' && !Array.isArray(data[k]) && typeof data[k][slot] === 'string'); return pk ? { path: `${pk}.${slot}`, label: `${human(pk)} · ${human(slot)}`, value: data[pk][slot] } : null; },
+        set: (path, v) => { setAt(data, path, v); const f = document.querySelector(`#hdFields [data-path="${CSS.escape(path)}"]`); if (f) f.value = v; wordsDirty = true; status('Unsaved changes'); showSave(); },
+      };
+      design = await mountDesign(pagesEl, $('#hdDesign'), { doc: d, api, toast, size: r.size, note, words, onDirty: showSave, onSaved: showSave });
     } else {
       if (!design) { $('#hdForm').hidden = false; return; }
       await design.flush(); design.destroy(); design = null;
@@ -236,5 +257,10 @@ export async function renderHtmlDoc(kind, d, noun) {
       toast('Prices saved');
     });
   };
-  return { flush: async () => { await flush(); if (design) { await design.flush(); design.destroy(); design = null; } } };
+  // leaving the page (another page of the app): unsaved changes are saved only when the person says so
+  return { flush: async () => {
+    window.removeEventListener('beforeunload', warn); document.removeEventListener('keydown', keys);
+    if (isDirty() && confirm('Save your changes to this document before leaving?\n\nOK = save, Cancel = leave them unsaved.')) await saveAll();
+    if (design) { design.destroy(); design = null; }
+  } };
 }
