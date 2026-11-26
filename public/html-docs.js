@@ -25,6 +25,16 @@ ${only ? `[data-page]:not([data-page="${only}"]){display:none!important}` : `[da
   f.title = 'Document pages';
   f.style.cssText = `position:absolute;left:0;top:0;border:0;width:${size.width}px;height:${Math.ceil(n * (size.height + (only ? 0 : gap / s)))}px;transform:scale(${s});transform-origin:0 0;pointer-events:none;background:transparent`;
   f.srcdoc = html.replace('</head>', `${extra}</head>`);
+  // pages of different heights (size.flow): the frame takes the real height of what it shows once loaded
+  if (size.flow) f.onload = () => {
+    try {
+      const d = f.contentDocument;
+      const h = only ? d.querySelector(`[data-page="${only}"]`)?.getBoundingClientRect().height : d.documentElement.scrollHeight - gap / s;
+      if (!h) return;
+      f.style.height = `${Math.ceil(h + (only ? 0 : gap / s))}px`;
+      wrap.style.height = `${Math.ceil(h * s)}px`;
+    } catch { /* frame not readable: keeps the estimate */ }
+  };
   wrap.append(f);
   return wrap;
 }

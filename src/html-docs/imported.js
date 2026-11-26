@@ -379,8 +379,12 @@ export async function importHtmlTemplate({ kind, name, sample_company, html }) {
   });
   if (first.error) throw new Error(first.error);
   const w = first.boxes[0].w, h = first.boxes[0].h;
-  if (first.boxes.some((b) => Math.abs(b.w - w) > 2 || Math.abs(b.h - h) > 2)) throw new Error('The pages are not all the same size');
-  const size = { width: Math.round(w * 100) / 100, height: Math.round(h * 100) / 100, media: 'screen', ...paperFor(w, h) };
+  if (first.boxes.some((b) => Math.abs(b.w - w) > 2)) throw new Error('The pages are not all the same width');
+  // pages as tall as their content (owner, 2026-11-26: the Nice Foods proposal, 6 pages from 1123 to 1827 px): each one is
+  // printed on a PDF page of its own height (chrome.js htmlToPdf, `flow`); the width stays the same for all
+  const flow = first.boxes.some((b) => Math.abs(b.h - h) > 2);
+  const size = flow ? { width: Math.round(w * 100) / 100, height: Math.round(Math.max(...first.boxes.map((b) => b.h))), media: 'screen', flow: true }
+    : { width: Math.round(w * 100) / 100, height: Math.round(h * 100) / 100, media: 'screen', ...paperFor(w, h) };
   const out = addNorm(first.html);
   // the same pages edge to edge, as they are printed: every element must sit where it did
   const after = await withPage(out, { ...size, media: 'screen' }, (page) => page.evaluate(pageBoxes));

@@ -93,6 +93,14 @@ export async function htmlToPdf(html, size) {
   const paper = size.paper || { width: `${size.width}px`, height: `${size.height}px` };
   return withPage(html, { ...size, scaleFactor: 1.6 }, async (page) => {
     await flatten(page);
+    // pages of different heights (an imported template with `flow`): each page gets a named @page of its own size
+    if (size.flow) {
+      await page.evaluate((w) => {
+        const css = [...document.querySelectorAll('[data-page]')].map((p, i) => `@page axp${i}{size:${w}px ${Math.ceil(p.getBoundingClientRect().height)}px;margin:0}\n[data-page="${p.dataset.page}"]{page:axp${i}}`).join('\n');
+        const st = document.createElement('style'); st.textContent = css; document.head.append(st);
+      }, size.width);
+      return Buffer.from(await page.pdf({ printBackground: true, preferCSSPageSize: true, margin: { top: 0, right: 0, bottom: 0, left: 0 } }));
+    }
     return Buffer.from(await page.pdf({ ...(size.cssPage ? {} : { width: paper.width, height: paper.height }), scale: size.scale || 1, printBackground: true, preferCSSPageSize: !!size.cssPage, margin: { top: 0, right: 0, bottom: 0, left: 0 } }));
   });
 }
@@ -111,12 +119,21 @@ async function flatten(page) {
     await Promise.all([...urls].map((u) => { const i = new Image(); i.src = u; return i.decode().catch(() => {}); }));
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   });
+  // data-flatten="deep" (imported templates, 2026-11-26 Nice Foods proposal): the ::before / ::after layers (dark fades,
+  // labels) are baked in and then switched off, the border is part of the picture, and a rotated card is shot straight
+  await page.evaluate(() => { const st = document.createElement('style'); st.textContent = '[data-flat-done]::before,[data-flat-done]::after{display:none!important}'; document.head.append(st); });
   for (const el of await page.$$('[data-flatten]')) {
-    await el.evaluate((e) => { for (const c of e.children) { c.dataset.vis = c.style.visibility; c.style.visibility = 'hidden'; } });
+    const deep = await el.evaluate((e) => {
+      const d = e.getAttribute('data-flatten') === 'deep';
+      if (d) { e.dataset.tf = e.style.transform; e.style.transform = 'none'; }
+      for (const c of e.children) { c.dataset.vis = c.style.visibility; c.style.visibility = 'hidden'; }
+      return d;
+    });
     const buf = await el.screenshot({ type: 'jpeg', quality: 84 });
-    await el.evaluate((e, b64) => {
+    await el.evaluate((e, b64, d) => {
       Object.assign(e.style, { backgroundImage: `url(data:image/jpeg;base64,${b64})`, backgroundSize: '100% 100%', backgroundPosition: '0 0', backgroundRepeat: 'no-repeat' });
+      if (d) { Object.assign(e.style, { backgroundOrigin: 'border-box', backgroundClip: 'border-box', transform: e.dataset.tf || '' }); delete e.dataset.tf; e.setAttribute('data-flat-done', ''); }
       for (const c of e.children) c.style.visibility = c.dataset.vis || '';
-    }, Buffer.from(buf).toString('base64'));
+    }, Buffer.from(buf).toString('base64'), deep);
   }
 }
