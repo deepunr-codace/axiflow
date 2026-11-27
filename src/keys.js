@@ -164,9 +164,22 @@ export async function testAiKey(provider) {
   try {
     if (provider === 'anthropic') {
       if (!process.env.ANTHROPIC_API_KEY) throw new Error('Not set');
-      const r = await fetch('https://api.anthropic.com/v1/models?limit=1', { headers: { 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' }, signal: AbortSignal.timeout(10000) });
-      if (!r.ok) throw new Error(r.status === 401 ? 'Anthropic says the key is invalid' : `Anthropic answered ${r.status}`);
-      return { ok: true, detail: 'Anthropic accepted the key', ms: Date.now() - t0 };
+      // a real one-word message (owner, 2026-11-27: "give correct response of claude api"): listing the models passed even
+      // with no credit left, so the test said OK while every document failed with "credit balance is too low"
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'claude-haiku-5-5', max_tokens: 1, messages: [{ role: 'user', content: 'OK' }] }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (r.ok) return { ok: true, detail: 'Working: Anthropic answered a test message (the account can write documents)', ms: Date.now() - t0 };
+      const msg = String((await r.json().catch(() => ({})))?.error?.message || '');
+      if (r.status === 401) throw new Error('The key is wrong or was deleted: replace it');
+      if (r.status === 403) throw new Error(`This key is not allowed to send messages${msg ? `: ${msg}` : ''}`);
+      if (/credit balance/i.test(msg)) throw new Error('No credit left on the Anthropic account: add credit at console.anthropic.com → Plans & Billing');
+      if (r.status === 429) throw new Error(`The key works but hit its rate or spend limit right now${msg ? `: ${msg}` : ''}`);
+      if (r.status === 529 || r.status >= 500) throw new Error(`Anthropic is busy or down right now (${r.status}); the key itself may be fine: test again in a minute`);
+      throw new Error(`Anthropic answered ${r.status}${msg ? `: ${msg}` : ''}`);
     }
     if (provider === 'stock') { const r = await (await import('./images.js')).testStock(); return { ...r, ms: Date.now() - t0 }; }
     throw new Error('Unknown provider');
