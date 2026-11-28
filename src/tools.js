@@ -475,7 +475,7 @@ export async function buildClaudeJob(doc, s = getSettings(), opts = {}) {
         const images = templateImages();
         const b = await buildLeadBrief(doc.lead_id, { crm, facts: collected?.facts || [], research, offer, audit: collected?.audit, images });
         const a = s.agency || {};
-        job = designedJob({ brief: b.text, ids: b.ids, images, model: s.claude?.api_model?.anthropic || 'claude-opus-5-5', client: base.company,
+        job = designedJob({ brief: b.text, ids: b.ids, images, model: s.claude?.api_model?.anthropic || 'claude-sonnet-5-5', client: base.company,
           date: new Date().toLocaleString('en-GB', { month: 'long', year: 'numeric', timeZone: s.schedule?.timezone || 'Asia/Kolkata' }),
           contact: { agency: 'CodeAce IT Solutions LLP', phone: a.phone, email: a.email, website: String(a.website || '').replace(/^https?:\/\//, '').replace(/\/$/, '') } });
         ctx = { html: tpl.source };
@@ -493,7 +493,7 @@ export async function buildClaudeJob(doc, s = getSettings(), opts = {}) {
       if (doc.kind === 'brochure' && tpl.source !== htmlDocs.DESIGNED) {
         // lean run on the GitHub runner with a pinned model (prepare.mjs / the workflow read these), the same model as the
         // API backup; research within at most 4 searches and 4 fetches, then the answer
-        job.model = s.claude?.api_model?.anthropic || 'claude-opus-5-5';
+        job.model = s.claude?.api_model?.anthropic || 'claude-sonnet-5-5';
         job.max_turns = 14;
         job.offer = offer;
       }

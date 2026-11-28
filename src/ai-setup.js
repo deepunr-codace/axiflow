@@ -67,7 +67,7 @@ export async function aiSetupStatus() {
         github_secrets: await githubSecretsSeen().catch(() => ({})),
         https: /^https:/.test(BASE_URL),
       },
-      anthropic: { ready: ready.anthropic, used_for: usedFor.anthropic, key: keys.ANTHROPIC_API_KEY || null, model: s.claude?.api_model?.anthropic || 'claude-opus-5-5' },
+      anthropic: { ready: ready.anthropic, used_for: usedFor.anthropic, key: keys.ANTHROPIC_API_KEY || null, model: s.claude?.api_model?.anthropic || 'claude-sonnet-5-5' },
     },
     spend: { today: ai.spent_today_usd, limit: s.ai.daily_budget_usd, month: Number(month.toFixed(2)) },
     recent,
@@ -77,8 +77,8 @@ export async function aiSetupStatus() {
       max_attempts: s.claude?.max_attempts || 3,
       github_repo: s.claude?.github_repo || '',
       models: {
-        anthropic_docs: s.claude?.api_model?.anthropic || 'claude-opus-5-5',
-        anthropic_chat: s.ai.model || 'claude-opus-5-5',
+        anthropic_docs: s.claude?.api_model?.anthropic || 'claude-sonnet-5-5',
+        anthropic_chat: s.ai.model || 'claude-sonnet-5-5',
       },
     },
   };

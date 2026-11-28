@@ -130,7 +130,7 @@ ${STYLE_NOTE}
 }
 
 /** The writer job (claude-worker/designed.mjs runs it on GitHub; the API backup runs the same prompt). */
-export function designedJob({ brief, ids, images, model = 'claude-opus-5-5', reviewModel = 'claude-sonnet-5-5', client = '', date = '', contact = {} }) {
+export function designedJob({ brief, ids, images, model = 'claude-sonnet-5-5', reviewModel = 'claude-sonnet-5-5', client = '', date = '', contact = {} }) {
   return {
     kind: 'html', template: DESIGNED, purpose: 'brochure_designed',
     client, date, contact, // the page header and the last page's contact block, for the runner's render (visual review)

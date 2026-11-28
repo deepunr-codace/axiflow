@@ -14,7 +14,7 @@ export function setupAi(helpers) { H = helpers; }
 const NAME = { github: 'Claude subscription', anthropic: 'Anthropic API', none: 'No backup', off: 'Off' };
 const ICON = { github: 'workspace_premium', anthropic: 'key' };
 const JOB_ICON = { script: 'record_voice_over', brochure: 'menu_book', proposal: 'request_quote', assistant: 'chat' };
-const MODELS = [['claude-opus-5-5', 'Claude Opus 5.5 (best writing)'], ['claude-sonnet-5-5', 'Claude Sonnet 5.5 (cheaper)'], ['claude-haiku-5-5', 'Claude Haiku 5.5 (cheapest)']];
+const MODELS = [['claude-sonnet-5-5', 'Claude Sonnet 5.5 (best writing)'], ['claude-haiku-5-5', 'Claude Haiku 5.5 (cheapest)']];
 const usd = (n) => `$${Number(n || 0).toFixed(2)}`;
 const time = (iso) => (iso ? new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '');
 const ago = (iso) => {

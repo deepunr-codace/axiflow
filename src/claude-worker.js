@@ -28,7 +28,7 @@ export const ENGINES = {
   anthropic: 'Claude API (your Anthropic API key)',
 };
 export const engineOf = (s = getSettings()) => (ENGINES[s.claude?.engine] ? s.claude.engine : 'github');
-const API_MODEL = { anthropic: 'claude-opus-5-5' };
+const API_MODEL = { anthropic: 'claude-sonnet-5-5' };
 export const engineModel = (s = getSettings(), e = engineOf(s)) => (e === 'github' ? 'Claude Code' : s.claude?.api_model?.[e] || API_MODEL[e]);
 
 /*

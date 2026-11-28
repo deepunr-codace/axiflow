@@ -86,7 +86,7 @@ export const DEFAULT_SETTINGS = {
   ai: {
     enabled: true,
     provider: 'anthropic', // the Claude API only (OpenRouter removed 2026-11-13)
-    model: 'claude-opus-5-5',
+    model: 'claude-sonnet-5-5',
     effort_research: 'high',
     effort_writing: 'medium',
     effort_light: 'low',
@@ -216,7 +216,7 @@ export const DEFAULT_SETTINGS = {
   // engine: github (Claude Code, subscription) | anthropic (own API key); api_model per API engine
   // fonts for brochures / proposals: 'auto' = Claude picks a pairing for the lead (src/design/fonts.js), 'template' = the template's own fonts, or a pairing id
   fonts: { brochure: 'auto', proposal: 'auto' },
-  claude: { mode: false, engine: 'github', api_model: { anthropic: 'claude-opus-5-5' }, fallback_engine: 'anthropic', github_repo: 'deepunr-codace/axiflow', timeout_minutes: 12, max_attempts: 3, web_research: true },
+  claude: { mode: false, engine: 'github', api_model: { anthropic: 'claude-sonnet-5-5' }, fallback_engine: 'anthropic', github_repo: 'deepunr-codace/axiflow', timeout_minutes: 12, max_attempts: 3, web_research: true },
   brochure_ai: {
     enabled: true,
     pipeline: 'staged',
