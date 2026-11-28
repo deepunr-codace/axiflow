@@ -531,9 +531,10 @@ export async function buildClaudeJob(doc, s = getSettings(), opts = {}) {
   if (!htmlBrochure) job.schema = withStrategy(job.schema, { review: !lean });
   job.vertical = vertical;
   // Research is always on (owner, 2026-11-13: "use only research"). For a SWOT it is done before writing, by the
-  // separate research stage (guide 5.4): the writer gets the usable pack and does not browse. The other documents
-  // still let Claude Code research the business itself.
-  job.web = !(doc.kind === 'script' && research);
+  // separate research stage (guide 5.4): the writer gets the usable pack and does not browse. Brochures and proposals
+  // too (owner, 2026-11-28, cost check: their own second search was the largest API cost, ~$0.40 a brochure): with a
+  // usable pack they write from it; only without one (thin research) they still research the business themselves.
+  job.web = !research;
   // the SWOT writer's model is pinned (guide P11: predictable quality and cost); the GitHub workflow passes job.model as --model
   if (doc.kind === 'script') job.model = 'claude-sonnet-5-5';
   if (designed) job.web = false; // the designed brochure writes from its brief: research happened in the SWOT stage
